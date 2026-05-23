@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# tssh — SSH into a Tart VM by name, auto-starting it if stopped.
+#
+# Usage:
+#   tssh <vm-name> [ssh-args...]
+#
+# Example:
+#   tssh app-a
+#   tssh app-a -L 8888:localhost:8888    # any extra args forwarded to ssh
+#
+# How it works:
+#  1. Checks the VM's state via `tart list --format json`. Fails fast if the
+#     VM doesn't exist; auto-starts it via `tart run --no-graphics &` if it
+#     exists but isn't running.
+#  2. If just started, polls `tart ip` until a DHCP-assigned IP appears
+#     (timeout 60s), then waits for SSH to respond (timeout 30s).
+#  3. Sets up SSH connection multiplexing (ControlMaster) so the terminfo
+#     install and the interactive session share a single authenticated
+#     channel — ONE biometric prompt per tssh invocation. The preconnect
+#     hook (step 4) can piggyback by using ssh with the same ControlPath.
+#  4. If `$TSSH_PRECONNECT` (or default `~/.config/tssh/preconnect`) is an
+#     executable file, runs it with TSSH_VM / TSSH_IP / TSSH_CONTROL_PATH in
+#     the environment before opening the interactive session. Useful for
+#     per-machine setup (auth/config sync, etc.) that shouldn't live in this
+#     repo. Hook failure is non-fatal — the warning prints, the session opens.
+#  5. Transparently installs your local $TERM's terminfo into the VM if
+#     missing (Ghostty, Alacritty, WezTerm, etc.).
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Usage: tssh <vm-name> [ssh-args...]" >&2
+  exit 64
+fi
+
+VM="$1"; shift
+
+command -v tart >/dev/null 2>&1 || { echo "tssh: 'tart' not on PATH. Install: brew install cirruslabs/cli/tart" >&2; exit 1; }
+command -v jq   >/dev/null 2>&1 || { echo "tssh: 'jq' not on PATH. Install: brew install jq" >&2; exit 1; }
+
+# Resolve VM state — distinguishes "doesn't exist" (fail) from any non-running state (start).
+STATE=$(tart list --format json 2>/dev/null \
+  | jq -r ".[] | select(.Name==\"$VM\") | .State")
+if [ -z "$STATE" ]; then
+  echo "tssh: VM '$VM' not found. Try 'tart list' or 'tart clone <base> $VM'." >&2
+  exit 1
+fi
+
+if [ "$STATE" != "running" ]; then
+  echo "tssh: VM '$VM' is $STATE — starting in background..." >&2
+  ( tart run "$VM" --no-graphics >/dev/null 2>&1 & disown )
+
+  # Poll for IP (DHCP usually assigns within ~5-15 s on Tart's NAT).
+  IP=""
+  for _ in $(seq 1 60); do
+    IP=$(tart ip "$VM" 2>/dev/null) && [ -n "$IP" ] && break
+    IP=""
+    sleep 1
+  done
+  if [ -z "$IP" ]; then
+    echo "tssh: VM '$VM' did not get an IP within 60 s." >&2
+    exit 1
+  fi
+  echo "tssh: VM '$VM' at $IP — waiting for SSH..." >&2
+else
+  IP=$(tart ip "$VM" 2>/dev/null) || {
+    echo "tssh: failed to resolve IP for running VM '$VM'." >&2
+    exit 1
+  }
+fi
+
+# SSH multiplexing — the first invocation becomes the master, subsequent
+# invocations share it. ControlPersist keeps the master alive for 10s
+# after the last slave drops, so quick bootstrap sequences only prompt once.
+CONTROL_PATH=$(mktemp -u "${TMPDIR:-/tmp}/tssh-XXXXXXXX")
+SSH_OPTS=(
+  -o "HostName=$IP"
+  -o "ControlMaster=auto"
+  -o "ControlPath=$CONTROL_PATH"
+  -o "ControlPersist=10s"
+)
+
+# If we just started the VM, wait for sshd to be answering. Uses the same
+# ControlPath, so the successful probe primes the multiplexed master and
+# the prompt only happens once.
+if [ "$STATE" != "running" ]; then
+  ready=0
+  for _ in $(seq 1 30); do
+    if ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=2" "$VM" true 2>/dev/null; then
+      ready=1; break
+    fi
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "tssh: SSH did not respond on $VM ($IP) within 30 s." >&2
+    exit 1
+  fi
+fi
+
+# Optional preconnect hook — runs after the VM has an IP, before the
+# terminfo install and user session. Use it for per-machine setup
+# (credential sync, config rsync, etc.) that shouldn't live in this
+# wrapper.
+PRECONNECT="${TSSH_PRECONNECT:-$HOME/.config/tssh/preconnect}"
+if [ -x "$PRECONNECT" ]; then
+  TSSH_VM="$VM" TSSH_IP="$IP" TSSH_CONTROL_PATH="$CONTROL_PATH" \
+    "$PRECONNECT" || {
+      echo "tssh: preconnect hook ($PRECONNECT) exited non-zero — opening session anyway." >&2
+    }
+fi
+
+# Terminfo install: piggybacks on the multiplexed connection.
+LOCAL_TERM="${TERM:-xterm-256color}"
+if ! ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=5" "$VM" \
+    "infocmp '${LOCAL_TERM}' >/dev/null 2>&1" 2>/dev/null; then
+  infocmp -x "${LOCAL_TERM}" 2>/dev/null \
+    | ssh "${SSH_OPTS[@]}" "$VM" 'mkdir -p ~/.terminfo && tic -x -' \
+    >/dev/null 2>&1 || true
+fi
+
+exec ssh "${SSH_OPTS[@]}" "$VM" "$@"

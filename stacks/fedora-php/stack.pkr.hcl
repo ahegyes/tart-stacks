@@ -1,0 +1,135 @@
+packer {
+  required_plugins {
+    tart = {
+      version = ">= 1.20.0"
+      source  = "github.com/cirruslabs/tart"
+    }
+  }
+}
+
+variable "source_image" {
+  type        = string
+  description = "Local Tart image to clone as the source. `make bootstrap` creates this from ghcr.io/cirruslabs/fedora:latest."
+  default     = "fedora-base"
+}
+
+variable "output_name" {
+  type        = string
+  description = "Name of the resulting Tart image."
+  default     = "fedora-php"
+}
+
+variable "ssh_username" {
+  type        = string
+  description = "SSH user inside the VM. Cirrus Labs Tart images use 'admin' by default."
+  default     = "admin"
+}
+
+variable "ssh_password" {
+  type        = string
+  description = "SSH password for provisioning. 'admin' is the publicly-documented default for all Cirrus Tart images. 99-finalize.sh locks this password at the end of the build, so cloned VMs only accept SSH key auth."
+  default     = "admin"
+  # Intentionally NOT marked sensitive — it's a public default, and marking it sensitive
+  # causes Packer to redact any substring match in build output, which produces noise.
+}
+
+variable "ssh_pubkey_path" {
+  type        = string
+  description = "Path to the public SSH key authorized for Mac → VM access. Typically a dedicated Secure Enclave-backed key managed by Secretive (or macOS 26 native). Must exist before `make build` — see top-level README for setup."
+  default     = "~/.ssh/tart-vm.pub"
+}
+
+variable "cpu_count" {
+  type    = number
+  default = 4
+}
+
+variable "memory_gb" {
+  type    = number
+  default = 8
+}
+
+variable "disk_size_gb" {
+  type    = number
+  default = 60
+}
+
+source "tart-cli" "fedora-php" {
+  vm_base_name = var.source_image
+  vm_name      = var.output_name
+  cpu_count    = var.cpu_count
+  memory_gb    = var.memory_gb
+  disk_size_gb = var.disk_size_gb
+  ssh_username = var.ssh_username
+  ssh_password = var.ssh_password
+  ssh_timeout  = "10m"
+  headless     = true
+}
+
+build {
+  name    = "fedora-php"
+  sources = ["source.tart-cli.fedora-php"]
+
+  # System-level provisioning (runs as root via sudo). Shared base first,
+  # then PHP build deps. Both root-provisioner scripts are bundled so the
+  # transaction sequence is unambiguous.
+  provisioner "shell" {
+    execute_command = "echo '${var.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    scripts = [
+      "../../shared/scripts/00-base.sh",
+      "./scripts/00-stack.sh",
+      "../../shared/scripts/docker.sh",
+    ]
+  }
+
+  # User-level provisioning (per-user installs to ~/.local/).
+  provisioner "shell" {
+    scripts = [
+      "../../shared/scripts/mise.sh",
+      "../../shared/scripts/claude.sh",
+    ]
+  }
+
+  # Drop in config files.
+  provisioner "file" {
+    source      = "../../shared/files/zshrc"
+    destination = "/home/${var.ssh_username}/.zshrc"
+  }
+
+  provisioner "file" {
+    source      = "./files/mise.toml"
+    destination = "/home/${var.ssh_username}/.config/mise/config.toml"
+  }
+
+  # Upload the host's public SSH key (consumed by 99-finalize.sh).
+  provisioner "file" {
+    source      = pathexpand(var.ssh_pubkey_path)
+    destination = "/tmp/authorized_key.pub"
+  }
+
+  # System-level user config (chsh + PATH activation, requires root).
+  provisioner "shell" {
+    execute_command = "echo '${var.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    scripts = [
+      "../../shared/scripts/user-config.sh",
+    ]
+  }
+
+  # Install language runtimes per the uploaded mise.toml (user-level).
+  # Runs before final lockdown because it needs mise.toml uploaded and the
+  # build user still SSH-able with the provisioning password.
+  provisioner "shell" {
+    scripts = ["./scripts/mise-install.sh"]
+  }
+
+  # Final lockdown — runs LAST as a single atomic step. 99-finalize.sh
+  # authorizes the user SSH key, installs NOPASSWD sudoers, writes the sshd
+  # drop-in disabling password auth, and locks the admin password. Bundling
+  # makes the "no provisioner between disabling password auth and Packer
+  # disconnecting" constraint structural. Packer disconnects right after.
+  provisioner "shell" {
+    execute_command   = "echo '${var.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    expect_disconnect = true
+    scripts           = ["../../shared/scripts/99-finalize.sh"]
+  }
+}

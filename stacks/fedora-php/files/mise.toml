@@ -1,0 +1,29 @@
+# Global tool versions for fedora-php-tart.
+# Override per-project with a .mise.toml in the project root.
+
+[tools]
+# Node tracks whichever LTS line mise's `lts` alias points to. The alias
+# is hardcoded in mise's source (src/plugins/core/node.rs), not resolved
+# dynamically — jdx/mise bumps it after each October LTS cutover, so
+# fresh builds follow with a short lag.
+node = "lts"
+
+# Pin PHP to a specific patch. PHP has no LTS concept, so bump explicitly
+# when a new stable lands. Fuzzy specs like "8.5" pull RCs (RC strings
+# sort higher than the bare patch they precede); run `mise ls-remote php`
+# inside the VM to see options before bumping.
+php  = "8.5.6"
+
+# Per-project examples (do not enable globally):
+# python = "<major.minor>"
+# ruby   = "<major.minor>"
+# go     = "<major.minor>"
+
+[settings]
+# Set to true while debugging tool installs (especially PHP, which compiles from source).
+verbose = false
+
+# Trust .mise.toml under $HOME without prompting. The Tart VM is a
+# single-user dev box; the user owns everything in $HOME, so prompting
+# per-project would be friction without security benefit.
+trusted_config_paths = ["~"]
