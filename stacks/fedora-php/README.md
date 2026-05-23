@@ -2,7 +2,7 @@
 
 PHP development stack. Builds a `fedora-php` Tart image preconfigured with PHP 8.5, Node (Active LTS), Docker, and standard backend dev essentials. Intended as a per-project clone source.
 
-For host setup, build flow, daily use, and zellij multiplexing, see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
+For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
 ## What's in this stack
 

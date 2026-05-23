@@ -2,7 +2,7 @@
 
 JVM development stack. Builds a `fedora-jvm` Tart image preconfigured with Temurin 25 (current Java LTS), Maven, Gradle, sbt, Scala CLI, Kotlin, plus uv (Python project manager), Node LTS, and Docker. Intended as a per-project clone source for Java/Scala/Kotlin/mixed-runtime work.
 
-For host setup, build flow, daily use, and zellij multiplexing, see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
+For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
 ## What's in this stack
 
