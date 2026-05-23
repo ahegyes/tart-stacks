@@ -133,11 +133,8 @@ resolve_pattern() {
     return 0
   fi
   local out=""
-  local IFS=','
-  set -f
-  local names=( $pattern )
-  set +f
-  unset IFS
+  local -a names=()
+  IFS=',' read -r -a names <<< "$pattern"
   for n in "${names[@]}"; do
     for vm in "${vms[@]:-}"; do
       if [ "$vm" = "$n" ]; then
