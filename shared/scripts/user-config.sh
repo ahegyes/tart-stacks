@@ -15,7 +15,7 @@ chsh -s /usr/bin/zsh "${TARGET_USER}"
 BASHRC="${TARGET_HOME}/.bashrc"
 if [ ! -f "${BASHRC}" ] || ! grep -q "mise activate" "${BASHRC}"; then
   cat >> "${BASHRC}" <<'EOF'
-# mise activation — added by fedora-php-tart provisioning.
+# mise activation — added by tart-stacks provisioning.
 [ -x "$HOME/.local/bin/mise" ] && eval "$($HOME/.local/bin/mise activate bash)"
 EOF
   chown "${TARGET_USER}:${TARGET_USER}" "${BASHRC}"
@@ -27,7 +27,7 @@ fi
 ZSHENV="${TARGET_HOME}/.zshenv"
 if [ ! -f "${ZSHENV}" ] || ! grep -q "HOME/.local/bin" "${ZSHENV}"; then
   cat >> "${ZSHENV}" <<'EOF'
-# Added by fedora-php-tart provisioning — ensures user-local binaries are on PATH.
+# Added by tart-stacks provisioning — ensures user-local binaries are on PATH.
 export PATH="$HOME/.local/bin:$PATH"
 EOF
   chown "${TARGET_USER}:${TARGET_USER}" "${ZSHENV}"

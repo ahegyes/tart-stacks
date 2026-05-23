@@ -5,7 +5,8 @@
 STACK ?=
 
 # Override to pin a non-latest Fedora tag: `FEDORA_TAG=42 make bootstrap`.
-# Cirrus publishes `latest`, `42`, `39`, `38`; older tags are EOL Fedora.
+# Cirrus publishes `latest`, `42`, `39`, `38`, but 39/38 ship dnf4 and break
+# docker.sh. Effective supported set: `latest`, `42`.
 FEDORA_TAG ?= latest
 
 # Intermediate Tart base image (shared across stacks). `bootstrap` clones the

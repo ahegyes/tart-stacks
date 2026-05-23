@@ -6,7 +6,7 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 
 ```
 .
-├── README.md  CLAUDE.md  AGENTS.md  SECURITY.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE
+├── README.md  CLAUDE.md  AGENTS.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── Makefile                            # Single top-level Makefile; STACK=<name> selects stack for init/build/rebuild
 ├── bin/
 │   └── tssh                            # macOS-host SSH wrapper (resolves Tart VM IP, multiplexes biometric prompts)

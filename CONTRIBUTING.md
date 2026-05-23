@@ -30,7 +30,6 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 - **One logical change per PR.** Renaming + a bug fix in the same PR is two PRs.
 - **`shared/` changes affect every stack.** Bear that in mind — a tweak that helps one stack may regress another.
 - **If you add a new script** to an existing stack, reference it from that stack's `stack.pkr.hcl` provisioner block. If you add a new stack, also add it to the CI matrix in `.github/workflows/validate.yml` and the stack table in the top-level `README.md`.
-- **Add a `CHANGELOG.md` entry** under `## [Unreleased]` for user-visible changes.
 - **Comments explain WHY, not WHAT** — see [`AGENTS.md`](./AGENTS.md) for the full convention list.
 
 ## Reporting bugs

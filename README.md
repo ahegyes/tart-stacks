@@ -109,7 +109,7 @@ tart list                  # confirm fedora-php is present
 
 **Build auth.** Cirrus's `admin/admin` for provisioning. Each stack's `shared/scripts/99-finalize.sh` runs LAST and atomically establishes the final access posture: authorizes your `tart-vm.pub`, writes `00-vm-hardening.conf` disabling password auth (the `00-` prefix is load-bearing — it wins over cloud-init's `50-cloud-init.conf` which re-enables password auth), installs NOPASSWD sudoers, and locks the admin password (`passwd -l`). Bundling these means Packer's password-authed session stays valid through every preceding script and there's no fragility window between disabling password auth and disconnect.
 
-**Pin a Fedora version:** `FEDORA_TAG=42 make bootstrap` (override the Makefile variable). Cirrus only publishes `latest`, `42`, `39`, `38` — older tags are EOL Fedora.
+**Pin a Fedora version:** `FEDORA_TAG=42 make bootstrap`. Cirrus publishes `latest`, `42`, `39`, `38`; only `latest` and `42` work here (39 and 38 are pre-dnf5 — they break `docker.sh`).
 
 ## Daily use
 
@@ -160,6 +160,23 @@ tart stop app-a && tart delete app-a
 tart clone fedora-php app-a
 # fresh, identical, ready in seconds (Tart uses copy-on-write).
 ```
+
+### On-demand credential loading
+
+For tokens you'd otherwise stash in `~/.zshrc` (GitHub, AWS, Stripe, etc.), define a `with-*` wrapper that pulls the secret from your host store and exports it for one command only — tokens never live in the shell env between calls. Drop this in `~/.zshrc` **inside a project VM** (not in `shared/files/zshrc`, which ships to every clone):
+
+```bash
+with-gh() {
+  local token
+  token=$(pass-cli read GITHUB_TOKEN/token 2>/dev/null) || {
+    echo "with-gh: failed to read GITHUB_TOKEN from secret store" >&2
+    return 1
+  }
+  GITHUB_TOKEN="$token" "$@"
+}
+```
+
+One function per credential (`with-aws`, `with-stripe`, etc.); adjust `pass-cli read` to whichever secret-store CLI you use.
 
 ## Adding a new stack
 
