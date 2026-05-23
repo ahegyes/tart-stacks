@@ -10,12 +10,15 @@
 
 set -euo pipefail
 
-# Require dnf5 — `config-manager addrepo --from-repofile=` is dnf5-only syntax.
-DNF_MAJOR=$(dnf --version 2>&1 | head -1 | grep -oE '^[0-9]+')
-[ "${DNF_MAJOR:-0}" -ge 5 ] || { echo "docker.sh requires dnf5 (Fedora 41+); detected dnf major: ${DNF_MAJOR:-unknown}" >&2; exit 1; }
-
 echo "==> Setting up Docker's Fedora repository..."
 dnf -y install dnf-plugins-core
+
+# Require dnf5 — `addrepo --from-repofile=` is dnf5-only syntax.
+if ! dnf config-manager addrepo --help >/dev/null 2>&1; then
+  echo "ERROR: 'dnf config-manager addrepo' unavailable — docker.sh needs dnf5 (Fedora 41+)." >&2
+  exit 1
+fi
+
 dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo
 
 echo "==> Installing Docker CE..."
