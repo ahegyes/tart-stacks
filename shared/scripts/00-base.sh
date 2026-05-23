@@ -10,13 +10,15 @@ dnf upgrade -y --refresh
 
 echo "==> Installing core development packages (fail-loud)..."
 # ncurses provides `tic` for the tssh wrapper's terminfo install path.
-# gcc/gcc-c++/make/autotools come from the development-tools group below.
+# gcc/gcc-c++/make listed explicitly — development-tools group composition
+# drifts between Fedora releases; declaring deps here avoids silent breakage.
 dnf install -y \
   curl wget ca-certificates \
   git gh \
   zsh nano \
   unzip tar \
-  ncurses
+  ncurses \
+  gcc gcc-c++ make
 
 echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."
 dnf install -y --skip-unavailable \

@@ -11,8 +11,11 @@
 # corresponding extension from the compiled PHP, with no error pointing
 # back at the cause.
 #
-# Build toolchain (PHP-specific):        re2c pkgconf
-# (bison/autoconf/automake/libtool come from development-tools in 00-base.sh)
+# Build toolchain:                       re2c bison autoconf automake libtool pkgconf
+# (listed explicitly even though some overlap with development-tools — Fedora 42's
+# group does not actually ship autotools, and PHP's build script bails without
+# autoconf. Verified: Fedora 42 dropping autotools from development-tools was
+# what broke the first rebuild attempt at mise-install.sh.)
 # Core compile deps (always):            openssl-devel libxml2-devel
 # pdo_sqlite, sqlite3:                   sqlite-devel
 # mbstring:                              oniguruma-devel
@@ -36,7 +39,7 @@ set -euo pipefail
 
 echo "==> Installing PHP build dependencies..."
 dnf install -y --skip-unavailable \
-  re2c pkgconf \
+  re2c bison autoconf automake libtool pkgconf \
   openssl-devel libxml2-devel \
   sqlite-devel \
   oniguruma-devel \
