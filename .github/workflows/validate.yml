@@ -9,10 +9,7 @@ on:
 jobs:
   packer:
     name: packer validate (${{ matrix.stack }})
-    # macOS runner because the cirruslabs/tart Packer plugin ships macOS-only
-    # binaries (it orchestrates Tart, which is macOS-only). Linux runners
-    # can't install the plugin, so we'd be stuck with syntax-only validation
-    # instead of full schema validation.
+    # macOS runner: cirruslabs/tart Packer plugin ships macOS-only binaries.
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -20,21 +17,14 @@ jobs:
         stack: [fedora-php]
     steps:
       - uses: actions/checkout@v6
-      - uses: hashicorp/setup-packer@v3
-        with:
-          version: latest
+      # macos-latest preinstalls packer; no setup-packer action needed.
+      # Token avoids the 60 req/hr unauthenticated GH API limit packer hits fetching plugin tags.
       - name: packer init
-        # GITHUB_TOKEN is auto-issued by Actions; passing it to packer init
-        # avoids the 60 req/hr unauthenticated GH API limit (shared across
-        # runners on the same egress IP), which packer hits when it fetches
-        # plugin release tags. With the token, the limit is 1000 req/hr.
         env:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: stacks/${{ matrix.stack }}
         run: packer init .
-      # packer validate stat()s the file provisioner source paths to confirm
-      # they exist on disk. Stub a dummy pubkey so validate passes — the
-      # content isn't parsed, only the file's existence is checked.
+      # packer validate stat()s file provisioner source paths; stub the pubkey so validate passes.
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub
       - name: packer validate
@@ -46,11 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # Pinned to SHA — bump to a newer release tag when needed and refresh the SHA.
-      # ignore_names excludes files/zshrc because shellcheck doesn't support
-      # `shell=zsh` as a directive value (only sh/bash/dash/ksh/busybox), so
-      # analyzing zsh-specific code with it is a non-goal. Excluding by name
-      # is cleaner than lying about the shell type with `shell=bash`.
+      # SHA-pin; bump tag + refresh SHA together. ignore_names skips zshrc — shellcheck has no shell=zsh.
       - uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
         with:
           ignore_names: zshrc
