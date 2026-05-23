@@ -19,7 +19,7 @@ jobs:
       matrix:
         stack: [fedora-php]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: hashicorp/setup-packer@v3
         with:
           version: latest
@@ -45,7 +45,7 @@ jobs:
     name: shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Pinned to SHA — bump to a newer release tag when needed and refresh the SHA.
       # ignore_names excludes files/zshrc because shellcheck doesn't support
       # `shell=zsh` as a directive value (only sh/bash/dash/ksh/busybox), so

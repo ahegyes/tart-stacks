@@ -1,0 +1,17 @@
+# Dependabot config — auto-PRs to bump GitHub Actions versions in
+# .github/workflows/. Scoped to actions only; this repo has no other package
+# ecosystems (the in-VM tooling is managed via mise inside the build, not
+# tracked by Dependabot).
+#
+# Grouping all action updates into one PR per week keeps the noise low for
+# a repo with only a handful of actions.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      ci-actions:
+        patterns:
+          - "*"
