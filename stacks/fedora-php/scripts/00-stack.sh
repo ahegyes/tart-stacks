@@ -11,7 +11,8 @@
 # corresponding extension from the compiled PHP, with no error pointing
 # back at the cause.
 #
-# Build toolchain (always needed):       re2c bison autoconf automake libtool pkgconf
+# Build toolchain (PHP-specific):        re2c pkgconf
+# (bison/autoconf/automake/libtool come from development-tools in 00-base.sh)
 # Core compile deps (always):            openssl-devel libxml2-devel
 # pdo_sqlite, sqlite3:                   sqlite-devel
 # mbstring:                              oniguruma-devel
@@ -35,7 +36,7 @@ set -euo pipefail
 
 echo "==> Installing PHP build dependencies..."
 dnf install -y --skip-unavailable \
-  re2c bison autoconf automake libtool pkgconf \
+  re2c pkgconf \
   openssl-devel libxml2-devel \
   sqlite-devel \
   oniguruma-devel \

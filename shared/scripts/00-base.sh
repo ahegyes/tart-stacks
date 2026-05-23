@@ -2,43 +2,29 @@
 # 00-base.sh — System updates, core dev packages, zellij, build toolchain.
 # Runs as root via sudo from Packer. Stack-agnostic; every stack runs this
 # before its own 00-stack.sh.
-#
-# --skip-unavailable on dnf install: lets the transaction continue past
-# packages missing on the running Fedora release (useful when the repo bumps).
 
 set -euo pipefail
 
 echo "==> Updating system packages..."
 dnf upgrade -y --refresh
 
-echo "==> Installing core development packages..."
+echo "==> Installing core development packages (fail-loud)..."
 # ncurses provides `tic` for the tssh wrapper's terminfo install path.
+# gcc/gcc-c++/make/autotools come from the development-tools group below.
+dnf install -y \
+  curl wget ca-certificates \
+  git gh \
+  zsh nano \
+  unzip tar \
+  ncurses
+
+echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."
 dnf install -y --skip-unavailable \
-  curl \
-  wget \
-  git \
-  gh \
-  zsh \
-  unzip \
-  tar \
-  ca-certificates \
-  gnupg2 \
+  htop lsof bind-utils nmap-ncat \
   jq \
-  htop \
-  ncurses \
   mariadb \
-  lsof \
-  bind-utils \
-  nmap-ncat \
   ShellCheck \
-  ripgrep \
-  fd-find \
-  fzf \
-  bat \
-  git-delta \
-  gcc \
-  gcc-c++ \
-  make
+  ripgrep fd-find fzf bat git-delta
 
 # Build toolchain group. dnf5 prefers `group install` over `@` shorthand
 # inside a mixed-package transaction (stricter about display-name vs ID).
