@@ -17,8 +17,9 @@ All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + 
 .
 ├── bin/
 │   ├── tssh                          # macOS-host SSH wrapper (Tart IP resolution + SSH connection multiplexing, one Touch ID per call; auto-syncs config on connect)
-│   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms from `tart list`
-│   └── tart-setup                    # Host install (run via `make setup`): symlinks, completion, SSH Include, forwards
+│   └── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms from `tart list`
+├── script/
+│   └── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards
 ├── shared/
 │   ├── scripts/                      # Provisioners shared across all stacks (00-base, claude, docker, mise, user-config, 99-finalize)
 │   └── files/
@@ -73,7 +74,7 @@ Idempotent — run once, re-run anytime. It symlinks `tssh` and `tart-ssh-sync` 
 
 `tssh` resolves the Tart VM IP each invocation (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and multiplexes SSH connections so you get one biometric prompt per call. Accepts the VM name with or without the `tart-` prefix — `tssh app-a` and `tssh tart-app-a` both resolve. Extra args pass through: `tssh app-a -L 8888:localhost:8888`. `tssh te<TAB>` tab-completes VM names from `tart list`.
 
-> Wiring it by hand instead? `make setup` is a thin wrapper over [`bin/tart-setup`](./bin/tart-setup) — read it for the exact steps.
+> Wiring it by hand instead? `make setup` is a thin wrapper over [`script/setup`](./script/setup) — read it for the exact steps.
 
 ### 3. SSH config sync
 

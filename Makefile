@@ -33,9 +33,9 @@ list-stacks:
 	@ls -1 stacks 2>/dev/null | sed 's/^fedora-/  /' || echo "  (none)"
 
 # Host-side install (macOS). Idempotent; safe to re-run. Logic lives in
-# bin/tart-setup so the SSH-config validation stays testable.
+# script/setup so the SSH-config validation stays testable.
 setup:
-	@"$(CURDIR)/bin/tart-setup"
+	@"$(CURDIR)/script/setup"
 
 # Validates that STACK is set and the requested stack directory exists.
 # Stack-targeted commands (init/build/rebuild) depend on this.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tart-setup — one-time host install for tart-stacks. Run via `make setup`
-# (or directly: bin/tart-setup). Symlinks the commands onto PATH, installs
+# setup — one-time host install for tart-stacks. Run via `make setup`
+# (or directly: script/setup). Symlinks the commands onto PATH, installs
 # zsh completion, wires the SSH Include line, and scaffolds the per-VM
 # forwards file.
 #
@@ -17,17 +17,19 @@
 
 set -euo pipefail
 
-# This script lives in the repo's bin/; resolve its real dir (following
-# symlinks) so the command symlinks point back at the repo no matter where
-# setup was invoked from.
+# This script lives in the repo's script/; resolve its real dir (following
+# symlinks), step up to the repo root, and point BIN_DIR at the actual
+# commands in bin/ — so the symlinks target the repo no matter where setup
+# was invoked from.
 src="${BASH_SOURCE[0]}"
 while [ -L "$src" ]; do
   dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
   src=$(readlink "$src")
   case "$src" in /*) ;; *) src="$dir/$src" ;; esac
 done
-BIN_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
-REPO_DIR=$(cd -P "$BIN_DIR/.." >/dev/null 2>&1 && pwd)
+SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+REPO_DIR=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+BIN_DIR="$REPO_DIR/bin"
 
 LOCAL_BIN="${TART_LOCAL_BIN:-$HOME/.local/bin}"
 SSH_CONFIG="${TART_SSH_CONFIG:-$HOME/.ssh/config}"
@@ -37,7 +39,7 @@ INCLUDE_LINE='Include ~/.ssh/config.d/tart-vms'
 info() { printf '  %s\n' "$*"; }
 warn() { printf '  WARNING: %s\n' "$*" >&2; }
 
-echo "tart-setup: installing host tools from $REPO_DIR"
+echo "setup: installing host tools from $REPO_DIR"
 
 # 1. Symlink the commands onto PATH (replaces a prior copy, if any).
 mkdir -p "$LOCAL_BIN"
@@ -117,4 +119,4 @@ EOF
   info "scaffolded $FORWARDS."
 fi
 
-echo "tart-setup: done. Build a stack with:  make build STACK=php"
+echo "setup: done. Build a stack with:  make build STACK=php"

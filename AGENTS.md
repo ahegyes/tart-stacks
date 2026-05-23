@@ -10,8 +10,9 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 ├── Makefile                            # Single top-level Makefile; `make setup` installs host tools; STACK=<name> selects stack for init/build/rebuild
 ├── bin/
 │   ├── tssh                            # macOS-host SSH wrapper (resolves Tart VM IP, SSH connection multiplexing for one Touch ID per call, accepts bare or `tart-`-prefixed name; lazy-runs tart-ssh-sync for unregistered VMs)
-│   ├── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms from `tart list`; aliases use `tart-<name>` prefix
-│   └── tart-setup                      # Host install run by `make setup` (symlinks, zsh completion, idempotent SSH Include + catch-all check, forwards scaffold)
+│   └── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms from `tart list`; aliases use `tart-<name>` prefix
+├── script/
+│   └── setup                           # Host install run by `make setup` (symlinks commands, zsh completion, idempotent SSH Include + catch-all check, forwards scaffold)
 ├── completions/
 │   └── _tssh                           # Zsh completion for tssh (VM names from `tart list`); installed by `make setup`
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
