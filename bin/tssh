@@ -9,9 +9,13 @@
 #   tssh app-a -L 8888:localhost:8888    # any extra args forwarded to ssh
 #
 # How it works:
-#  1. Checks the VM's state via `tart list --format json`. Fails fast if the
-#     VM doesn't exist; auto-starts it via `tart run --no-graphics &` if it
-#     exists but isn't running.
+#  1. Resolves the VM by name via `tart list --format json`. Accepts the
+#     name with or without a `tart-` prefix — tries the input as-given,
+#     then swaps prefix state on miss. Lets the host-side SSH config carry
+#     the `tart-<name>` alias (see `tart-ssh-sync`) without forcing the
+#     prefix into every `tssh` invocation. Auto-starts the VM via
+#     `tart run --no-graphics &` if it exists but isn't running; fails
+#     fast if neither name form is found.
 #  2. If just started, polls `tart ip` until a DHCP-assigned IP appears
 #     (timeout 60s), then waits for SSH to respond (timeout 30s).
 #  3. Sets up SSH connection multiplexing (ControlMaster) so the terminfo
@@ -39,12 +43,33 @@ command -v tart >/dev/null 2>&1 || { echo "tssh: 'tart' not on PATH. Install: br
 command -v jq   >/dev/null 2>&1 || { echo "tssh: 'jq' not on PATH. Install: brew install jq" >&2; exit 1; }
 
 # Resolve VM state — distinguishes "doesn't exist" (fail) from any non-running state (start).
-STATE=$(tart list --format json 2>/dev/null \
-  | jq -r --arg name "$VM" '.[] | select(.Name==$name) | .State')
+# Two-way prefix lookup: the SSH config alias is `tart-<name>` (per the
+# convention enforced by `tart-ssh-sync`), but Tart itself stores VMs under
+# their bare name. Try as-given, then strip-or-add the prefix on miss so
+# either form works at the CLI.
+resolve_state() {
+  tart list --format json 2>/dev/null \
+    | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
+}
+
+STATE=$(resolve_state "$VM")
 if [ -z "$STATE" ]; then
-  echo "tssh: VM '$VM' not found. Try 'tart list' or 'tart clone <base> $VM'." >&2
-  exit 1
+  case "$VM" in
+    tart-*) ALT="${VM#tart-}" ;;
+    *)      ALT="tart-$VM" ;;
+  esac
+  STATE=$(resolve_state "$ALT")
+  if [ -z "$STATE" ]; then
+    echo "tssh: VM '$VM' not found (also tried '$ALT'). Try 'tart list' or 'tart clone <base> $VM'." >&2
+    exit 1
+  fi
+  VM="$ALT"
 fi
+
+# SSH config aliases use the `tart-<name>` prefix; force it here regardless
+# of which form Tart stores the VM under. HostName is overridden via -o,
+# so this only matters for Host-pattern matching in ~/.ssh/config.
+SSH_HOST="tart-${VM#tart-}"
 
 if [ "$STATE" != "running" ]; then
   echo "tssh: VM '$VM' is $STATE — starting in background..." >&2
@@ -86,7 +111,7 @@ SSH_OPTS=(
 if [ "$STATE" != "running" ]; then
   ready=0
   for _ in $(seq 1 30); do
-    if ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=2" "$VM" true 2>/dev/null; then
+    if ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=2" "$SSH_HOST" true </dev/null 2>/dev/null; then
       ready=1; break
     fi
     sleep 1
@@ -103,7 +128,7 @@ fi
 # wrapper.
 PRECONNECT="${TSSH_PRECONNECT:-$HOME/.config/tssh/preconnect}"
 if [ -x "$PRECONNECT" ]; then
-  TSSH_VM="$VM" TSSH_IP="$IP" TSSH_CONTROL_PATH="$CONTROL_PATH" \
+  TSSH_VM="$VM" TSSH_IP="$IP" TSSH_CONTROL_PATH="$CONTROL_PATH" TSSH_SSH_HOST="$SSH_HOST" \
     "$PRECONNECT" || {
       echo "tssh: preconnect hook ($PRECONNECT) exited non-zero — opening session anyway." >&2
     }
@@ -111,13 +136,13 @@ fi
 
 # Terminfo install: piggybacks on the multiplexed connection.
 LOCAL_TERM="${TERM:-xterm-256color}"
-if ! ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=5" "$VM" \
-    "infocmp '${LOCAL_TERM}' >/dev/null 2>&1" 2>/dev/null; then
+if ! ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=5" "$SSH_HOST" \
+    "infocmp '${LOCAL_TERM}' >/dev/null 2>&1" </dev/null 2>/dev/null; then
   if ! infocmp -x "${LOCAL_TERM}" \
-      | ssh "${SSH_OPTS[@]}" "$VM" 'mkdir -p ~/.terminfo && tic -x -' \
+      | ssh "${SSH_OPTS[@]}" "$SSH_HOST" 'mkdir -p ~/.terminfo && tic -x -' \
       >/dev/null; then
     echo "tssh: terminfo install for $LOCAL_TERM on $VM failed — session may have rendering issues" >&2
   fi
 fi
 
-exec ssh "${SSH_OPTS[@]}" "$VM" "$@"
+exec ssh "${SSH_OPTS[@]}" "$SSH_HOST" "$@"

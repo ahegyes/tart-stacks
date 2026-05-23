@@ -9,7 +9,10 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 ├── README.md  CLAUDE.md  AGENTS.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── Makefile                            # Single top-level Makefile; STACK=<name> selects stack for init/build/rebuild
 ├── bin/
-│   └── tssh                            # macOS-host SSH wrapper (resolves Tart VM IP, multiplexes biometric prompts)
+│   ├── tssh                            # macOS-host SSH wrapper (resolves Tart VM IP, multiplexes biometric prompts, accepts bare or `tart-`-prefixed name)
+│   └── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms from `tart list`; aliases use `tart-<name>` prefix
+├── completions/
+│   └── _tssh                           # Zsh completion for tssh (VM names from `tart list`); optional, symlink onto $fpath
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First. dnf upgrade + core dev pkgs + build toolchain + zellij (root)
@@ -40,8 +43,9 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 - **Every shell script starts with `set -euo pipefail`.** No exceptions.
 - **Comments explain WHY, not WHAT.** Don't restate the code; explain hidden constraints, load-order requirements, or surprising behavior.
 - **Naming is `tart-stacks` everywhere** for the repo; each stack is `fedora-<lang>` (matching the Tart image `output_name`). Don't introduce alternative spellings within a stack's files.
-- **Host (macOS) and guest (Fedora VM) live in the same repo.** `bin/tssh` runs on the host; `make`/`packer` run on the host; everything under `shared/scripts/`, `shared/files/`, and `stacks/*/scripts/`, `stacks/*/files/` runs inside the build VM.
+- **Host (macOS) and guest (Fedora VM) live in the same repo.** `bin/tssh` and `bin/tart-ssh-sync` run on the host; `make`/`packer` run on the host; everything under `shared/scripts/`, `shared/files/`, and `stacks/*/scripts/`, `stacks/*/files/` runs inside the build VM.
 - **`shared/` vs `stacks/<name>/` rule.** A file goes in `shared/` if it would be byte-identical across every plausible stack. Anything that differs by stack lives under `stacks/<name>/`. If a script is mostly shared but needs one stack-specific tweak, split it (see `00-base.sh` + `00-stack.sh`) rather than parameterize.
+- **SSH config alias prefix is `tart-<name>`.** Tart VM names stay bare (e.g. `app-a`, `test-vm`). The `tart-` prefix lives only in the generated SSH config (`tart-ssh-sync`), so `ssh -G` and `~/.ssh/config` clearly mark Tart VMs vs remote machines. `tssh` accepts either form on input.
 
 ## Build pipeline — load-order rules
 

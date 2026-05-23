@@ -1,0 +1,42 @@
+#compdef tssh
+#
+# Zsh completion for tssh.
+#
+# Completes Tart VM names from `tart list --format json`, filtering out
+# stack build artifacts (fedora-base, fedora-<lang>). Offers both bare
+# (`test-vm`) and `tart-<name>`-prefixed forms since tssh accepts either.
+#
+# Install:
+#   fpath=(/path/to/tart-stacks/completions $fpath)   # before compinit
+#   autoload -Uz compinit && compinit
+
+_tssh() {
+  if (( CURRENT == 2 )); then
+    if (( ! $+commands[tart] )) || (( ! $+commands[jq] )); then
+      _message 'tssh: needs `tart` and `jq` on PATH for completion'
+      return 1
+    fi
+
+    local -a vms prefixed
+    vms=(${(f)"$(tart list --format json 2>/dev/null \
+      | jq -r '.[] | select(.Source=="local") | .Name' \
+      | grep -vE '^(fedora-base|fedora-[a-z]+)$')"})
+
+    if (( ${#vms} == 0 )); then
+      _message 'no Tart dev VMs (try `tart clone <base> <name>`)'
+      return 1
+    fi
+
+    local vm
+    for vm in $vms; do prefixed+=("tart-$vm"); done
+
+    _describe -t tart-vms 'Tart VM' vms
+    _describe -t tart-vms-prefixed 'Tart VM (prefixed)' prefixed
+  else
+    # Subsequent args are passed verbatim to ssh — delegate to ssh's completer
+    # so `-L`, `-R`, `-o`, etc. complete sensibly. _ssh ships with zsh.
+    _ssh
+  fi
+}
+
+_tssh "$@"

@@ -61,42 +61,66 @@ chmod 644 ~/.ssh/tart-vm.pub
 
 **macOS 13–15.** Use [Secretive](https://github.com/maxgoedjen/secretive) (`brew install --cask secretive`). Create a key with Touch ID required; save the public key to `~/.ssh/tart-vm.pub`. SSH config uses Secretive's agent socket as `IdentityAgent`.
 
-### 2. Add VM SSH config
+### 2. Install the host tools
 
-Some VMs need a host SSH agent forwarded into them (for in-VM git/composer against private hosts authorized only by a Mac-resident key). Others don't. List both in `~/.ssh/config` with the `RemoteForward` attached only to the VMs that need it:
-
-```
-# Common settings for every Tart VM (regardless of which stack it was cloned from).
-Host app-a app-b client-site experiments
-  User admin
-  IdentityFile ~/.ssh/tart-vm
-  SecurityKeyProvider /usr/lib/ssh-keychain.dylib   # macOS 26 native; omit for Secretive
-  IdentitiesOnly yes
-  UserKnownHostsFile /dev/null
-  StrictHostKeyChecking no
-  LogLevel ERROR
-
-# VMs that need a host SSH agent forwarded.
-Host app-a app-b
-  RemoteForward /home/admin/.ssh/forwarded-agent.sock /Users/<you>/.ssh/<host-agent-socket>
-```
-
-Common `<host-agent-socket>` paths:
-- 1Password: `~/.1password/agent.sock`
-- Secretive: `~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh`
-- Standard `ssh-agent`: `$SSH_AUTH_SOCK` (resolve at runtime, don't hardcode)
-
-The VM's baseline `~/.zshrc` auto-sets `SSH_AUTH_SOCK` to the forwarded socket, so git/composer use the host agent transparently.
-
-### 3. Install the `tssh` wrapper
-
-Tart VM IPs aren't stable across `tart delete` / `tart clone` cycles. `bin/tssh` resolves the IP via `tart ip <vm>` each invocation, while your SSH config matches by name. It uses connection multiplexing so you get exactly one biometric prompt per `tssh` call regardless of internal SSH operations. Install once; it serves every VM from every stack.
+Two scripts go on your `$PATH`: `tssh` (VM SSH wrapper) and `tart-ssh-sync` (SSH config generator).
 
 ```bash
-install -m 755 bin/tssh ~/.local/bin/tssh   # or copy anywhere in $PATH
+install -m 755 bin/tssh          ~/.local/bin/tssh
+install -m 755 bin/tart-ssh-sync ~/.local/bin/tart-ssh-sync
 ```
 
-Use: `tssh app-a`. Extra args pass through: `tssh app-a -L 8888:localhost:8888`.
+`tssh` resolves the Tart VM IP each invocation (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and uses SSH connection multiplexing so you get one biometric prompt per call. Accepts the VM name with or without the `tart-` prefix — `tssh app-a` and `tssh tart-app-a` both resolve. Extra args pass through: `tssh app-a -L 8888:localhost:8888`.
+
+**Optional zsh completion** — `completions/_tssh` tab-completes VM names from `tart list`. Drop it onto your `fpath`:
+
+```bash
+ln -sf "$PWD/completions/_tssh" /opt/homebrew/share/zsh/site-functions/_tssh   # Apple Silicon
+rm -f ~/.zcompdump*                                                            # force compinit rebuild
+exec zsh                                                                       # pick up in current terminal
+```
+
+`tssh te<TAB>` → `tssh test-vm`. Subsequent args delegate to ssh's built-in completer (so `-L`, `-R`, `-o`, etc. complete normally).
+
+### 3. Generate SSH config
+
+`tart-ssh-sync` regenerates `~/.ssh/config.d/tart-vms` from `tart list` whenever you create or destroy a VM. Generated host aliases use the `tart-<name>` prefix so `ssh -G` output makes it obvious it's a Tart VM, not a remote machine.
+
+One-time host setup — add this to the **top** of `~/.ssh/config` (before any `Host *` block, so specific Tart settings beat the catch-all):
+
+```
+Include ~/.ssh/config.d/tart-vms
+```
+
+Then run the generator any time `tart list` changes:
+
+```bash
+tart-ssh-sync             # rewrite ~/.ssh/config.d/tart-vms
+tart-ssh-sync --dry-run   # print what would be written without touching disk
+```
+
+What the script emits as universal defaults (apply to every Tart VM):
+
+- **Common block**: user, identity file, host-key handling, multiplexing.
+- **Agent socket forward**: `/home/admin/.ssh/forwarded-agent.sock` ← your host SSH agent. The in-VM `~/.zshrc` auto-sets `SSH_AUTH_SOCK` to the forwarded socket, so `git`/`ssh`/`composer` inside the VM transparently use the host agent. **By default the generator reads `$SSH_AUTH_SOCK`** — whatever agent your shell is wired to. Override with `TART_AGENT_SOCKET=/path/to/socket` (1Password's `~/.1password/agent.sock`, Secretive's container socket, etc.) when you want a specific agent regardless of shell state.
+
+What you opt into per-VM (your personal forwards, never committed): `~/.config/tart-stacks/forwards`. Each non-blank, non-comment line:
+
+```
+<vm-pattern> RemoteForward <args>
+```
+
+`<vm-pattern>` is `*` (all dev VMs), a single bare name, or a comma-separated list. Names that don't exist in `tart list` are silently dropped — you can keep entries for VMs that come and go.
+
+Example `~/.config/tart-stacks/forwards`:
+
+```
+* RemoteForward 27123 127.0.0.1:27123              # Obsidian Personal REST API
+* RemoteForward 27125 127.0.0.1:27125              # Obsidian Work REST API
+work-a,work-b RemoteForward 8080 127.0.0.1:8080    # host SOCKS proxy for specific VMs
+```
+
+Re-run `tart-ssh-sync` after editing this file.
 
 ### 4. Build a stack image
 
@@ -194,7 +218,7 @@ One function per credential (`with-aws`, `with-stripe`, etc.); adjust `pass-cli 
 
 - **`packer init` fails with "no plugins for github.com/cirruslabs/tart"** → upgrade Packer (`brew upgrade hashicorp/tap/packer`); the tart plugin requires Packer 1.7+.
 - **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip fedora-base`. If blank, the VM didn't get DHCP — `tart stop fedora-base; tart delete fedora-base; make bootstrap` to start over.
-- **`tssh` triggers Touch ID twice per session** → your `~/.ssh/config` is missing `IdentitiesOnly yes` for the VM host, so ssh tries every key in your agent. See the SSH config example in [Setup §2](#2-add-vm-ssh-config).
+- **`tssh` triggers Touch ID twice per session** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below `Host *`), so ssh falls back to defaults and tries every key in your agent. See [Setup §3](#3-generate-ssh-config).
 
 Stack-specific troubleshooting lives in each stack's README.
 

@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# tart-ssh-sync — regenerate ~/.ssh/config.d/tart-vms from `tart list`.
+#
+# Usage:
+#   tart-ssh-sync             # rewrite ~/.ssh/config.d/tart-vms
+#   tart-ssh-sync --dry-run   # print the config that would be written to stdout
+#
+# What the script emits unconditionally (universal Tart VM defaults):
+#   - Common block for every dev VM: User=admin, IdentityFile, host-key
+#     handling, multiplexing.
+#   - Agent socket forward for every dev VM:
+#       RemoteForward /home/admin/.ssh/forwarded-agent.sock $TART_AGENT_SOCKET
+#     The in-VM ~/.zshrc auto-sets SSH_AUTH_SOCK to the forwarded socket so
+#     git/ssh inside the VM transparently use the host agent.
+#
+# What you opt into (your personal forwards): ~/.config/tart-stacks/forwards
+#   Each non-blank, non-comment line:
+#     <vm-pattern> RemoteForward <args...>
+#
+#   <vm-pattern>:
+#     *                 — every dev VM
+#     <name>            — single VM (bare name, no `tart-` prefix)
+#     <a>,<b>,...       — comma-separated list (no spaces)
+#
+#   Names that don't appear in `tart list` are silently dropped (lets you
+#   keep entries for VMs that exist intermittently).
+#
+#   Example ~/.config/tart-stacks/forwards:
+#     * RemoteForward 27123 127.0.0.1:27123              # Obsidian Personal REST API
+#     * RemoteForward 27125 127.0.0.1:27125              # Obsidian Work REST API
+#     work-vm-a,work-vm-b RemoteForward 8080 127.0.0.1:8080  # host SOCKS proxy
+#
+# What's excluded from the dev VM list:
+#   - OCI images (the Cirrus base pulled by `make bootstrap`).
+#   - Stack build artifacts matching `fedora-base` or `fedora-<lang>` —
+#     they're clone sources, not dev VMs. To surface a VM whose name
+#     genuinely collides with this pattern, add it to FORCE_INCLUDE below.
+#
+# One-time host setup:
+#   Add to top of ~/.ssh/config (BEFORE any `Host *` block so specific
+#   tart settings beat the catch-all):
+#     Include ~/.ssh/config.d/tart-vms
+#
+# Overridable via env:
+#   TART_AGENT_SOCKET    host-side SSH agent socket forwarded into VMs.
+#                        Default: $SSH_AUTH_SOCK (whatever your shell is wired to).
+#   TART_FORWARDS        path to the forwards config file.
+#                        Default: $HOME/.config/tart-stacks/forwards
+#   TART_SSH_CONFIG_D    output file path.
+#                        Default: $HOME/.ssh/config.d/tart-vms
+
+set -euo pipefail
+
+OUTPUT="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
+FORWARDS_CONFIG="${TART_FORWARDS:-$HOME/.config/tart-stacks/forwards}"
+AGENT_SOCKET="${TART_AGENT_SOCKET:-${SSH_AUTH_SOCK:-}}"
+if [ -z "$AGENT_SOCKET" ]; then
+  echo "tart-ssh-sync: no SSH agent socket resolvable. Set \$SSH_AUTH_SOCK in your shell or pass TART_AGENT_SOCKET=<path> when invoking." >&2
+  exit 1
+fi
+
+# Build artifacts to exclude. Anchored regex against the bare VM name.
+SKIP_PATTERN='^(fedora-base|fedora-[a-z]+)$'
+
+# Escape hatch: bare names listed here override SKIP_PATTERN.
+FORCE_INCLUDE=()
+
+DRY_RUN=0
+case "${1:-}" in
+  --dry-run|-n) DRY_RUN=1 ;;
+  '') ;;
+  *) echo "tart-ssh-sync: unknown arg '$1' (use --dry-run or no args)" >&2; exit 64 ;;
+esac
+
+command -v tart >/dev/null 2>&1 || { echo "tart-ssh-sync: 'tart' not on PATH. brew install cirruslabs/cli/tart" >&2; exit 1; }
+command -v jq   >/dev/null 2>&1 || { echo "tart-ssh-sync: 'jq' not on PATH. brew install jq" >&2; exit 1; }
+
+# Collect dev VMs: local source only (skip OCI), skip build artifacts,
+# unless force-included. Sorted for deterministic output.
+vms=()
+while IFS= read -r name; do
+  [ -z "$name" ] && continue
+  forced=0
+  for f in "${FORCE_INCLUDE[@]:-}"; do
+    [ "$name" = "$f" ] && { forced=1; break; }
+  done
+  if [ "$forced" -eq 0 ] && [[ "$name" =~ $SKIP_PATTERN ]]; then
+    continue
+  fi
+  vms+=("$name")
+done < <(tart list --format json | jq -r '.[] | select(.Source=="local") | .Name' | sort)
+
+# Prefix VMs for the SSH alias. Tart side stays bare; only the SSH config
+# carries the `tart-` prefix (see tssh's two-way prefix lookup).
+prefixed=()
+for vm in "${vms[@]:-}"; do
+  prefixed+=("tart-$vm")
+done
+
+# Parse the forwards config into parallel arrays preserving line order.
+# Skip blanks/comments; skip non-RemoteForward directives with a warning
+# (the parser only supports RemoteForward today — extend here if needed).
+patterns=()
+forwards_args=()
+if [ -f "$FORWARDS_CONFIG" ]; then
+  lineno=0
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    lineno=$((lineno + 1))
+    line="${raw%%#*}"
+    line=$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    [ -z "$line" ] && continue
+
+    pattern="${line%%[[:space:]]*}"
+    rest=$(printf '%s' "$line" | sed -e 's/^[^[:space:]]\{1,\}[[:space:]]\{1,\}//')
+    directive="${rest%%[[:space:]]*}"
+    if [ "$directive" != "RemoteForward" ]; then
+      echo "tart-ssh-sync: $FORWARDS_CONFIG:$lineno: skipping unsupported directive '$directive' (only RemoteForward today)" >&2
+      continue
+    fi
+
+    patterns+=("$pattern")
+    forwards_args+=("$rest")
+  done < "$FORWARDS_CONFIG"
+fi
+
+# Resolve a vm-pattern (`*`, `<name>`, or `<a>,<b>,...`) to a space-joined
+# list of prefixed host aliases. Names not in $vms are silently dropped.
+# Prints nothing (and the caller skips the block) if the resolved list is empty.
+resolve_pattern() {
+  local pattern=$1
+  if [ "$pattern" = "*" ]; then
+    printf '%s' "${prefixed[*]:-}"
+    return 0
+  fi
+  local out=""
+  local IFS=','
+  set -f
+  local names=( $pattern )
+  set +f
+  unset IFS
+  for n in "${names[@]}"; do
+    for vm in "${vms[@]:-}"; do
+      if [ "$vm" = "$n" ]; then
+        out+="${out:+ }tart-$vm"
+        break
+      fi
+    done
+  done
+  printf '%s' "$out"
+}
+
+emit() {
+  echo "# Generated by tart-ssh-sync. Do not edit — re-run the script instead."
+  echo "# Source of truth: \`tart list\` + $FORWARDS_CONFIG"
+  echo
+
+  if [ "${#vms[@]}" -eq 0 ]; then
+    echo "# No dev VMs found. Clone one with \`tart clone <base> <name>\`, then re-run."
+    return 0
+  fi
+
+  echo "# Common: auth, identity, host-key handling, multiplexing — every Tart dev VM."
+  echo "Host ${prefixed[*]}"
+  echo "  User admin"
+  echo "  IdentityFile ~/.ssh/tart-vm"
+  echo "  SecurityKeyProvider /usr/lib/ssh-keychain.dylib"
+  echo "  IdentitiesOnly yes"
+  echo "  UserKnownHostsFile /dev/null"
+  echo "  StrictHostKeyChecking no"
+  echo "  LogLevel ERROR"
+  echo
+  echo "# Host SSH agent forwarded into every VM (in-VM zshrc picks this up)."
+  echo "Host ${prefixed[*]}"
+  echo "  RemoteForward /home/admin/.ssh/forwarded-agent.sock $AGENT_SOCKET"
+
+  # One Host block per unique vm-pattern from the forwards config,
+  # preserving first-seen order. Forwards sharing a pattern group together.
+  if [ "${#patterns[@]}" -gt 0 ]; then
+    local seen="|"
+    for i in "${!patterns[@]}"; do
+      local pattern="${patterns[$i]}"
+      case "$seen" in
+        *"|$pattern|"*) continue ;;
+      esac
+      seen+="$pattern|"
+
+      local host_list
+      host_list=$(resolve_pattern "$pattern")
+      [ -z "$host_list" ] && continue
+
+      echo
+      echo "# Forwards for pattern: $pattern"
+      echo "Host $host_list"
+      local j
+      for j in "${!patterns[@]}"; do
+        if [ "${patterns[$j]}" = "$pattern" ]; then
+          echo "  ${forwards_args[$j]}"
+        fi
+      done
+    done
+  fi
+}
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  emit
+  exit 0
+fi
+
+mkdir -p "$(dirname "$OUTPUT")"
+tmp=$(mktemp "${OUTPUT}.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+emit > "$tmp"
+mv "$tmp" "$OUTPUT"
+chmod 600 "$OUTPUT"
+trap - EXIT
+
+echo "tart-ssh-sync: wrote $OUTPUT (${#vms[@]} VM(s), ${#patterns[@]} extra forward line(s))" >&2
