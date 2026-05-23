@@ -1,0 +1,63 @@
+# Global tool versions for fedora-jvm.
+# Override per-project with a .mise.toml in the project root.
+
+[tools]
+# Temurin 25 is the current Java LTS (Sep 2025 → Sep 2030 community
+# support). mise's core `java` backend resolves "temurin-25" to the
+# latest 25.x patch via the Adoptium API. Per-project overrides via
+# `.mise.toml` in the project repo (e.g., `java = "temurin-17"` for
+# repos still on JDK 17).
+java = "temurin-25"
+
+# Maven release cadence is steady; `latest` is fine for the global
+# default. Projects that need a specific Maven version pin it via
+# project-local `.mise.toml`.
+maven = "latest"
+
+# Gradle is the default build tool for most modern Kotlin and Android
+# templates and is common in Java projects too. Like Maven, projects
+# usually ship a wrapper (`./gradlew`) that pins the exact Gradle
+# version per repo — this global install is the convenience tool for
+# bootstrapping wrappers and ad-hoc use.
+gradle = "latest"
+
+# `sbt` here is the launcher script; the real sbt build + Scala compiler
+# are downloaded on first invocation in a project, driven by that
+# project's `project/build.properties`. `latest` keeps just the launcher
+# current.
+sbt = "latest"
+
+# Modern Scala CLI — self-bootstraps the compiler version per project.
+# Forced to the asdf backend because mise's default `github:` backend
+# extracts the upstream single-binary `.gz` without renaming, so the
+# executable on PATH ends up as `scala-cli-aarch64-pc-linux` rather
+# than `scala-cli`. The asdf plugin handles the rename.
+"asdf:mise-plugins/mise-scala-cli" = "latest"
+
+# Kotlin compiler (`kotlinc`) for ad-hoc / single-file work and for
+# bootstrapping projects. Real Kotlin projects pin the compiler via
+# their build tool (Gradle's `kotlin` plugin or Maven's
+# `kotlin-maven-plugin`); this global is the standalone CLI.
+kotlin = "latest"
+
+# Python project manager. Fedora ships `/usr/bin/python3` (3.13) in the
+# base image for system use; per-project Pythons go through `uv venv` /
+# `uv python install` and live under `~/.local/share/uv/`. Avoids
+# dual-managing the system Python alongside a mise-managed one (Modern
+# Fedora's PEP 668 enforcement makes the system Python read-only anyway).
+uv = "latest"
+
+# Node tracks whichever LTS line mise's `lts` alias points to. The alias
+# is hardcoded in mise's source (src/plugins/core/node.rs), not resolved
+# dynamically — jdx/mise bumps it shortly after each October LTS
+# cutover, so fresh builds follow with a short lag.
+node = "lts"
+
+[settings]
+# Set to true while debugging tool installs.
+verbose = false
+
+# Trust .mise.toml under $HOME without prompting. The Tart VM is a
+# single-user dev box; the user owns everything in $HOME, so prompting
+# per-project would be friction without security benefit.
+trusted_config_paths = ["~"]
