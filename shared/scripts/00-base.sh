@@ -10,8 +10,6 @@ dnf upgrade -y --refresh
 
 echo "==> Installing core development packages (fail-loud)..."
 # ncurses provides `tic` for the tssh wrapper's terminfo install path.
-# gcc/gcc-c++/make listed explicitly — development-tools group composition
-# drifts between Fedora releases; declaring deps here avoids silent breakage.
 dnf install -y \
   curl wget ca-certificates \
   git gh \

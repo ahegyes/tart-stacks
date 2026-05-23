@@ -11,11 +11,7 @@
 # corresponding extension from the compiled PHP, with no error pointing
 # back at the cause.
 #
-# Build toolchain:                       re2c bison autoconf automake libtool pkgconf
-# (listed explicitly even though some overlap with development-tools — Fedora 42's
-# group does not actually ship autotools, and PHP's build script bails without
-# autoconf. Verified: Fedora 42 dropping autotools from development-tools was
-# what broke the first rebuild attempt at mise-install.sh.)
+# Build toolchain (always needed):       re2c bison autoconf automake libtool pkgconf
 # Core compile deps (always):            openssl-devel libxml2-devel
 # pdo_sqlite, sqlite3:                   sqlite-devel
 # mbstring:                              oniguruma-devel
