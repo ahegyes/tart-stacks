@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# tart-setup — one-time host install for tart-stacks. Run via `make setup`
+# (or directly: bin/tart-setup). Symlinks the commands onto PATH, installs
+# zsh completion, wires the SSH Include line, and scaffolds the per-VM
+# forwards file.
+#
+# Idempotent: safe to re-run. It only creates what's missing and never
+# overwrites your edits. Where it can't safely fix something (an Include
+# placed below a catch-all `Host *`, which SSH's first-match-wins renders
+# dead), it WARNS and leaves the file untouched rather than rewriting it.
+#
+# Override targets via env (used by the tests; also handy for odd layouts):
+#   TART_LOCAL_BIN   command symlink dir       (default ~/.local/bin)
+#   TART_COMPDIR     zsh completion dir        (default: brew site-functions, else ~/.local/share/zsh/site-functions)
+#   TART_SSH_CONFIG  ssh config to wire        (default ~/.ssh/config)
+#   TART_FORWARDS    per-VM forwards to scaffold (default ~/.config/tart-stacks/forwards)
+
+set -euo pipefail
+
+# This script lives in the repo's bin/; resolve its real dir (following
+# symlinks) so the command symlinks point back at the repo no matter where
+# setup was invoked from.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+BIN_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+REPO_DIR=$(cd -P "$BIN_DIR/.." >/dev/null 2>&1 && pwd)
+
+LOCAL_BIN="${TART_LOCAL_BIN:-$HOME/.local/bin}"
+SSH_CONFIG="${TART_SSH_CONFIG:-$HOME/.ssh/config}"
+FORWARDS="${TART_FORWARDS:-$HOME/.config/tart-stacks/forwards}"
+INCLUDE_LINE='Include ~/.ssh/config.d/tart-vms'
+
+info() { printf '  %s\n' "$*"; }
+warn() { printf '  WARNING: %s\n' "$*" >&2; }
+
+echo "tart-setup: installing host tools from $REPO_DIR"
+
+# 1. Symlink the commands onto PATH (replaces a prior copy, if any).
+mkdir -p "$LOCAL_BIN"
+ln -sf "$BIN_DIR/tssh"          "$LOCAL_BIN/tssh"
+ln -sf "$BIN_DIR/tart-ssh-sync" "$LOCAL_BIN/tart-ssh-sync"
+info "linked tssh, tart-ssh-sync -> $LOCAL_BIN"
+case ":$PATH:" in
+  *":$LOCAL_BIN:"*) ;;
+  *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;
+esac
+
+# 2. zsh completion. Homebrew's site-functions is already on fpath; the
+#    home-dir fallback is not, so tell the user to wire it.
+compdir="${TART_COMPDIR:-}"
+if [ -z "$compdir" ]; then
+  if command -v brew >/dev/null 2>&1; then
+    compdir="$(brew --prefix)/share/zsh/site-functions"
+  else
+    compdir="$HOME/.local/share/zsh/site-functions"
+  fi
+fi
+mkdir -p "$compdir"
+ln -sf "$REPO_DIR/completions/_tssh" "$compdir/_tssh"
+info "linked completion -> $compdir/_tssh  (run: rm -f ~/.zcompdump* && exec zsh)"
+case "$compdir" in
+  "$HOME"/*) warn "add to ~/.zshrc above compinit:  fpath=($compdir \$fpath)" ;;
+esac
+
+# 3. SSH Include line — idempotent, and validated for catch-all ordering.
+#    SSH uses the first value seen per keyword, so the Include must sit above
+#    any `Host *` block or the catch-all wins and the Tart settings are dead.
+mkdir -p "$(dirname "$SSH_CONFIG")"
+touch "$SSH_CONFIG"
+chmod 600 "$SSH_CONFIG"
+# One awk pass: line of the first catch-all `Host` block (a bare `*` pattern
+# token), and line of our Include. 0 means "not found".
+read -r catchall inc < <(awk '
+  tolower($1)=="host"    { for (i=2; i<=NF; i++) if ($i=="*" && !c) c=NR }
+  tolower($1)=="include" && $0 ~ /config\.d\/tart-vms/ && !x { x=NR }
+  END { print c+0, x+0 }
+' "$SSH_CONFIG")
+if [ "$inc" -gt 0 ]; then
+  if [ "$catchall" -gt 0 ] && [ "$catchall" -lt "$inc" ]; then
+    warn "Include is on line $inc but a catch-all 'Host *' is on line $catchall."
+    warn "First-match-wins means the catch-all overrides the Tart VM settings (e.g. wrong User)."
+    warn "Move '$INCLUDE_LINE' above line $catchall. Left unchanged."
+  else
+    info "SSH Include already present and correctly placed (line $inc)."
+  fi
+else
+  tmp=$(mktemp "${SSH_CONFIG}.XXXXXX")
+  {
+    printf '%s\n' \
+      "# Added by tart-stacks. Run 'make setup' to restore this line if removed." \
+      '# Keep it above any Host block so per-VM settings beat a catch-all Host *.' \
+      "$INCLUDE_LINE" \
+      ''
+    cat "$SSH_CONFIG"
+  } > "$tmp"
+  mv "$tmp" "$SSH_CONFIG"
+  chmod 600 "$SSH_CONFIG"
+  info "added SSH Include to the top of $SSH_CONFIG."
+fi
+
+# 4. Scaffold the per-VM forwards file. Never touch an existing one.
+if [ -e "$FORWARDS" ]; then
+  info "forwards file already present ($FORWARDS) — left as-is."
+else
+  mkdir -p "$(dirname "$FORWARDS")"
+  cat > "$FORWARDS" <<'EOF'
+# tart-stacks per-VM RemoteForward opt-ins. Re-run tart-ssh-sync after editing.
+# Format:  <vm-pattern> RemoteForward <args>
+#   <vm-pattern>:  *  (all VMs) | <name> | <a>,<b>,...  (comma list, no spaces)
+# Example:
+#   * RemoteForward 27123 127.0.0.1:27123   # forward a host service into every VM
+EOF
+  info "scaffolded $FORWARDS."
+fi
+
+echo "tart-setup: done. Build a stack with:  make build STACK=php"

@@ -29,6 +29,9 @@
 #     repo. Hook failure is non-fatal — the warning prints, the session opens.
 #  5. Transparently installs your local $TERM's terminfo into the VM if
 #     missing (Ghostty, Alacritty, WezTerm, etc.).
+#
+#  Before connecting, if the VM isn't in the generated SSH config yet (a
+#  fresh clone), tssh runs tart-ssh-sync first so its config block exists.
 
 set -euo pipefail
 
@@ -41,6 +44,21 @@ VM="$1"; shift
 
 command -v tart >/dev/null 2>&1 || { echo "tssh: 'tart' not on PATH. Install: brew install cirruslabs/cli/tart" >&2; exit 1; }
 command -v jq   >/dev/null 2>&1 || { echo "tssh: 'jq' not on PATH. Install: brew install jq" >&2; exit 1; }
+
+# Resolve this script's real path (following symlinks) so we can find sibling
+# tart-ssh-sync no matter how tssh was installed.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+if [ -x "$SCRIPT_DIR/tart-ssh-sync" ]; then
+  TART_SSH_SYNC="$SCRIPT_DIR/tart-ssh-sync"
+else
+  TART_SSH_SYNC="$(command -v tart-ssh-sync || true)"
+fi
 
 # Resolve VM state — distinguishes "doesn't exist" (fail) from any non-running state (start).
 # Two-way prefix lookup: the SSH config alias is `tart-<name>` (per the
@@ -70,6 +88,15 @@ fi
 # of which form Tart stores the VM under. HostName is overridden via -o,
 # so this only matters for Host-pattern matching in ~/.ssh/config.
 SSH_HOST="tart-${VM#tart-}"
+
+# Lazy-register: a freshly cloned VM has no block in the generated config
+# yet. Write it before connecting so this run authenticates correctly.
+# Non-fatal — on failure, let the ssh attempt report the cause.
+SSH_CONFIG_D="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
+if [ -n "$TART_SSH_SYNC" ] && ! grep -qw "$SSH_HOST" "$SSH_CONFIG_D" 2>/dev/null; then
+  echo "tssh: '$SSH_HOST' not registered yet — running tart-ssh-sync..." >&2
+  "$TART_SSH_SYNC" >/dev/null || echo "tssh: tart-ssh-sync failed; using existing config." >&2
+fi
 
 if [ "$STATE" != "running" ]; then
   echo "tssh: VM '$VM' is $STATE — starting in background..." >&2
