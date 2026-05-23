@@ -40,7 +40,7 @@ command -v jq   >/dev/null 2>&1 || { echo "tssh: 'jq' not on PATH. Install: brew
 
 # Resolve VM state — distinguishes "doesn't exist" (fail) from any non-running state (start).
 STATE=$(tart list --format json 2>/dev/null \
-  | jq -r ".[] | select(.Name==\"$VM\") | .State")
+  | jq -r --arg name "$VM" '.[] | select(.Name==$name) | .State')
 if [ -z "$STATE" ]; then
   echo "tssh: VM '$VM' not found. Try 'tart list' or 'tart clone <base> $VM'." >&2
   exit 1
@@ -113,9 +113,11 @@ fi
 LOCAL_TERM="${TERM:-xterm-256color}"
 if ! ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=5" "$VM" \
     "infocmp '${LOCAL_TERM}' >/dev/null 2>&1" 2>/dev/null; then
-  infocmp -x "${LOCAL_TERM}" 2>/dev/null \
-    | ssh "${SSH_OPTS[@]}" "$VM" 'mkdir -p ~/.terminfo && tic -x -' \
-    >/dev/null 2>&1 || true
+  if ! infocmp -x "${LOCAL_TERM}" \
+      | ssh "${SSH_OPTS[@]}" "$VM" 'mkdir -p ~/.terminfo && tic -x -' \
+      >/dev/null; then
+    echo "tssh: terminfo install for $LOCAL_TERM on $VM failed — session may have rendering issues" >&2
+  fi
 fi
 
 exec ssh "${SSH_OPTS[@]}" "$VM" "$@"

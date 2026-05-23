@@ -1,10 +1,14 @@
-# ~/.zshrc — fedora-php-tart baseline. Edits affect future VM clones; for
+# ~/.zshrc — tart-stacks baseline. Edits affect future VM clones; for
 # an existing project VM, edit ~/.zshrc inside that VM directly.
 
 # mise activation — per-directory tool version switching.
 if command -v mise >/dev/null 2>&1; then
   eval "$(mise activate zsh)"
 fi
+
+# fzf: Ctrl-R fuzzy history search, ** tab completion for paths.
+[ -f /usr/share/fzf/shell/key-bindings.zsh ] && source /usr/share/fzf/shell/key-bindings.zsh
+[ -f /usr/share/fzf/shell/completion.zsh ]   && source /usr/share/fzf/shell/completion.zsh
 
 # Use a host SSH agent forwarded into this VM.
 # If your Mac-side ~/.ssh/config does:
@@ -16,7 +20,9 @@ if [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "$HOME/.ssh/forwarded-agent.sock" ]; then
   export SSH_AUTH_SOCK="$HOME/.ssh/forwarded-agent.sock"
 fi
 
-export EDITOR=${EDITOR:-vi}
+# Tool defaults. $EDITOR is read by git commit / crontab -e / visudo;
+# $LESS flags: -F quit-if-one-screen, -R raw colors, -X no terminal reset on quit.
+export EDITOR=${EDITOR:-nano}
 export PAGER=${PAGER:-less}
 export LESS=${LESS:--FRX}
 
@@ -30,9 +36,6 @@ PROMPT='%F{cyan}%n@%m%f:%F{yellow}%~%f$ '
 
 alias ll='ls -lah'
 alias gs='git status -sb'
-alias gd='git diff'
-alias gl='git log --oneline -20'
-alias gco='git checkout'
 
 # Attach to or create a named zellij session. No args = list existing.
 # Each host terminal tab/session can attach to a different session for
@@ -45,30 +48,3 @@ za() {
     zellij attach --create "$1"
   fi
 }
-
-# --- On-demand credential loading -----------------------------------------
-#
-# Define wrapper functions that fetch a token from your secret store and
-# export it for ONE command only. Tokens never live in the shell environment
-# between calls. NEVER `export TOKEN=...` directly in this file.
-#
-# Example (uncomment and adjust the secret-store command to match your setup):
-#
-# with-gh() {
-#   local token
-#   token=$(pass-cli read GITHUB_TOKEN/token 2>/dev/null) || {
-#     echo "with-gh: failed to read GITHUB_TOKEN from secret store" >&2
-#     return 1
-#   }
-#   GITHUB_TOKEN="$token" "$@"
-# }
-#
-# Add more `with-*` functions per credential (with-aws, with-stripe, etc.).
-
-# --- Per-project pattern --------------------------------------------------
-#
-# Drop a `.mise.toml` in any project repo root to pin Node/PHP/etc. versions:
-#   [tools]
-#   node = "<major>"
-#   php  = "<major.minor>"
-# Commit it so teammates get the same setup. `cd` into the dir auto-switches.

@@ -50,25 +50,19 @@ corepack enable
 # We track per-extension success so we only emit ini files for extensions
 # whose .so actually built — writing an ini for a missing .so produces
 # "Unable to load dynamic library" warnings on every PHP startup.
-#
-# pipefail is disabled locally because `yes` receives SIGPIPE (exit 141)
-# when pecl closes stdin after reading enough Enters; pipefail would
-# misread that as a pipeline failure even when pecl itself returned 0.
-# Without pipefail the pipeline exit code is pecl's alone, which is what
-# we want to gate on.
 echo ""
 echo "==> Installing PECL extensions (pcov, xdebug, imagick, redis, memcached)..."
 declare -A pecl_ok=()
-set +o pipefail
 for ext in pcov xdebug imagick redis memcached; do
-  if yes '' | pecl install "$ext"; then
+  # Subshell disables pipefail just for this pipeline: `yes` exits 141 on
+  # SIGPIPE when pecl closes stdin, which pipefail would misread as failure.
+  if (set +o pipefail; yes '' | pecl install "$ext"); then
     pecl_ok[$ext]=1
   else
     echo "WARNING: pecl install $ext failed — ini file will be skipped." >&2
     pecl_ok[$ext]=0
   fi
 done
-set -o pipefail
 
 PHP_SCAN_DIR=$(php -r 'echo PHP_CONFIG_FILE_SCAN_DIR;')
 if [ -z "$PHP_SCAN_DIR" ]; then
@@ -138,6 +132,7 @@ echo -n "php:  "; php --version | head -1
 echo ""
 echo "PHP extensions:"
 missing=0
+modules=$(php -m)
 for ext in \
     pdo_sqlite sqlite3 \
     mysqli pdo_mysql \
@@ -148,9 +143,8 @@ for ext in \
     sodium readline bz2 zip \
     pcov xdebug; do
   printf "  %-12s " "$ext"
-  # Match either the literal extension name or substring in the module list
-  # (opcache shows as "Zend OPcache"; case-insensitive containment is robust).
-  if php -m | grep -qiF "$ext"; then
+  # Case-insensitive containment: opcache shows as "Zend OPcache" in the list.
+  if grep -qiF "$ext" <<<"$modules"; then
     echo "loaded"
   else
     echo "(missing)"

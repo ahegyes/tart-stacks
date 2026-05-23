@@ -25,12 +25,11 @@ variable "ssh_username" {
   default     = "admin"
 }
 
-variable "ssh_password" {
-  type        = string
-  description = "SSH password for provisioning. 'admin' is the publicly-documented default for all Cirrus Tart images. 99-finalize.sh locks this password at the end of the build, so cloned VMs only accept SSH key auth."
-  default     = "admin"
-  # Intentionally NOT marked sensitive — it's a public default, and marking it sensitive
-  # causes Packer to redact any substring match in build output, which produces noise.
+locals {
+  # Cirrus Tart images all use this publicly-known default. 99-finalize.sh
+  # locks the password at the end of the build, so cloned VMs only accept SSH
+  # key auth.
+  ssh_password = "admin"
 }
 
 variable "ssh_pubkey_path" {
@@ -61,7 +60,7 @@ source "tart-cli" "fedora-php" {
   memory_gb    = var.memory_gb
   disk_size_gb = var.disk_size_gb
   ssh_username = var.ssh_username
-  ssh_password = var.ssh_password
+  ssh_password = local.ssh_password
   ssh_timeout  = "10m"
   headless     = true
 }
@@ -74,7 +73,7 @@ build {
   # then PHP build deps. Both root-provisioner scripts are bundled so the
   # transaction sequence is unambiguous.
   provisioner "shell" {
-    execute_command = "echo '${var.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
       "../../shared/scripts/00-base.sh",
       "./scripts/00-stack.sh",
@@ -109,7 +108,7 @@ build {
 
   # System-level user config (chsh + PATH activation, requires root).
   provisioner "shell" {
-    execute_command = "echo '${var.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
       "../../shared/scripts/user-config.sh",
     ]
@@ -128,7 +127,7 @@ build {
   # makes the "no provisioner between disabling password auth and Packer
   # disconnecting" constraint structural. Packer disconnects right after.
   provisioner "shell" {
-    execute_command   = "echo '${var.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     expect_disconnect = true
     scripts           = ["../../shared/scripts/99-finalize.sh"]
   }
