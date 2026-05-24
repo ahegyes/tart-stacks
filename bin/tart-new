@@ -57,3 +57,70 @@ vm_exists() {
   tart list --format json 2>/dev/null \
     | jq -e --arg n "$1" 'any(.[]; .Name == $n)' >/dev/null
 }
+
+usage() {
+  echo "usage: tart-new <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]" >&2
+}
+
+command -v tart >/dev/null 2>&1 || { echo "tart-new: 'tart' not on PATH. Install: brew install cirruslabs/cli/tart" >&2; exit 1; }
+command -v jq   >/dev/null 2>&1 || { echo "tart-new: 'jq' not on PATH. Install: brew install jq" >&2; exit 1; }
+
+CPU="" MEM="" DISK=""
+positionals=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cpu)         CPU="$2"; shift 2 ;;
+    --memory)      MEM="$2"; shift 2 ;;
+    --disk-size)   DISK="$2"; shift 2 ;;
+    --cpu=*)       CPU="${1#*=}"; shift ;;
+    --memory=*)    MEM="${1#*=}"; shift ;;
+    --disk-size=*) DISK="${1#*=}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    -*)            echo "tart-new: unknown option '$1'" >&2; usage; exit 64 ;;
+    *)             positionals+=("$1"); shift ;;
+  esac
+done
+[ "${#positionals[@]}" -eq 2 ] || { usage; exit 64; }
+NAME="${positionals[0]}"
+STACK="${positionals[1]}"
+
+# 1. Stack must exist in the repo.
+if ! stack_exists "$STACK"; then
+  echo "tart-new: no stack '$STACK'; available: $(list_stacks | sort | paste -sd, - | sed 's/,/, /g')" >&2
+  exit 1
+fi
+
+# 2. Image must be built. Offer to build interactively; otherwise fail with the
+#    exact command (no silent 15-20 min side-effect).
+if ! image_built "$STACK"; then
+  img="$(image_for_stack "$STACK")"
+  echo "tart-new: stack '$STACK' image '$img' is not built." >&2
+  echo "  build it with: make build STACK=$STACK" >&2
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf 'tart-new: build it now? [y/N] ' >&2
+    read -r reply
+    case "$reply" in
+      [yY]|[yY][eE][sS]) make -C "$REPO" build STACK="$STACK" || { echo "tart-new: build failed." >&2; exit 1; } ;;
+      *) exit 1 ;;
+    esac
+  else
+    exit 1
+  fi
+fi
+
+# 3. No clobbering an existing VM.
+if vm_exists "$NAME"; then
+  echo "tart-new: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
+  exit 1
+fi
+
+# 4. Clone, then fold in resources if any were given.
+img="$(image_for_stack "$STACK")"
+tart clone "$img" "$NAME"
+set_args=()
+[ -n "$CPU" ]  && set_args+=(--cpu "$CPU")
+[ -n "$MEM" ]  && set_args+=(--memory "$MEM")
+[ -n "$DISK" ] && set_args+=(--disk-size "$DISK")
+[ "${#set_args[@]}" -gt 0 ] && tart set "$NAME" "${set_args[@]}"
+
+echo "tart-new: created '$NAME' from $img — next: tssh $NAME" >&2

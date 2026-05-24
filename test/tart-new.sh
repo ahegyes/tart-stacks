@@ -79,6 +79,53 @@ if PATH="$WORK/bin:$PATH" image_built jvm; then bad "image_built false when only
 if PATH="$WORK/bin:$PATH" vm_exists app-a; then ok "vm_exists true for present VM"; else bad "vm_exists true for present VM" "rc 0" "rc 1"; fi
 if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent VM" "rc 1" "rc 0"; else ok "vm_exists false for absent VM"; fi
 
+# End-to-end: run the whole script with mocked tart + fixture stacks. Assert on
+# exit code, stderr message, and the recorded tart calls.
+run_new() { # args... -> stdout; stderr to $WORK/err; exit code in $rc
+  rc=0
+  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" \
+    bash "$BIN/tart-new" "$@" >"$WORK/out" 2>"$WORK/err" </dev/null || rc=$?
+}
+
+echo "bin/tart-new — main flow:"
+
+# Unknown stack → exit 1, lists available.
+run_new app-x rust
+assert_eq       "unknown stack exits 1" 1 "$rc"
+assert_contains "unknown stack lists available" "$(<"$WORK/err")" "available: jvm, php"
+
+# Unbuilt stack, non-interactive → exit 1, prints the build command, no clone.
+: > "$TART_CALLS"
+run_new app-x jvm
+assert_eq       "unbuilt image exits 1 non-interactively" 1 "$rc"
+assert_contains "unbuilt image prints build command" "$(<"$WORK/err")" "make build STACK=jvm"
+assert_absent   "unbuilt image does not clone" "$(<"$TART_CALLS")" "clone"
+
+# Name collision → exit 1, no clone.
+: > "$TART_CALLS"
+run_new app-a php
+assert_eq       "collision exits 1" 1 "$rc"
+assert_contains "collision message names the VM" "$(<"$WORK/err")" "'app-a' already exists"
+assert_absent   "collision does not clone" "$(<"$TART_CALLS")" "clone"
+
+# Happy path with resources → clones from fedora-php, then tart set.
+: > "$TART_CALLS"
+run_new web php --cpu 4 --memory 8192 --disk-size 60
+assert_eq       "happy path exits 0" 0 "$rc"
+assert_contains "clones from the stack image" "$(<"$TART_CALLS")" "clone fedora-php web"
+assert_contains "sets resources"              "$(<"$TART_CALLS")" "set web --cpu 4 --memory 8192 --disk-size 60"
+assert_contains "prints next-step hint"       "$(<"$WORK/err")"   "next: tssh web"
+
+# Happy path without resource flags → clones, no `set`.
+: > "$TART_CALLS"
+run_new bare php
+assert_eq     "no-resource path exits 0" 0 "$rc"
+assert_absent "no-resource path skips tart set" "$(<"$TART_CALLS")" "set bare"
+
+# Bad arity → usage, exit 64.
+run_new only-one
+assert_eq "missing stack arg exits 64" 64 "$rc"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
