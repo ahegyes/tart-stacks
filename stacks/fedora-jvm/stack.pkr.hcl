@@ -50,7 +50,7 @@ variable "memory_gb" {
 
 variable "disk_size_gb" {
   type    = number
-  default = 60
+  default = 30
 }
 
 source "tart-cli" "fedora-jvm" {
