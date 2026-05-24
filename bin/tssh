@@ -32,6 +32,11 @@
 #
 #  Before connecting, if the VM isn't in the generated SSH config yet (a
 #  fresh clone), tssh runs tart-ssh-sync first so its config block exists.
+#
+#  Directory mounts: if ~/.config/tart-stacks/mounts (override $TART_MOUNTS)
+#  selects this VM, tssh adds the matching `--dir` virtiofs shares to the
+#  `tart run` that auto-starts it. A mount attaches at boot, so it applies
+#  only when tssh STARTS the VM — see dir_args_for_vm.
 
 set -euo pipefail
 
@@ -98,9 +103,67 @@ if [ -n "$TART_SSH_SYNC" ] && ! grep -qw "$SSH_HOST" "$SSH_CONFIG_D" 2>/dev/null
   "$TART_SSH_SYNC" >/dev/null || echo "tssh: tart-ssh-sync failed; using existing config." >&2
 fi
 
+# ---- per-VM directory mounts (opt-in) --------------------------------------
+# Attach the virtiofs shares from ~/.config/tart-stacks/mounts (override via
+# $TART_MOUNTS) that select this VM. Same pattern column as the forwards file
+# (see tart-ssh-sync). A `--dir` is a boot-time attachment, so it only takes
+# effect on the `tart run` below — a VM already running won't gain one.
+MOUNTS_CONFIG="${TART_MOUNTS:-$HOME/.config/tart-stacks/mounts}"
+
+# tart_pattern_matches <pattern> <bare-vm> — 0 if the vm-pattern selects this VM.
+#   pattern: `*` (any) | <name> | <a>,<b>,... (comma list, no spaces).
+tart_pattern_matches() {
+  local pattern="$1" vm="$2"
+  [ "$pattern" = "*" ] && return 0
+  local -a names=()
+  IFS=',' read -r -a names <<< "$pattern"
+  local n
+  for n in "${names[@]}"; do
+    [ "$n" = "$vm" ] && return 0
+  done
+  return 1
+}
+
+# dir_args_for_vm <bare-vm> — print one `--dir=<name>:<path>[:ro]` per mounts
+# line selecting this VM. Line format: `<vm-pattern> <host-path>[:ro]`; the
+# in-VM share name is the path's basename (mounts at /mnt/shared/<basename>).
+dir_args_for_vm() {
+  local vm="$1"
+  [ -f "$MOUNTS_CONFIG" ] || return 0
+  local raw line pattern rest path ro
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    line="${raw%%#*}"
+    line=$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    [ -z "$line" ] && continue
+    pattern="${line%%[[:space:]]*}"
+    rest=$(printf '%s' "$line" | sed -e 's/^[^[:space:]]\{1,\}[[:space:]]\{1,\}//')
+    if [ "$rest" = "$line" ]; then
+      echo "tssh: $MOUNTS_CONFIG: no path on line, skipping: $raw" >&2
+      continue
+    fi
+    tart_pattern_matches "$pattern" "$vm" || continue
+    case "$rest" in
+      *:ro) ro=":ro"; path="${rest%:ro}" ;;
+      *)    ro="";    path="$rest" ;;
+    esac
+    printf -- '--dir=%s:%s%s\n' "$(basename "$path")" "$path" "$ro"
+  done < "$MOUNTS_CONFIG"
+  return 0
+}
+
+# Resolve this VM's mounts once (bare name); reused by the start + warning paths.
+DIR_ARGS=()
+while IFS= read -r d; do
+  [ -n "$d" ] && DIR_ARGS+=("$d")
+done < <(dir_args_for_vm "${VM#tart-}")
+
 if [ "$STATE" != "running" ]; then
   echo "tssh: VM '$VM' is $STATE — starting in background..." >&2
-  ( tart run "$VM" --no-graphics >/dev/null 2>&1 & disown )
+  # Build the command as one array so the empty-DIR_ARGS case is safe under
+  # `set -u` on bash 3.2 (the macOS system bash).
+  run_cmd=(tart run "$VM" --no-graphics)
+  [ "${#DIR_ARGS[@]}" -gt 0 ] && run_cmd+=("${DIR_ARGS[@]}")
+  ( "${run_cmd[@]}" >/dev/null 2>&1 & disown )
 
   # Poll for IP (DHCP usually assigns within ~5-15 s on Tart's NAT).
   IP=""
@@ -115,6 +178,9 @@ if [ "$STATE" != "running" ]; then
   fi
   echo "tssh: VM '$VM' at $IP — waiting for SSH..." >&2
 else
+  if [ "${#DIR_ARGS[@]}" -gt 0 ]; then
+    echo "tssh: '$VM' already running — ${#DIR_ARGS[@]} configured mount(s) not attached (stop + start to apply)." >&2
+  fi
   IP=$(tart ip "$VM" 2>/dev/null) || {
     echo "tssh: failed to resolve IP for running VM '$VM'." >&2
     exit 1

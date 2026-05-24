@@ -19,7 +19,7 @@ All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + 
 │   ├── tssh                          # macOS-host SSH wrapper (Tart IP resolution + SSH connection multiplexing, one Touch ID per call; auto-syncs config on connect)
 │   └── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms from `tart list`
 ├── script/
-│   └── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards
+│   └── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards, mounts
 ├── shared/
 │   ├── scripts/                      # Provisioners shared across all stacks (00-base, claude, docker, mise, user-config, 99-finalize)
 │   └── files/
@@ -70,7 +70,7 @@ chmod 644 ~/.ssh/tart-vm.pub
 make setup
 ```
 
-Idempotent — run once, re-run anytime. It symlinks `tssh` and `tart-ssh-sync` into `~/.local/bin`, installs the zsh completion (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), and scaffolds `~/.config/tart-stacks/forwards`. Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+Idempotent — run once, re-run anytime. It symlinks `tssh` and `tart-ssh-sync` into `~/.local/bin`, installs the zsh completion (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), and scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`. Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
 
 `tssh` resolves the Tart VM IP each invocation (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and multiplexes SSH connections so you get one biometric prompt per call. Accepts the VM name with or without the `tart-` prefix — `tssh app-a` and `tssh tart-app-a` both resolve. Extra args pass through: `tssh app-a -L 8888:localhost:8888`. `tssh te<TAB>` tab-completes VM names from `tart list`.
 
@@ -114,7 +114,39 @@ work-a,work-b RemoteForward 8080 127.0.0.1:8080    # host SOCKS proxy for specif
 
 Re-run `tart-ssh-sync` after editing this file.
 
-### 4. Build a stack image
+### 4. Per-VM directory mounts
+
+Share host directories into VMs by listing them in `~/.config/tart-stacks/mounts` (scaffolded by `make setup`). When `tssh` **starts** a VM, it attaches every mount whose pattern selects that VM as a `tart run --dir` share. Because `--dir` attaches at boot, a mount applies only when tssh starts the VM — a VM that's already running won't gain one until a stop + start (tssh warns when it skips configured mounts).
+
+Each non-blank, non-comment line:
+
+```
+<vm-pattern> <host-path>[:ro]
+```
+
+`<vm-pattern>` is `*` (all dev VMs), a single bare name, or a comma-separated list — the same matching as the forwards file. `<host-path>` is an absolute host path; append `:ro` to mount it read-only. The share surfaces in the guest at `/mnt/shared/<basename>` (every `--dir` share lives under the single `com.apple.virtio-fs.automount` virtiofs device).
+
+Example `~/.config/tart-stacks/mounts`:
+
+```
+* /Users/me/src/dotfiles:ro       # read-only dotfiles in every VM
+build-vm /Users/me/code/project   # writable project dir, one VM
+```
+
+Inside the guest, create the mount point and mount the shared device once:
+
+```bash
+sudo mkdir -p /mnt/shared
+sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/shared
+```
+
+To mount it automatically on every boot, add this to the guest's `/etc/fstab` — `nofail` makes it a no-op when no share is attached:
+
+```
+com.apple.virtio-fs.automount /mnt/shared virtiofs rw,relatime,user,nofail 0 0
+```
+
+### 5. Build a stack image
 
 ```bash
 make init STACK=php        # one-time per stack: installs the Tart Packer plugin
@@ -142,7 +174,7 @@ Substitute `fedora-php` for whichever stack image matches your project. Each clo
 
 **Per-clone tweaks** (no rebuild required):
 
-- Share a host directory into the VM: append `--dir=project:~/code/myproject` to `tart run`. Tart exposes the dir via virtiofs; see `tart run --help` for the in-VM path convention.
+- Share a host directory into the VM: list it in `~/.config/tart-stacks/mounts` (see [Per-VM directory mounts](#4-per-vm-directory-mounts)) for a persistent opt-in, or append `--dir=project:~/code/myproject` to `tart run` for a one-off. Tart exposes the dir via virtiofs at `/mnt/shared/<name>`.
 - Adjust resources: `tart set app-a --memory 16384 --cpu 8 --disk-size 100`. Takes effect on the next `tart run`.
 
 ### Persistent terminal sessions (zellij)

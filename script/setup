@@ -2,7 +2,7 @@
 # setup — one-time host install for tart-stacks. Run via `make setup`
 # (or directly: script/setup). Symlinks the commands onto PATH, installs
 # zsh completion, wires the SSH Include line, and scaffolds the per-VM
-# forwards file.
+# forwards and mounts files.
 #
 # Idempotent: safe to re-run. It only creates what's missing and never
 # overwrites your edits. Where it can't safely fix something (an Include
@@ -14,6 +14,7 @@
 #   TART_COMPDIR     zsh completion dir        (default: brew site-functions, else ~/.local/share/zsh/site-functions)
 #   TART_SSH_CONFIG  ssh config to wire        (default ~/.ssh/config)
 #   TART_FORWARDS    per-VM forwards to scaffold (default ~/.config/tart-stacks/forwards)
+#   TART_MOUNTS      per-VM dir mounts to scaffold (default ~/.config/tart-stacks/mounts)
 
 set -euo pipefail
 
@@ -34,6 +35,7 @@ BIN_DIR="$REPO_DIR/bin"
 LOCAL_BIN="${TART_LOCAL_BIN:-$HOME/.local/bin}"
 SSH_CONFIG="${TART_SSH_CONFIG:-$HOME/.ssh/config}"
 FORWARDS="${TART_FORWARDS:-$HOME/.config/tart-stacks/forwards}"
+MOUNTS="${TART_MOUNTS:-$HOME/.config/tart-stacks/mounts}"
 INCLUDE_LINE='Include ~/.ssh/config.d/tart-vms'
 
 info() { printf '  %s\n' "$*"; }
@@ -117,6 +119,24 @@ else
 #   * RemoteForward 27123 127.0.0.1:27123   # forward a host service into every VM
 EOF
   info "scaffolded $FORWARDS."
+fi
+
+# 5. Scaffold the per-VM mounts file. Never touch an existing one.
+if [ -e "$MOUNTS" ]; then
+  info "mounts file already present ($MOUNTS) — left as-is."
+else
+  mkdir -p "$(dirname "$MOUNTS")"
+  cat > "$MOUNTS" <<'EOF'
+# tart-stacks per-VM directory mounts (virtiofs). Attached at VM boot by tssh,
+# so they apply only when tssh starts the VM (an already-running VM won't gain them).
+# Format:  <vm-pattern> <host-path>[:ro]
+#   <vm-pattern>:  *  (all VMs) | <name> | <a>,<b>,...  (comma list, no spaces)
+#   <host-path>:   absolute path on the host; mounts in-VM at /mnt/shared/<basename>
+#   :ro            optional — mount read-only
+# Example:
+#   * /Users/me/src/dotfiles:ro   # share dotfiles into every VM, read-only
+EOF
+  info "scaffolded $MOUNTS."
 fi
 
 echo "setup: done. Build a stack with:  make build STACK=php"
