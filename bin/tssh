@@ -22,7 +22,7 @@
 #     install and the interactive session share a single authenticated
 #     channel — ONE biometric prompt per tssh invocation. The preconnect
 #     hook (step 4) can piggyback by using ssh with the same ControlPath.
-#  4. If `$TSSH_PRECONNECT` (or default `~/.config/tssh/preconnect`) is an
+#  4. If `$TART_PRECONNECT` (or default `~/.config/tart-stacks/preconnect`) is an
 #     executable file, runs it with TSSH_VM / TSSH_IP / TSSH_CONTROL_PATH in
 #     the environment before opening the interactive session. Useful for
 #     per-machine setup (auth/config sync, etc.) that shouldn't live in this
@@ -153,7 +153,7 @@ fi
 # terminfo install and user session. Use it for per-machine setup
 # (credential sync, config rsync, etc.) that shouldn't live in this
 # wrapper.
-PRECONNECT="${TSSH_PRECONNECT:-$HOME/.config/tssh/preconnect}"
+PRECONNECT="${TART_PRECONNECT:-$HOME/.config/tart-stacks/preconnect}"
 if [ -x "$PRECONNECT" ]; then
   TSSH_VM="$VM" TSSH_IP="$IP" TSSH_CONTROL_PATH="$CONTROL_PATH" TSSH_SSH_HOST="$SSH_HOST" \
     "$PRECONNECT" || {
