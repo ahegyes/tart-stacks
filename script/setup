@@ -9,7 +9,7 @@
 # placed below a catch-all `Host *`, which SSH's first-match-wins renders
 # dead), it WARNS and leaves the file untouched rather than rewriting it.
 #
-# Override targets via env (used by the tests; also handy for odd layouts):
+# Override targets via env (non-default host layouts, or to sandbox a run):
 #   TART_LOCAL_BIN   command symlink dir       (default ~/.local/bin)
 #   TART_COMPDIR     zsh completion dir        (default: brew site-functions, else ~/.local/share/zsh/site-functions)
 #   TART_SSH_CONFIG  ssh config to wire        (default ~/.ssh/config)
@@ -40,6 +40,19 @@ INCLUDE_LINE='Include ~/.ssh/config.d/tart-vms'
 
 info() { printf '  %s\n' "$*"; }
 warn() { printf '  WARNING: %s\n' "$*" >&2; }
+
+# Create a per-VM config file from this function's stdin, idempotently — only
+# writes when the file is missing, so re-runs never clobber your edits.
+scaffold() {
+  local path="$1" label="$2"
+  if [ -e "$path" ]; then
+    info "$label already present ($path) — left as-is."
+    return 0
+  fi
+  mkdir -p "$(dirname "$path")"
+  cat > "$path"
+  info "scaffolded $path."
+}
 
 echo "setup: installing host tools from $REPO_DIR"
 
@@ -106,27 +119,17 @@ else
   info "added SSH Include to the top of $SSH_CONFIG."
 fi
 
-# 4. Scaffold the per-VM forwards file. Never touch an existing one.
-if [ -e "$FORWARDS" ]; then
-  info "forwards file already present ($FORWARDS) — left as-is."
-else
-  mkdir -p "$(dirname "$FORWARDS")"
-  cat > "$FORWARDS" <<'EOF'
+# 4. Per-VM forwards opt-ins (never touches an existing file).
+scaffold "$FORWARDS" "forwards file" <<'EOF'
 # tart-stacks per-VM RemoteForward opt-ins. Re-run tart-ssh-sync after editing.
 # Format:  <vm-pattern> RemoteForward <args>
 #   <vm-pattern>:  *  (all VMs) | <name> | <a>,<b>,...  (comma list, no spaces)
 # Example:
 #   * RemoteForward 27123 127.0.0.1:27123   # forward a host service into every VM
 EOF
-  info "scaffolded $FORWARDS."
-fi
 
-# 5. Scaffold the per-VM mounts file. Never touch an existing one.
-if [ -e "$MOUNTS" ]; then
-  info "mounts file already present ($MOUNTS) — left as-is."
-else
-  mkdir -p "$(dirname "$MOUNTS")"
-  cat > "$MOUNTS" <<'EOF'
+# 5. Per-VM directory mounts (never touches an existing file).
+scaffold "$MOUNTS" "mounts file" <<'EOF'
 # tart-stacks per-VM directory mounts (virtiofs). Attached at VM boot by tssh,
 # so they apply only when tssh starts the VM (an already-running VM won't gain them).
 # Format:  <vm-pattern> <host-path>[:ro]
@@ -136,7 +139,5 @@ else
 # Example:
 #   * /Users/me/src/dotfiles:ro   # share dotfiles into every VM, read-only
 EOF
-  info "scaffolded $MOUNTS."
-fi
 
 echo "setup: done. Build a stack with:  make build STACK=php"

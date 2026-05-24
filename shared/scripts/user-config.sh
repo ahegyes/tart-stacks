@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# user-config.sh — Set zsh as default shell and finalize PATH activation.
-# Runs as root via sudo (chsh requires it for another user's account).
+# user-config.sh — Root-privileged VM config finalization: default shell,
+# PATH activation, and the virtiofs auto-mount for Tart --dir shares.
+# Runs as root via sudo (chsh + /etc/fstab require it).
 
 set -euo pipefail
 
@@ -36,5 +37,16 @@ fi
 # Verify provisioned config files are owned by the target user.
 chown "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.zshrc"
 chown -R "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.config"
+
+# Auto-mount Tart's virtiofs directory shares at boot. Every `tart run --dir`
+# share (e.g. attached by tssh from ~/.config/tart-stacks/mounts) surfaces
+# under one device — com.apple.virtio-fs.automount — as /mnt/shared/<name>.
+# `nofail` makes a shareless boot a no-op (the device simply isn't attached),
+# so this is harmless on any VM started without --dir.
+mkdir -p /mnt/shared
+if ! grep -qF 'com.apple.virtio-fs.automount' /etc/fstab 2>/dev/null; then
+  echo 'com.apple.virtio-fs.automount /mnt/shared virtiofs rw,relatime,user,nofail 0 0' >> /etc/fstab
+  echo "==> registered virtiofs auto-mount at /mnt/shared in /etc/fstab"
+fi
 
 echo "==> user-config.sh complete."

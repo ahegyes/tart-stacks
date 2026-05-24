@@ -133,17 +133,13 @@ Example `~/.config/tart-stacks/mounts`:
 build-vm /Users/me/code/project   # writable project dir, one VM
 ```
 
-Inside the guest, create the mount point and mount the shared device once:
+VMs built from this repo **auto-mount** the share at `/mnt/shared` on boot — provisioning creates the mount point and adds an `/etc/fstab` entry with `nofail` (a boot with no share attached is a no-op). The share appears at `/mnt/shared/<name>` whenever the VM is started with a matching mount.
+
+On a VM cloned from an **older** image (built before auto-mount), mount it once by hand:
 
 ```bash
 sudo mkdir -p /mnt/shared
 sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/shared
-```
-
-To mount it automatically on every boot, add this to the guest's `/etc/fstab` — `nofail` makes it a no-op when no share is attached:
-
-```
-com.apple.virtio-fs.automount /mnt/shared virtiofs rw,relatime,user,nofail 0 0
 ```
 
 ### 5. Build a stack image

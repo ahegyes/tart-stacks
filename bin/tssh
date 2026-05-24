@@ -65,16 +65,16 @@ else
   TART_SSH_SYNC="$(command -v tart-ssh-sync || true)"
 fi
 
-# Resolve VM state — distinguishes "doesn't exist" (fail) from any non-running state (start).
-# Two-way prefix lookup: the SSH config alias is `tart-<name>` (per the
-# convention enforced by `tart-ssh-sync`), but Tart itself stores VMs under
-# their bare name. Try as-given, then strip-or-add the prefix on miss so
-# either form works at the CLI.
+# Query Tart for one VM's state by exact name; empty output = no such VM.
 resolve_state() {
   tart list --format json 2>/dev/null \
     | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
 }
 
+# Two-way prefix lookup: the SSH config alias is `tart-<name>` (the convention
+# enforced by `tart-ssh-sync`), but Tart stores VMs under their bare name. Try
+# the name as-given, then strip-or-add the prefix on miss so either form works
+# at the CLI. Empty after both tries = genuinely absent, so fail fast.
 STATE=$(resolve_state "$VM")
 if [ -z "$STATE" ]; then
   case "$VM" in
