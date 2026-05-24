@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# tart-new — create a Tart project VM by cloning a stack base image, with the
+# validation `tart clone` lacks: confirms the stack exists and its image is
+# built (offering to build it), and guards against name collisions. Resource
+# flags fold in the otherwise-separate `tart set` step.
+#
+# Usage:
+#   tart-new <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]
+#
+# <stack> is the short token (php, jvm) — the same one `make build STACK=…`
+# takes. The `fedora-` image prefix is supplied by image_for_stack(), the
+# single point that encodes the only-OS-is-fedora assumption.
+set -euo pipefail
+
+# Resolve this script's real path (following symlinks) to find the repo's
+# stacks/. TART_STACKS_DIR overrides for tests.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+REPO=$(cd -P "$(dirname "$src")/.." >/dev/null 2>&1 && pwd)
+STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
+
+# image_for_stack <stack> — the one place the fedora- OS prefix lives. A future
+# multi-OS change starts here (and in the Makefile's stacks/fedora-$(STACK)).
+image_for_stack() {
+  printf 'fedora-%s\n' "$1"
+}
+
+# list_stacks — short stack tokens (php, jvm) discovered from stacks/fedora-*/.
+list_stacks() {
+  local d
+  for d in "$STACKS_DIR"/fedora-*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    printf '%s\n' "${d##*/fedora-}"
+  done
+}
+
+# stack_exists <stack> — 0 if stacks/fedora-<stack>/ is present.
+stack_exists() {
+  [ -d "$STACKS_DIR/fedora-$1" ]
+}
