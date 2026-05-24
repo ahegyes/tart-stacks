@@ -12,9 +12,12 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 │   ├── tssh                            # macOS-host SSH wrapper (resolves Tart VM IP, SSH connection multiplexing for one Touch ID per call, accepts bare or `tart-`-prefixed name; lazy-runs tart-ssh-sync for unregistered VMs)
 │   └── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms from `tart list`; aliases use `tart-<name>` prefix
 ├── script/
-│   └── setup                           # Host install run by `make setup` (symlinks commands, zsh completion, idempotent SSH Include + catch-all check, forwards + mounts scaffold)
+│   ├── setup                           # Host install run by `make setup` (symlinks commands, zsh completion, idempotent SSH Include + catch-all check, forwards + mounts scaffold)
+│   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
 ├── completions/
 │   └── _tssh                           # Zsh completion for tssh (VM names from `tart list`); installed by `make setup`
+├── test/
+│   └── parsing.sh                      # Characterization tests for the tssh + tart-ssh-sync config-line parsers
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First. dnf upgrade + core dev pkgs + build toolchain + zellij (root)
@@ -46,6 +49,7 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 - **Comments explain WHY, not WHAT.** Don't restate the code; explain hidden constraints, load-order requirements, or surprising behavior.
 - **Naming is `tart-stacks` everywhere** for the repo; each stack is `fedora-<lang>` (matching the Tart image `output_name`). Don't introduce alternative spellings within a stack's files.
 - **Host (macOS) and guest (Fedora VM) live in the same repo.** `bin/tssh` and `bin/tart-ssh-sync` run on the host; `make`/`packer` run on the host; everything under `shared/scripts/`, `shared/files/`, and `stacks/*/scripts/`, `stacks/*/files/` runs inside the build VM.
+- **`script/` (singular) vs `scripts/` (plural) is deliberate, not a typo.** Three directories, three roles: `bin/` = user commands symlinked onto `$PATH` (`tssh`, `tart-ssh-sync`); `script/` = the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`, never on `$PATH` (`setup`, `test`); `scripts/` under `shared/` and `stacks/*/` = in-VM provisioner collections, each paired with a sibling `files/`.
 - **`shared/` vs `stacks/<name>/` rule.** A file goes in `shared/` if it would be byte-identical across every plausible stack. Anything that differs by stack lives under `stacks/<name>/`. If a script is mostly shared but needs one stack-specific tweak, split it (see `00-base.sh` + `00-stack.sh`) rather than parameterize.
 - **SSH config alias prefix is `tart-<name>`.** Tart VM names stay bare (e.g. `app-a`, `test-vm`). The `tart-` prefix lives only in the generated SSH config (`tart-ssh-sync`), so `ssh -G` and `~/.ssh/config` clearly mark Tart VMs vs remote machines. `tssh` accepts either form on input.
 

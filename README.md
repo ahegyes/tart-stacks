@@ -19,7 +19,10 @@ All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + 
 │   ├── tssh                          # macOS-host SSH wrapper (Tart IP resolution + SSH connection multiplexing, one Touch ID per call; auto-syncs config on connect)
 │   └── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms from `tart list`
 ├── script/
-│   └── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards, mounts
+│   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards, mounts
+│   └── test                          # Runs the test suite (test/*.sh) via `make test` / CI
+├── test/
+│   └── parsing.sh                    # Characterization tests for the tssh + tart-ssh-sync config-line parsers
 ├── shared/
 │   ├── scripts/                      # Provisioners shared across all stacks (00-base, claude, docker, mise, user-config, 99-finalize)
 │   └── files/
@@ -34,6 +37,8 @@ All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + 
 ├── Makefile                          # Single top-level Makefile; commands take STACK=<name>
 └── .github/workflows/validate.yml    # packer validate + shellcheck across all stacks
 ```
+
+`script/` (singular) is the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`; `scripts/` (plural, under `shared/` and `stacks/*/`) are in-VM provisioner collections. Different roles, hence the different names.
 
 ## Prerequisites
 
