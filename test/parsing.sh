@@ -48,6 +48,15 @@ exit 0
 TART
 chmod +x "$WORK/bin/tart"
 
+# Default `ssh-add` mock: report identities present (exit 0) so tart-ssh-sync's
+# empty-agent warning stays silent for the parser tests below. The empty-agent
+# test flips it via MOCK_SSH_ADD_RC.
+cat > "$WORK/bin/ssh-add" <<'SA'
+#!/usr/bin/env bash
+exit "${MOCK_SSH_ADD_RC:-0}"
+SA
+chmod +x "$WORK/bin/ssh-add"
+
 SYNC_ERR="$WORK/sync.err"
 run_sync() { # forwards-file-content -> stdout of --dry-run (stderr -> $SYNC_ERR)
   printf '%s' "$1" > "$WORK/forwards"
@@ -89,6 +98,14 @@ assert_absent    "unsupported directive not emitted"      "$out" "LocalForward"
 
 out=$(run_sync "ghost RemoteForward 1 2")
 assert_absent    "name absent from tart list is dropped" "$out" "tart-ghost"
+
+echo "bin/tart-ssh-sync — empty-agent guard:"
+export MOCK_SSH_ADD_RC=1
+run_sync "" >/dev/null
+assert_contains  "warns when forwarded agent has no identities" "$(<"$SYNC_ERR")" "has no identities"
+unset MOCK_SSH_ADD_RC
+run_sync "" >/dev/null
+assert_absent    "silent when forwarded agent has identities"   "$(<"$SYNC_ERR")" "has no identities"
 
 # ── bin/tssh: mounts parser (dir_args_for_vm / tart_pattern_matches) ─────────
 # tssh has no dry-run and its main flow needs a live VM, so pull the two pure

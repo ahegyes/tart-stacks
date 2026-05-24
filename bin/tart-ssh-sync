@@ -59,6 +59,15 @@ if [ -z "$AGENT_SOCKET" ]; then
   exit 1
 fi
 
+# Warn (non-fatal) if the resolved agent holds no keys: it still gets forwarded
+# into every VM, where in-VM git/ssh then fail with an opaque 'Permission denied
+# (publickey)'. $SSH_AUTH_SOCK often points at an empty agent (e.g. macOS's
+# launchd one) unless you've added keys — set TART_AGENT_SOCKET to one with keys.
+if command -v ssh-add >/dev/null 2>&1 \
+  && ! SSH_AUTH_SOCK="$AGENT_SOCKET" ssh-add -l >/dev/null 2>&1; then
+  echo "tart-ssh-sync: warning: agent at '$AGENT_SOCKET' has no identities (or is unreachable); VMs will forward an empty agent and in-VM git/ssh will fail. Run 'ssh-add -l', or set TART_AGENT_SOCKET to an agent with keys." >&2
+fi
+
 # Build artifacts to exclude. Anchored regex against the bare VM name.
 SKIP_PATTERN='^(fedora-base|fedora-[a-z]+)$'
 
