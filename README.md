@@ -164,12 +164,11 @@ tart list                  # confirm fedora-php is present
 ### Clone for a project
 
 ```bash
-tart clone fedora-php app-a
-tart run app-a --no-graphics &
-tssh app-a
+tart-new app-a php          # validate stack + image, clone (resources optional)
+tssh app-a                  # auto-starts and connects
 ```
 
-Substitute `fedora-php` for whichever stack image matches your project. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The first `tssh app-a` auto-registers the new clone in your SSH config — no manual `tart-ssh-sync` step.
+`tart-new <name> <stack>` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php`; the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The first `tssh app-a` auto-registers the new clone in your SSH config — no manual `tart-ssh-sync` step.
 
 **Per-clone tweaks** (no rebuild required):
 
@@ -207,7 +206,7 @@ New project VMs cloned after the rebuild get the updated base. Existing project 
 
 ```bash
 tart stop app-a && tart delete app-a
-tart clone fedora-php app-a
+tart-new app-a php
 # fresh, identical, ready in seconds (Tart uses copy-on-write).
 ```
 
