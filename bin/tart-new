@@ -43,3 +43,17 @@ list_stacks() {
 stack_exists() {
   [ -d "$STACKS_DIR/fedora-$1" ]
 }
+
+# image_built <stack> — 0 if image_for_stack(<stack>) is a *local* row in
+# `tart list` (an OCI-pulled row of the same name does not count as built).
+image_built() {
+  tart list --format json 2>/dev/null \
+    | jq -e --arg n "$(image_for_stack "$1")" \
+        'any(.[]; .Name == $n and .Source == "local")' >/dev/null
+}
+
+# vm_exists <name> — 0 if any VM/image of that exact name is in `tart list`.
+vm_exists() {
+  tart list --format json 2>/dev/null \
+    | jq -e --arg n "$1" 'any(.[]; .Name == $n)' >/dev/null
+}

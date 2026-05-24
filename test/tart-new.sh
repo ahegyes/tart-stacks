@@ -42,6 +42,43 @@ assert_eq "list_stacks lists short tokens sorted" "jvm php" "$(list_stacks | sor
 if stack_exists php; then ok "stack_exists true for present stack"; else bad "stack_exists true for present stack" "rc 0" "rc 1"; fi
 if stack_exists rust; then bad "stack_exists false for absent stack" "rc 1" "rc 0"; else ok "stack_exists false for absent stack"; fi
 
+# Mock `tart` so list/get output is deterministic and clone/set are recorded.
+# Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
+# real field tart-ssh-sync/_tssh key on.
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/tart" <<'TART'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TART_CALLS"
+case "$1" in
+  list) cat "$TART_LIST_JSON" ;;
+  get)  cat "$TART_GET_JSON" 2>/dev/null || echo '{}' ;;
+  *)    : ;;
+esac
+exit 0
+TART
+chmod +x "$WORK/bin/tart"
+export TART_CALLS="$WORK/calls"
+export TART_LIST_JSON="$WORK/list.json"
+: > "$TART_CALLS"
+
+# A list where fedora-php is built (local) but fedora-jvm is not, plus an
+# existing project VM "app-a" and an OCI image that must not count as built.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"fedora-php","Source":"local"},
+ {"Name":"app-a","Source":"local"},
+ {"Name":"fedora-jvm","Source":"oci"}]
+JSON
+
+{ extract_fn image_built "$BIN/tart-new"; echo; extract_fn vm_exists "$BIN/tart-new"; } > "$WORK/q.sh"
+# shellcheck source=/dev/null
+source "$WORK/q.sh"
+
+echo "bin/tart-new — tart-querying helpers:"
+if PATH="$WORK/bin:$PATH" image_built php; then ok "image_built true when local image present"; else bad "image_built true when local image present" "rc 0" "rc 1"; fi
+if PATH="$WORK/bin:$PATH" image_built jvm; then bad "image_built false when only OCI present" "rc 1" "rc 0"; else ok "image_built false when only OCI present"; fi
+if PATH="$WORK/bin:$PATH" vm_exists app-a; then ok "vm_exists true for present VM"; else bad "vm_exists true for present VM" "rc 0" "rc 1"; fi
+if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent VM" "rc 1" "rc 0"; else ok "vm_exists false for absent VM"; fi
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
