@@ -60,7 +60,8 @@ echo "setup: installing host tools from $REPO_DIR"
 mkdir -p "$LOCAL_BIN"
 ln -sf "$BIN_DIR/tssh"          "$LOCAL_BIN/tssh"
 ln -sf "$BIN_DIR/tart-ssh-sync" "$LOCAL_BIN/tart-ssh-sync"
-info "linked tssh, tart-ssh-sync -> $LOCAL_BIN"
+ln -sf "$BIN_DIR/tart-new"      "$LOCAL_BIN/tart-new"
+info "linked tssh, tart-ssh-sync, tart-new -> $LOCAL_BIN"
 case ":$PATH:" in
   *":$LOCAL_BIN:"*) ;;
   *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;
@@ -77,8 +78,9 @@ if [ -z "$compdir" ]; then
   fi
 fi
 mkdir -p "$compdir"
-ln -sf "$REPO_DIR/completions/_tssh" "$compdir/_tssh"
-info "linked completion -> $compdir/_tssh  (run: rm -f ~/.zcompdump* && exec zsh)"
+ln -sf "$REPO_DIR/completions/_tssh"     "$compdir/_tssh"
+ln -sf "$REPO_DIR/completions/_tart-new" "$compdir/_tart-new"
+info "linked completions (_tssh, _tart-new) -> $compdir  (run: rm -f ~/.zcompdump* && exec zsh)"
 case "$compdir" in
   "$HOME"/*) warn "add to ~/.zshrc above compinit:  fpath=($compdir \$fpath)" ;;
 esac

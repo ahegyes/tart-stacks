@@ -1,0 +1,31 @@
+#compdef tart-new
+#
+# Zsh completion for tart-new. Arg 1 is the new VM name (no completion); arg 2
+# is the stack token, completed from stacks/fedora-*/ in the repo this command
+# is symlinked from. Resolves the real path of tart-new (`:A`) back to the repo.
+#
+# Install:
+#   fpath=(/path/to/tart-stacks/completions $fpath)   # before compinit
+#   autoload -Uz compinit && compinit
+
+_tart-new() {
+  if (( CURRENT == 3 )); then
+    local bin repo
+    bin=${commands[tart-new]}
+    [[ -n $bin ]] || { _message 'tart-new not on PATH'; return 1; }
+    repo=${bin:A:h:h}
+    local -a stacks
+    stacks=(${repo}/stacks/fedora-*(/N:t))
+    stacks=(${stacks#fedora-})
+    if (( ${#stacks} == 0 )); then
+      _message 'no stacks found under stacks/fedora-*/'
+      return 1
+    fi
+    _describe -t stacks 'stack' stacks
+  else
+    # Arg 1 is a new VM name; later args are flags. Nothing to complete.
+    _default
+  fi
+}
+
+_tart-new "$@"
