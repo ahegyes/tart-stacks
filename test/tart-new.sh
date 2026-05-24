@@ -98,6 +98,7 @@ assert_contains "unknown stack lists available" "$(<"$WORK/err")" "available: jv
 : > "$TART_CALLS"
 run_new app-x jvm
 assert_eq       "unbuilt image exits 1 non-interactively" 1 "$rc"
+assert_contains "unbuilt error names the image"      "$(<"$WORK/err")" "image 'fedora-jvm' is not built"
 assert_contains "unbuilt image prints build command" "$(<"$WORK/err")" "make build STACK=jvm"
 assert_absent   "unbuilt image does not clone" "$(<"$TART_CALLS")" "clone"
 
@@ -115,6 +116,12 @@ assert_eq       "happy path exits 0" 0 "$rc"
 assert_contains "clones from the stack image" "$(<"$TART_CALLS")" "clone fedora-php web"
 assert_contains "sets resources"              "$(<"$TART_CALLS")" "set web --cpu 4 --memory 8192 --disk-size 60"
 assert_contains "prints next-step hint"       "$(<"$WORK/err")"   "next: tssh web"
+
+# --opt=value parses identically to --opt value (same recorded tart set).
+: > "$TART_CALLS"
+run_new eq php --cpu=4 --memory=8192 --disk-size=60
+assert_eq       "equals-form exits 0" 0 "$rc"
+assert_contains "equals-form folds into the same tart set" "$(<"$TART_CALLS")" "set eq --cpu 4 --memory 8192 --disk-size 60"
 
 # Happy path without resource flags → clones, no `set`.
 : > "$TART_CALLS"

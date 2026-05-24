@@ -90,10 +90,12 @@ if ! stack_exists "$STACK"; then
   exit 1
 fi
 
+# Image name for this stack — used by the not-built hint and the clone below.
+img="$(image_for_stack "$STACK")"
+
 # 2. Image must be built. Offer to build interactively; otherwise fail with the
 #    exact command (no silent 15-20 min side-effect).
 if ! image_built "$STACK"; then
-  img="$(image_for_stack "$STACK")"
   echo "tart-new: stack '$STACK' image '$img' is not built." >&2
   echo "  build it with: make build STACK=$STACK" >&2
   if [ -t 0 ] && [ -t 1 ]; then
@@ -115,7 +117,6 @@ if vm_exists "$NAME"; then
 fi
 
 # 4. Clone, then fold in resources if any were given.
-img="$(image_for_stack "$STACK")"
 tart clone "$img" "$NAME"
 set_args=()
 [ -n "$CPU" ]  && set_args+=(--cpu "$CPU")
