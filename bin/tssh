@@ -133,11 +133,9 @@ dir_args_for_vm() {
   local raw line pattern rest path ro
   while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw%%#*}"
-    line=$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    [ -z "$line" ] && continue
-    pattern="${line%%[[:space:]]*}"
-    rest=$(printf '%s' "$line" | sed -e 's/^[^[:space:]]\{1,\}[[:space:]]\{1,\}//')
-    if [ "$rest" = "$line" ]; then
+    IFS=$' \t' read -r pattern rest <<< "$line"
+    [ -z "$pattern" ] && continue
+    if [ -z "$rest" ]; then
       echo "tssh: $MOUNTS_CONFIG: no path on line, skipping: $raw" >&2
       continue
     fi

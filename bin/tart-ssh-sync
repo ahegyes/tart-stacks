@@ -107,11 +107,8 @@ if [ -f "$FORWARDS_CONFIG" ]; then
   while IFS= read -r raw || [ -n "$raw" ]; do
     lineno=$((lineno + 1))
     line="${raw%%#*}"
-    line=$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    [ -z "$line" ] && continue
-
-    pattern="${line%%[[:space:]]*}"
-    rest=$(printf '%s' "$line" | sed -e 's/^[^[:space:]]\{1,\}[[:space:]]\{1,\}//')
+    IFS=$' \t' read -r pattern rest <<< "$line"
+    [ -z "$pattern" ] && continue
     directive="${rest%%[[:space:]]*}"
     if [ "$directive" != "RemoteForward" ]; then
       echo "tart-ssh-sync: $FORWARDS_CONFIG:$lineno: skipping unsupported directive '$directive' (only RemoteForward today)" >&2

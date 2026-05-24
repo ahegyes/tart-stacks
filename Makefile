@@ -1,4 +1,4 @@
-.PHONY: help setup init bootstrap build rebuild clean check-stack list-stacks
+.PHONY: help setup test init bootstrap build rebuild clean check-stack list-stacks
 
 # Stack selector. Required for init/build/rebuild. e.g. `make build STACK=php`.
 # Resolves to stacks/fedora-$(STACK)/.
@@ -20,6 +20,7 @@ help:
 	@echo ""
 	@echo "  make setup                   Install host tools onto your Mac (run once): symlinks tssh +"
 	@echo "                               tart-ssh-sync, zsh completion, SSH Include line, forwards file"
+	@echo "  make test                    Run the test suite (test/*.sh)"
 	@echo "  make list-stacks             List available stacks"
 	@echo "  make init STACK=<name>       Install Packer plugins for that stack (run once per stack)"
 	@echo "  make bootstrap               Pull latest Fedora base (stack-agnostic; auto-run by build)"
@@ -36,6 +37,10 @@ list-stacks:
 # script/setup so the SSH-config validation stays testable.
 setup:
 	@"$(CURDIR)/script/setup"
+
+# Run the plain-bash test suite (test/*.sh). No framework; needs only bash + jq.
+test:
+	@"$(CURDIR)/script/test"
 
 # Validates that STACK is set and the requested stack directory exists.
 # Stack-targeted commands (init/build/rebuild) depend on this.

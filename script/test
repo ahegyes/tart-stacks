@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# test — run the repo's plain-bash test suite (every test/*.sh). Run via
+# `make test` or directly. No framework: each test file self-reports and
+# exits non-zero on failure; this runner aggregates the exit status.
+
+set -uo pipefail
+
+REPO=$(cd -P "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)
+
+rc=0
+ran=0
+for t in "$REPO"/test/*.sh; do
+  [ -e "$t" ] || continue
+  ran=$((ran + 1))
+  echo "== ${t#"$REPO"/} =="
+  bash "$t" || rc=1
+  echo
+done
+
+[ "$ran" -gt 0 ] || { echo "test: no test/*.sh found under $REPO/test/"; exit 1; }
+exit "$rc"
