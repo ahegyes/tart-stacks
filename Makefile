@@ -18,8 +18,8 @@ STACK_DIR := stacks/fedora-$(STACK)
 help:
 	@echo "tart-stacks — common commands"
 	@echo ""
-	@echo "  make setup                   Install host tools onto your Mac (run once): symlinks tssh +"
-	@echo "                               tart-ssh-sync, zsh completion, SSH Include line, forwards file"
+	@echo "  make setup                   Install host tools onto your Mac (run once): symlinks tssh,"
+	@echo "                               tart-ssh-sync, tart-new + completions; adds SSH Include; scaffolds forwards + mounts"
 	@echo "  make test                    Run the test suite (test/*.sh)"
 	@echo "  make list-stacks             List available stacks"
 	@echo "  make init STACK=<name>       Install Packer plugins for that stack (run once per stack)"

@@ -9,14 +9,17 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 ├── README.md  CLAUDE.md  AGENTS.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── Makefile                            # Single top-level Makefile; `make setup` installs host tools; STACK=<name> selects stack for init/build/rebuild
 ├── bin/
+│   ├── tart-new                        # Creates a project VM by cloning a stack base image, with the validation `tart clone` lacks (stack exists, image built, no name collision) + `--cpu`/`--memory`/`--disk-size` pass-through
 │   ├── tssh                            # macOS-host SSH wrapper (resolves Tart VM IP, SSH connection multiplexing for one Touch ID per call, accepts bare or `tart-`-prefixed name; lazy-runs tart-ssh-sync for unregistered VMs)
 │   └── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms from `tart list`; aliases use `tart-<name>` prefix
 ├── script/
 │   ├── setup                           # Host install run by `make setup` (symlinks commands, zsh completion, idempotent SSH Include + catch-all check, forwards + mounts scaffold)
 │   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
 ├── completions/
+│   ├── _tart-new                       # Zsh completion for tart-new (stack token, arg 2); installed by `make setup`
 │   └── _tssh                           # Zsh completion for tssh (VM names from `tart list`); installed by `make setup`
 ├── test/
+│   ├── tart-new.sh                     # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
 │   └── parsing.sh                      # Characterization tests for the tssh + tart-ssh-sync config-line parsers
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── scripts/

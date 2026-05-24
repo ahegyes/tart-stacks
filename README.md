@@ -16,12 +16,14 @@ All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + 
 ```
 .
 ├── bin/
+│   ├── tart-new                      # Creates a project VM by cloning a stack base image, with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size` pass-through
 │   ├── tssh                          # macOS-host SSH wrapper (Tart IP resolution + SSH connection multiplexing, one Touch ID per call; auto-syncs config on connect)
 │   └── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms from `tart list`
 ├── script/
 │   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards, mounts
 │   └── test                          # Runs the test suite (test/*.sh) via `make test` / CI
 ├── test/
+│   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
 │   └── parsing.sh                    # Characterization tests for the tssh + tart-ssh-sync config-line parsers
 ├── shared/
 │   ├── scripts/                      # Provisioners shared across all stacks (00-base, claude, docker, mise, user-config, 99-finalize)
@@ -75,7 +77,7 @@ chmod 644 ~/.ssh/tart-vm.pub
 make setup
 ```
 
-Idempotent — run once, re-run anytime. It symlinks `tssh` and `tart-ssh-sync` into `~/.local/bin`, installs the zsh completion (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), and scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`. Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+Idempotent — run once, re-run anytime. It symlinks `tssh`, `tart-ssh-sync`, and `tart-new` into `~/.local/bin`, installs the zsh completions (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), and scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`. Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
 
 `tssh` resolves the Tart VM IP each invocation (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and multiplexes SSH connections so you get one biometric prompt per call. Accepts the VM name with or without the `tart-` prefix — `tssh app-a` and `tssh tart-app-a` both resolve. Extra args pass through: `tssh app-a -L 8888:localhost:8888`. `tssh te<TAB>` tab-completes VM names from `tart list`.
 
