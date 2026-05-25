@@ -85,6 +85,12 @@ esac
 command -v tart >/dev/null 2>&1 || { echo "tart-ssh-sync: 'tart' not on PATH. brew install cirruslabs/cli/tart" >&2; exit 1; }
 command -v jq   >/dev/null 2>&1 || { echo "tart-ssh-sync: 'jq' not on PATH. brew install jq" >&2; exit 1; }
 
+# Absolute paths get baked into the generated ProxyCommand: GUI SSH clients
+# (JetBrains Gateway, VS Code) launch with a minimal PATH and can't resolve bare
+# `tart`/`nc`. Resolved here so the script itself stays host-portable.
+TART_BIN="$(command -v tart)"
+NC_BIN="$(command -v nc || echo /usr/bin/nc)"
+
 # Collect dev VMs: local source only (skip OCI), skip build artifacts,
 # unless force-included. Sorted for deterministic output.
 vms=()
@@ -163,7 +169,7 @@ emit() {
     return 0
   fi
 
-  echo "# Common: auth, identity, host-key handling, multiplexing — every Tart dev VM."
+  echo "# Common settings — every Tart dev VM."
   echo "Host ${prefixed[*]}"
   echo "  User admin"
   echo "  IdentityAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
@@ -172,8 +178,11 @@ emit() {
   echo "  UserKnownHostsFile /dev/null"
   echo "  StrictHostKeyChecking no"
   echo "  LogLevel ERROR"
+  # Live IP resolution for non-tssh clients (Gateway, ssh, rsync). %n not %h:
+  # tssh sets `-o HostName=<ip>`, which would poison %h.
+  echo "  ProxyCommand /bin/sh -c 'n=%n; exec $NC_BIN \$(\"$TART_BIN\" ip \"\${n#tart-}\") 22'"
   echo
-  echo "# Host SSH agent forwarded into every VM (in-VM zshrc picks this up)."
+  echo "# Host SSH agent forwarded into every VM."
   echo "Host ${prefixed[*]}"
   echo "  RemoteForward /home/admin/.ssh/forwarded-agent.sock $AGENT_SOCKET"
 
