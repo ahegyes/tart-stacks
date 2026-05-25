@@ -6,7 +6,8 @@
 #   tart-ssh-sync --dry-run   # print the config that would be written to stdout
 #
 # What the script emits unconditionally (universal Tart VM defaults):
-#   - Common block for every dev VM: User=admin, IdentityFile, host-key
+#   - Common block for every dev VM: User=admin, Secretive agent + pinned
+#     identity (IdentityAgent + IdentityFile + IdentitiesOnly), host-key
 #     handling, multiplexing.
 #   - Agent socket forward for every dev VM:
 #       RemoteForward /home/admin/.ssh/forwarded-agent.sock $TART_AGENT_SOCKET
@@ -165,8 +166,8 @@ emit() {
   echo "# Common: auth, identity, host-key handling, multiplexing — every Tart dev VM."
   echo "Host ${prefixed[*]}"
   echo "  User admin"
-  echo "  IdentityFile ~/.ssh/tart-vm"
-  echo "  SecurityKeyProvider /usr/lib/ssh-keychain.dylib"
+  echo "  IdentityAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+  echo "  IdentityFile ~/.ssh/tart-vm.pub"
   echo "  IdentitiesOnly yes"
   echo "  UserKnownHostsFile /dev/null"
   echo "  StrictHostKeyChecking no"

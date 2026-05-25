@@ -34,7 +34,7 @@ locals {
 
 variable "ssh_pubkey_path" {
   type        = string
-  description = "Path to the public SSH key authorized for Mac → VM access. Typically a dedicated Secure Enclave-backed key managed by Secretive (or macOS 26 native). Must exist before `make build` — see top-level README for setup."
+  description = "Path to the public SSH key authorized for Mac → VM access. A dedicated Secure-Enclave-backed key managed by Secretive. Must exist before `make build` — see top-level README for setup."
   default     = "~/.ssh/tart-vm.pub"
 }
 

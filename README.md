@@ -52,24 +52,26 @@ All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + 
 
 ## Setup
 
-### 1. Generate a Secure Enclave SSH key for Mac → VM auth
+### 1. Create a Secure Enclave SSH key for Mac → VM auth
 
-Every stack's Packer build authorizes a Secure-Enclave-backed SSH key for `admin@<vm>` and disables password auth. One key serves every VM cloned from any stack.
+Every stack's Packer build authorizes a Secure-Enclave-backed SSH key for `admin@<vm>` and disables password auth — one Touch-ID-gated key serves every VM cloned from any stack, and the private key never leaves the Enclave.
 
-**macOS 26 (Tahoe) — native (recommended).** Apple ships `/usr/lib/ssh-keychain.dylib`; no third-party tools needed.
+Use [Secretive](https://github.com/maxgoedjen/secretive) (macOS 13+):
 
 ```bash
-sc_auth create-ctk-identity -l "Tart VM" -k p-256-ne -t bio
-ssh-keygen -w /usr/lib/ssh-keychain.dylib -K -N ""    # press Enter at PIN prompt
-mv id_ecdsa_sk_rk     ~/.ssh/tart-vm
-mv id_ecdsa_sk_rk.pub ~/.ssh/tart-vm.pub
-chmod 600 ~/.ssh/tart-vm
-chmod 644 ~/.ssh/tart-vm.pub
+brew install --cask secretive
 ```
 
-`~/.ssh/tart-vm` is *not* private key material — it's a reference handle. The actual key stays in the SE. Treat it as a normal SSH identity file (`IdentityFile ~/.ssh/tart-vm` in config). Verify with `sc_auth list-ctk-identities -t ssh`.
+Open Secretive, create a key (**+**), name it `Tart VM`, and set it to require Touch ID. Then point `~/.ssh/tart-vm.pub` at it. Secretive files keys under opaque hash names, identified only by their comment (the name you gave), so **symlink** rather than copy — Secretive stays the single source of truth and `~/.ssh` holds no duplicate. Confirm exactly one key matches, then link it:
 
-**macOS 13–15.** Use [Secretive](https://github.com/maxgoedjen/secretive) (`brew install --cask secretive`). Create a key with Touch ID required; save the public key to `~/.ssh/tart-vm.pub`. SSH config uses Secretive's agent socket as `IdentityAgent`.
+```bash
+grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub   # expect ONE file
+ln -sf "$(grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub)" ~/.ssh/tart-vm.pub
+```
+
+If the first command lists **more than one** file, you have duplicate-named keys — tell them apart with `ssh-keygen -lf <file>` and symlink the specific one by hand. (An extra key in Secretive is harmless: `IdentitiesOnly yes` in the generated config means SSH only ever offers the pinned `~/.ssh/tart-vm.pub`.)
+
+`tart-ssh-sync` wires every VM to authenticate through Secretive's agent socket (`IdentityAgent`) with `IdentityFile ~/.ssh/tart-vm.pub` pinned under `IdentitiesOnly yes` — so SSH offers exactly this one key, one Touch ID prompt per connection, even when Secretive holds other keys.
 
 ### 2. Install the host tools
 
@@ -100,7 +102,7 @@ tart-ssh-sync --dry-run   # print what would be written, without touching disk
 
 What the script emits as universal defaults (apply to every Tart VM):
 
-- **Common block**: user, identity file, host-key handling, connection multiplexing.
+- **Common block**: user, identity (Secretive agent socket + the pinned `~/.ssh/tart-vm.pub`), host-key handling, connection multiplexing.
 - **Agent socket forward**: `/home/admin/.ssh/forwarded-agent.sock` ← your host SSH agent. The in-VM `~/.zshrc` auto-sets `SSH_AUTH_SOCK` to the forwarded socket, so `git`/`ssh`/`composer` inside the VM transparently use the host agent. **By default the generator reads `$SSH_AUTH_SOCK`** — whatever agent your shell is wired to. Override with `TART_AGENT_SOCKET=/path/to/socket` (1Password's `~/.1password/agent.sock`, Secretive's container socket, etc.) when you want a specific agent regardless of shell state.
 
 What you opt into per-VM (your personal forwards, never committed): `~/.config/tart-stacks/forwards`. Each non-blank, non-comment line:
@@ -244,7 +246,7 @@ One function per credential (`with-aws`, `with-stripe`, etc.); adjust `pass-cli 
 
 - **`packer init` fails with "no plugins for github.com/cirruslabs/tart"** → upgrade Packer (`brew upgrade hashicorp/tap/packer`); the tart plugin requires Packer 1.7+.
 - **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip fedora-base`. If blank, the VM didn't get DHCP — `tart stop fedora-base; tart delete fedora-base; make bootstrap` to start over.
-- **`tssh` triggers Touch ID twice per session** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below a `Host *` catch-all), so ssh falls back to defaults and tries every key in your agent. Re-run `make setup` — it adds the `Include` line and warns if an existing one is misplaced. See [Setup §2](#2-install-the-host-tools).
+- **`tssh` triggers Touch ID twice (or more) per session** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below a `Host *` catch-all), so ssh falls back to defaults and offers every key in Secretive's agent — one Touch ID prompt per key tried. The generated config pins just the Tart VM key (`IdentityFile` + `IdentitiesOnly yes`), so a match is what collapses it to a single prompt. Re-run `make setup` — it adds the `Include` line and warns if an existing one is misplaced. See [Setup §2](#2-install-the-host-tools).
 
 Stack-specific troubleshooting lives in each stack's README.
 
