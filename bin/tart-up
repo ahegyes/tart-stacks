@@ -82,12 +82,14 @@ tart_pattern_matches() {
 }
 
 # dir_args_for_vm <bare-vm> — print one `--dir=<name>:<path>[:ro]` per mounts
-# line selecting this VM. Line format: `<vm-pattern> <host-path>[:ro]`; the
-# in-VM share name is the path's basename (mounts at /mnt/shared/<basename>).
+# line selecting this VM. Line format: `<vm-pattern> [<name>=]<host-path>[:ro]`;
+# the in-VM share name is <name> when given (mounts at /mnt/shared/<name>), else
+# the path's basename. Give an explicit name when two mounts would otherwise
+# collide on basename (e.g. ~/Source/.../workbench vs ~/.config/workbench).
 dir_args_for_vm() {
   local vm="$1"
   [ -f "$MOUNTS_CONFIG" ] || return 0
-  local raw line pattern rest path ro
+  local raw line pattern rest path ro name
   while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw%%#*}"
     IFS=$' \t' read -r pattern rest <<< "$line"
@@ -101,7 +103,14 @@ dir_args_for_vm() {
       *:ro) ro=":ro"; path="${rest%:ro}" ;;
       *)    ro="";    path="$rest" ;;
     esac
-    printf -- '--dir=%s:%s%s\n' "$(basename "$path")" "$path" "$ro"
+    # Optional explicit share name: `name=/abs/path`. Falls back to the path
+    # basename — give a name when two mounts would otherwise collide on basename.
+    case "$path" in
+      /*)   name="$(basename "$path")" ;;
+      *=/*) name="${path%%=*}"; path="${path#*=}" ;;
+      *)    echo "${prog:-tart-up}: $MOUNTS_CONFIG: malformed mount (need [<name>=]<absolute-path>), skipping: $raw" >&2; continue ;;
+    esac
+    printf -- '--dir=%s:%s%s\n' "$name" "$path" "$ro"
   done < "$MOUNTS_CONFIG"
   return 0
 }
