@@ -107,11 +107,19 @@ build {
     destination = "/tmp/authorized_key.pub"
   }
 
-  # System-level user config (chsh + PATH activation, requires root).
+  # Vendored terminfo, compiled by terminfo.sh below (ncurses-term omits xterm-ghostty).
+  provisioner "file" {
+    source      = "../../shared/files/xterm-ghostty.terminfo"
+    destination = "/tmp/xterm-ghostty.terminfo"
+  }
+
+  # System-level config requiring root + the uploaded files: user shell/PATH, then
+  # compile the vendored terminfo (xterm-ghostty, which ncurses-term lacks).
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
       "../../shared/scripts/user-config.sh",
+      "../../shared/scripts/terminfo.sh",
     ]
   }
 
