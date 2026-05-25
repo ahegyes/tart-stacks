@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Characterization tests for the config-line parsing shared in shape by
-# bin/tssh (mounts) and bin/tart-ssh-sync (forwards): the
+# bin/tart-ssh (mounts) and bin/tart-ssh-sync (forwards): the
 # `<vm-pattern> <rest>` grammar, comment/blank skipping, whitespace
 # handling, and vm-pattern matching (`*` | name | comma-list).
 #
@@ -107,8 +107,8 @@ unset MOCK_SSH_ADD_RC
 run_sync "" >/dev/null
 assert_absent    "silent when forwarded agent has identities"   "$(<"$SYNC_ERR")" "has no identities"
 
-# ── bin/tssh: mounts parser (dir_args_for_vm / tart_pattern_matches) ─────────
-# tssh has no dry-run and its main flow needs a live VM, so pull the two pure
+# ── bin/tart-ssh: mounts parser (dir_args_for_vm / tart_pattern_matches) ─────────
+# tart-ssh has no dry-run and its main flow needs a live VM, so pull the two pure
 # parsing functions out of the source and exercise them directly. Re-extracts
 # every run, so it tracks the real source through refactors.
 extract_fn() { # function-name file
@@ -116,7 +116,7 @@ extract_fn() { # function-name file
   # identically across awk flavors (BSD awk on macOS, mawk on the CI runner).
   awk -v fn="$1" 'index($0, fn "() {")==1{p=1} p{print} p && $0=="}"{exit}' "$2"
 }
-{ extract_fn tart_pattern_matches "$BIN/tssh"; echo; extract_fn dir_args_for_vm "$BIN/tssh"; } > "$WORK/tssh-fns.sh"
+{ extract_fn tart_pattern_matches "$BIN/tart-ssh"; echo; extract_fn dir_args_for_vm "$BIN/tart-ssh"; } > "$WORK/tssh-fns.sh"
 # shellcheck source=/dev/null
 source "$WORK/tssh-fns.sh"
 
@@ -129,7 +129,7 @@ mounts() { # mounts-file-content vm -> stdout of dir_args_for_vm (stderr -> $MNT
   dir_args_for_vm "$2" 2>"$MNT_ERR"
 }
 
-echo "bin/tssh — mounts parser:"
+echo "bin/tart-ssh — mounts parser:"
 
 assert_eq "wildcard mount, read-only, share name = path basename" \
   "--dir=dotfiles:/Users/me/dotfiles:ro" "$(mounts '* /Users/me/dotfiles:ro' app-a)"
@@ -152,7 +152,7 @@ out=$(mounts 'app-a' app-a)
 assert_eq        "no-path line emits no --dir"   "" "$out"
 assert_contains  "no-path line warned to stderr" "$(<"$MNT_ERR")" "no path on line, skipping"
 
-echo "bin/tssh — tart_pattern_matches:"
+echo "bin/tart-ssh — tart_pattern_matches:"
 check "'*' matches any VM"              0 tart_pattern_matches '*'     anything
 check "exact name matches"             0 tart_pattern_matches app-a   app-a
 check "a different name does not match" 1 tart_pattern_matches app-a   app-b

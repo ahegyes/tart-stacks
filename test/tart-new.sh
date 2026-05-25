@@ -23,7 +23,7 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/stacks/fedora-php/scripts" "$WORK/stacks/fedora-jvm/scripts"
 
 # Extract the pure helpers from the source and exercise them directly (same
-# technique parsing.sh uses for tssh's parser fns — re-extracts each run so it
+# technique parsing.sh uses for tart-ssh's parser fns — re-extracts each run so it
 # tracks the real source through refactors).
 extract_fn() { awk -v fn="$1" 'index($0, fn "() {")==1{p=1} p{print} p && $0=="}"{exit}' "$2"; }
 { extract_fn image_for_stack "$BIN/tart-new"
@@ -44,7 +44,7 @@ if stack_exists rust; then bad "stack_exists false for absent stack" "rc 1" "rc 
 
 # Mock `tart` so list/get output is deterministic and clone/set are recorded.
 # Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
-# real field tart-ssh-sync/_tssh key on.
+# real field tart-ssh-sync/_tart-ssh key on.
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/tart" <<'TART'
 #!/usr/bin/env bash

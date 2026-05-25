@@ -1,19 +1,19 @@
-#compdef tssh
+#compdef tart-ssh tssh
 #
-# Zsh completion for tssh.
+# Zsh completion for tart-ssh (and its tssh alias).
 #
 # Completes Tart VM names from `tart list --format json`, filtering out
 # stack build artifacts (fedora-base, fedora-<lang>). Offers both bare
-# (`test-vm`) and `tart-<name>`-prefixed forms since tssh accepts either.
+# (`test-vm`) and `tart-<name>`-prefixed forms since tart-ssh accepts either.
 #
 # Install:
 #   fpath=(/path/to/tart-stacks/completions $fpath)   # before compinit
 #   autoload -Uz compinit && compinit
 
-_tssh() {
+_tart-ssh() {
   if (( CURRENT == 2 )); then
     if (( ! $+commands[tart] )) || (( ! $+commands[jq] )); then
-      _message 'tssh: needs `tart` and `jq` on PATH for completion'
+      _message 'tart-ssh: needs `tart` and `jq` on PATH for completion'
       return 1
     fi
 
@@ -39,4 +39,4 @@ _tssh() {
   fi
 }
 
-_tssh "$@"
+_tart-ssh "$@"
