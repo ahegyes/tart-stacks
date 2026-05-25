@@ -8,6 +8,7 @@
 #
 # This script handles end-of-build operations that must run after every other
 # provisioner:
+#   - Assert SELinux is still enforcing (a regressed base fails the build here).
 #   - Clean dnf cache (free image size before state is locked).
 #   - Authorize the user's SSH key (uploaded earlier to /tmp/authorized_key.pub).
 #   - Install NOPASSWD sudoers drop-in for admin.
@@ -27,6 +28,19 @@ set -euo pipefail
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"
 SUDOERS_FILE="/etc/sudoers.d/${TARGET_USER}-nopasswd"
+
+# Assert the inherited SELinux posture survived the build. The Cirrus base
+# ships Enforcing and nothing in this repo touches it, so this check is free
+# today — but asserting it at the end turns an inherited property into a
+# guaranteed one: a future base that silently shipped SELinux disabled (or a
+# stray provisioner that flipped it) fails the build here instead of minting a
+# downgraded image that every clone would inherit.
+echo "==> Verifying SELinux is enforcing..."
+selinux_mode="$(getenforce 2>/dev/null || true)"
+if [ "${selinux_mode}" != "Enforcing" ]; then
+  echo "ERROR: SELinux is '${selinux_mode:-unavailable}', expected 'Enforcing'. Refusing to finalize a downgraded image." >&2
+  exit 1
+fi
 
 # Clean dnf cache before locking down the image. ~200-300 MB of RPMs +
 # metadata + solver cache in /var/cache/libdnf5/ would otherwise ship in
