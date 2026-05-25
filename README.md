@@ -26,8 +26,9 @@ All stacks share a common base: Fedora + Docker + mise + zellij + standard dev u
 │   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
 │   └── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 ├── shared/
-│   ├── scripts/                      # Provisioners shared across all stacks (00-base, docker, mise, user-config, 99-finalize)
+│   ├── scripts/                      # Provisioners shared across all stacks (00-base, docker, mise, user-config, terminfo, 99-finalize)
 │   └── files/
+│       ├── xterm-ghostty.terminfo    # Ghostty terminfo, compiled into the image by terminfo.sh
 │       └── zshrc                     # Baseline in-VM shell config
 ├── stacks/
 │   └── fedora-php/

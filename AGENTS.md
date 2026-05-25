@@ -26,8 +26,10 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 │   │   ├── 99-finalize.sh              # LAST. Authorize SSH key + sshd drop-in + NOPASSWD sudo + lock admin password (root)
 │   │   ├── docker.sh                   # Docker CE from Docker's Fedora repo (root)
 │   │   ├── mise.sh                     # mise binary install to ~/.local/bin (user)
+│   │   ├── terminfo.sh                 # Compile vendored xterm-ghostty terminfo, which ncurses-term omits (root)
 │   │   └── user-config.sh              # zsh default shell + mise/PATH activation for bash & non-interactive shells (root)
 │   └── files/
+│       ├── xterm-ghostty.terminfo      # Ghostty terminfo source; compiled by terminfo.sh into the image
 │       └── zshrc                       # In-VM shell baseline; uploaded to /home/admin/.zshrc
 ├── stacks/
 │   └── fedora-php/                     # PHP stack
@@ -67,8 +69,9 @@ Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts 
 | 3 | `shared/scripts/docker.sh` | root | Same root provisioner block as 00-base/00-stack (uses `dnf-plugins-core` to add Docker's repo) |
 | 4 | `shared/scripts/mise.sh` | user | The user provisioner block — installs mise binary to `~/.local/bin` |
 | 5 | `shared/scripts/user-config.sh` | root | Needs to `chsh` and update bash/zshenv after user-level installs are done |
-| 6 | `stacks/fedora-php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
-| 7 | `shared/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
+| 6 | `shared/scripts/terminfo.sh` | root | Same root block as user-config; compiles the uploaded `xterm-ghostty.terminfo` into the system terminfo (`ncurses-term` omits it) |
+| 7 | `stacks/fedora-php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
+| 8 | `shared/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
 
 If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the appropriate provisioner block in that stack's `stack.pkr.hcl`. Ordering within a privilege block is determined by the list order in `stack.pkr.hcl`, not by filename. If a new file is universally useful, put it in `shared/scripts/` and reference it from every stack's `stack.pkr.hcl`.
 
