@@ -9,7 +9,7 @@ Multi-stack collection of [Tart](https://tart.run/) base images for development 
 | `php` | `fedora-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/fedora-php/](./stacks/fedora-php/README.md) |
 | `jvm` | `fedora-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/fedora-jvm/](./stacks/fedora-jvm/README.md) |
 
-All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + standard dev utilities. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory.
+All stacks share a common base: Fedora + Docker + mise + zellij + standard dev utilities. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory.
 
 ## Repo layout
 
@@ -26,7 +26,7 @@ All stacks share a common base: Fedora + Docker + mise + zellij + Claude Code + 
 │   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
 │   └── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 ├── shared/
-│   ├── scripts/                      # Provisioners shared across all stacks (00-base, claude, docker, mise, user-config, 99-finalize)
+│   ├── scripts/                      # Provisioners shared across all stacks (00-base, docker, mise, user-config, 99-finalize)
 │   └── files/
 │       └── zshrc                     # Baseline in-VM shell config
 ├── stacks/

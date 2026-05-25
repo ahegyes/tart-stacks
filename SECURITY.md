@@ -27,7 +27,6 @@ The base images rely on the following upstream sources for their content. Vulner
 
 - `ghcr.io/cirruslabs/fedora:latest` — the base Fedora image; built from [`cirruslabs/linux-image-templates`](https://github.com/cirruslabs/linux-image-templates).
 - `mise.run` — the [mise](https://mise.jdx.dev/) install script.
-- `claude.ai/install.sh` — the [Claude Code](https://claude.ai/) native installer.
 - `download.docker.com/linux/fedora/docker-ce.repo` — Docker CE's official Fedora repository.
 - `varlad/zellij` — the [zellij](https://github.com/zellij-org/zellij) COPR.
 

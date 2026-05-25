@@ -85,7 +85,6 @@ build {
   provisioner "shell" {
     scripts = [
       "../../shared/scripts/mise.sh",
-      "../../shared/scripts/claude.sh",
     ]
   }
 
