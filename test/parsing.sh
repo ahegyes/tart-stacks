@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Characterization tests for the config-line parsing shared in shape by
-# bin/tart-ssh (mounts) and bin/tart-ssh-sync (forwards): the
+# bin/tart-up (mounts) and bin/tart-ssh-sync (forwards): the
 # `<vm-pattern> <rest>` grammar, comment/blank skipping, whitespace
 # handling, and vm-pattern matching (`*` | name | comma-list).
 #
@@ -38,12 +38,12 @@ trap 'rm -rf "$WORK"' EXIT
 nl=$'\n'
 
 # ── bin/tart-ssh-sync: forwards parser (exercised via --dry-run) ────────────
-# Mock `tart` so the dev-VM list is deterministic. Real path:
-# `tart list --format json | jq '.[] | select(.Source=="local") | .Name'`.
+# Mock `tart` so the script's `command -v tart` resolves (it bakes that path
+# into the generated ProxyCommand). The generator no longer reads `tart list`,
+# so the mock's output is irrelevant — only its presence on PATH matters.
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/tart" <<'TART'
 #!/usr/bin/env bash
-[ "$1" = "list" ] && printf '%s\n' '[{"Name":"app-a","Source":"local"},{"Name":"app-b","Source":"local"},{"Name":"fedora-php","Source":"local"},{"Name":"fedora-base","Source":"local"},{"Name":"pulled-img","Source":"oci"}]'
 exit 0
 TART
 chmod +x "$WORK/bin/tart"
@@ -70,16 +70,16 @@ run_sync() { # forwards-file-content -> stdout of --dry-run (stderr -> $SYNC_ERR
 echo "bin/tart-ssh-sync — forwards parser:"
 
 out=$(run_sync "")
-assert_contains  "common block lists both prefixed dev VMs"   "$out" "Host tart-app-a tart-app-b"
-assert_contains  "common block sets User admin"               "$out" "User admin"
-assert_contains  "host agent socket forwarded into every VM"  "$out" "RemoteForward /home/admin/.ssh/forwarded-agent.sock /tmp/agent.sock"
-assert_absent    "stack build artifact excluded (fedora-php)" "$out" "tart-fedora-php"
-assert_absent    "intermediate base excluded (fedora-base)"   "$out" "tart-fedora-base"
-assert_absent    "OCI image excluded"                         "$out" "pulled-img"
+assert_contains  "common block uses the tart-* wildcard"       "$out" "Host tart-*"
+assert_contains  "common block sets User admin"                "$out" "User admin"
+assert_contains  "ProxyCommand resolves the IP at connect time" "$out" "ProxyCommand /bin/sh -c"
+assert_contains  "host agent socket forwarded into every VM"   "$out" "RemoteForward /home/admin/.ssh/forwarded-agent.sock /tmp/agent.sock"
+assert_contains  "auto-start Match gates on interactive shell" "$out" "Match host tart-* sessiontype shell exec"
+assert_contains  "auto-start Match invokes tart-up with %n"    "$out" "/tart-up %n"
 
 out=$(run_sync "* RemoteForward 27123 127.0.0.1:27123")
-assert_contains  "wildcard groups the forward under both hosts" "$out" "# Forwards for pattern: *${nl}Host tart-app-a tart-app-b${nl}"
-assert_contains  "wildcard forward line emitted"                "$out" "RemoteForward 27123 127.0.0.1:27123"
+assert_contains  "wildcard forward grouped under the tart-* host" "$out" "# Forwards for pattern: *${nl}Host tart-*${nl}"
+assert_contains  "wildcard forward line emitted"                  "$out" "RemoteForward 27123 127.0.0.1:27123"
 
 out=$(run_sync "app-a RemoteForward 8080 127.0.0.1:8080")
 assert_contains  "single name resolves to only its prefixed host" "$out" "# Forwards for pattern: app-a${nl}Host tart-app-a${nl}"
@@ -96,8 +96,10 @@ out=$(run_sync "app-a LocalForward 1 2")
 assert_contains  "unsupported directive warned to stderr" "$(<"$SYNC_ERR")" "skipping unsupported directive 'LocalForward'"
 assert_absent    "unsupported directive not emitted"      "$out" "LocalForward"
 
+# A forward for a VM that doesn't exist yet is emitted verbatim (no `tart list`
+# check) — it stays inert in ssh_config until that VM is cloned.
 out=$(run_sync "ghost RemoteForward 1 2")
-assert_absent    "name absent from tart list is dropped" "$out" "tart-ghost"
+assert_contains  "forward for a not-yet-cloned VM is emitted verbatim" "$out" "Host tart-ghost"
 
 echo "bin/tart-ssh-sync — empty-agent guard:"
 export MOCK_SSH_ADD_RC=1
@@ -107,8 +109,8 @@ unset MOCK_SSH_ADD_RC
 run_sync "" >/dev/null
 assert_absent    "silent when forwarded agent has identities"   "$(<"$SYNC_ERR")" "has no identities"
 
-# ── bin/tart-ssh: mounts parser (dir_args_for_vm / tart_pattern_matches) ─────────
-# tart-ssh has no dry-run and its main flow needs a live VM, so pull the two pure
+# ── bin/tart-up: mounts parser (dir_args_for_vm / tart_pattern_matches) ──────────
+# tart-up has no dry-run and its main flow needs a live VM, so pull the two pure
 # parsing functions out of the source and exercise them directly. Re-extracts
 # every run, so it tracks the real source through refactors.
 extract_fn() { # function-name file
@@ -116,9 +118,9 @@ extract_fn() { # function-name file
   # identically across awk flavors (BSD awk on macOS, mawk on the CI runner).
   awk -v fn="$1" 'index($0, fn "() {")==1{p=1} p{print} p && $0=="}"{exit}' "$2"
 }
-{ extract_fn tart_pattern_matches "$BIN/tart-ssh"; echo; extract_fn dir_args_for_vm "$BIN/tart-ssh"; } > "$WORK/tssh-fns.sh"
+{ extract_fn tart_pattern_matches "$BIN/tart-up"; echo; extract_fn dir_args_for_vm "$BIN/tart-up"; } > "$WORK/tart-up-fns.sh"
 # shellcheck source=/dev/null
-source "$WORK/tssh-fns.sh"
+source "$WORK/tart-up-fns.sh"
 
 MNT_ERR="$WORK/mounts.err"
 mounts() { # mounts-file-content vm -> stdout of dir_args_for_vm (stderr -> $MNT_ERR)
@@ -129,7 +131,7 @@ mounts() { # mounts-file-content vm -> stdout of dir_args_for_vm (stderr -> $MNT
   dir_args_for_vm "$2" 2>"$MNT_ERR"
 }
 
-echo "bin/tart-ssh — mounts parser:"
+echo "bin/tart-up — mounts parser:"
 
 assert_eq "wildcard mount, read-only, share name = path basename" \
   "--dir=dotfiles:/Users/me/dotfiles:ro" "$(mounts '* /Users/me/dotfiles:ro' app-a)"
@@ -152,7 +154,7 @@ out=$(mounts 'app-a' app-a)
 assert_eq        "no-path line emits no --dir"   "" "$out"
 assert_contains  "no-path line warned to stderr" "$(<"$MNT_ERR")" "no path on line, skipping"
 
-echo "bin/tart-ssh — tart_pattern_matches:"
+echo "bin/tart-up — tart_pattern_matches:"
 check "'*' matches any VM"              0 tart_pattern_matches '*'     anything
 check "exact name matches"             0 tart_pattern_matches app-a   app-a
 check "a different name does not match" 1 tart_pattern_matches app-a   app-b

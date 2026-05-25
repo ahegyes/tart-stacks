@@ -19,8 +19,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 4. For non-trivial changes: `make rebuild STACK=<name>` (15-20 min for PHP) and confirm a fresh clone works:
    ```bash
    tart clone fedora-<name> test-vm
-   tart run test-vm --no-graphics &
-   tssh test-vm
+   ssh tart-test-vm            # auto-starts the stopped VM, then connects
    # inside VM (example for fedora-php):
    node --version && php --version && composer --version && docker --version
    ```

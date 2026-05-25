@@ -124,4 +124,4 @@ set_args=()
 [ -n "$DISK" ] && set_args+=(--disk-size "$DISK")
 [ "${#set_args[@]}" -gt 0 ] && tart set "$NAME" "${set_args[@]}"
 
-echo "tart-new: created '$NAME' from $img — next: tssh $NAME" >&2
+echo "tart-new: created '$NAME' from $img — next: ssh tart-$NAME" >&2

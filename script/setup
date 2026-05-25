@@ -58,11 +58,10 @@ echo "setup: installing host tools from $REPO_DIR"
 
 # 1. Symlink the commands onto PATH (replaces a prior copy, if any).
 mkdir -p "$LOCAL_BIN"
-ln -sf "$BIN_DIR/tart-ssh"      "$LOCAL_BIN/tart-ssh"
-ln -sf "$BIN_DIR/tart-ssh"      "$LOCAL_BIN/tssh"
+ln -sf "$BIN_DIR/tart-up"       "$LOCAL_BIN/tart-up"
 ln -sf "$BIN_DIR/tart-ssh-sync" "$LOCAL_BIN/tart-ssh-sync"
 ln -sf "$BIN_DIR/tart-new"      "$LOCAL_BIN/tart-new"
-info "linked tart-ssh (+ tssh alias), tart-ssh-sync, tart-new -> $LOCAL_BIN"
+info "linked tart-up, tart-ssh-sync, tart-new -> $LOCAL_BIN"
 case ":$PATH:" in
   *":$LOCAL_BIN:"*) ;;
   *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;
@@ -79,9 +78,8 @@ if [ -z "$compdir" ]; then
   fi
 fi
 mkdir -p "$compdir"
-ln -sf "$REPO_DIR/completions/_tart-ssh" "$compdir/_tart-ssh"
 ln -sf "$REPO_DIR/completions/_tart-new" "$compdir/_tart-new"
-info "linked completions (_tart-ssh, _tart-new) -> $compdir  (run: rm -f ~/.zcompdump* && exec zsh)"
+info "linked completion (_tart-new) -> $compdir  (run: rm -f ~/.zcompdump* && exec zsh)"
 case "$compdir" in
   "$HOME"/*) warn "add to ~/.zshrc above compinit:  fpath=($compdir \$fpath)" ;;
 esac
@@ -133,8 +131,9 @@ EOF
 
 # 5. Per-VM directory mounts (never touches an existing file).
 scaffold "$MOUNTS" "mounts file" <<'EOF'
-# tart-stacks per-VM directory mounts (virtiofs). Attached at VM boot by tssh,
-# so they apply only when tssh starts the VM (an already-running VM won't gain them).
+# tart-stacks per-VM directory mounts (virtiofs). Attached at VM boot when an
+# interactive `ssh tart-<name>` starts a stopped VM, so they apply only on that
+# start (an already-running VM won't gain them until a stop + start).
 # Format:  <vm-pattern> <host-path>[:ro]
 #   <vm-pattern>:  *  (all VMs) | <name> | <a>,<b>,...  (comma list, no spaces)
 #   <host-path>:   absolute path on the host; mounts in-VM at /mnt/shared/<basename>

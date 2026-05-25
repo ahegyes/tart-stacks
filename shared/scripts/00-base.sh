@@ -9,13 +9,15 @@ echo "==> Updating system packages..."
 dnf upgrade -y --refresh
 
 echo "==> Installing core development packages (fail-loud)..."
-# ncurses provides `tic` for the tssh wrapper's terminfo install path.
+# ncurses-term ships terminfo entries for common terminals (alacritty, kitty,
+# wezterm, tmux-256color, …) so an interactive `ssh tart-<name>` renders right
+# without the host pushing terminfo per-connect. ncurses provides tic/infocmp.
 dnf install -y \
   curl wget ca-certificates \
   git gh \
   zsh nano \
   unzip tar \
-  ncurses \
+  ncurses ncurses-term \
   gcc gcc-c++ make
 
 echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."

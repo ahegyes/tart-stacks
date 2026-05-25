@@ -39,7 +39,7 @@ chown "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.zshrc"
 chown -R "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.config"
 
 # Auto-mount Tart's virtiofs directory shares at boot. Every `tart run --dir`
-# share (e.g. attached by tssh from ~/.config/tart-stacks/mounts) surfaces
+# share (e.g. attached by tart-up from ~/.config/tart-stacks/mounts) surfaces
 # under one device — com.apple.virtio-fs.automount — as /mnt/shared/<name>.
 # `nofail` makes a shareless boot a no-op (the device simply isn't attached),
 # so this is harmless on any VM started without --dir.
