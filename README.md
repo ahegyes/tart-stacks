@@ -131,16 +131,17 @@ Share host directories into VMs by listing them in `~/.config/tart-stacks/mounts
 Each non-blank, non-comment line:
 
 ```
-<vm-pattern> <host-path>[:ro]
+<vm-pattern> [<name>=]<host-path>[:ro]
 ```
 
-`<vm-pattern>` is `*` (all dev VMs), a single bare name, or a comma-separated list — the same matching as the forwards file. `<host-path>` is an absolute host path; append `:ro` to mount it read-only. The share surfaces in the guest at `/mnt/shared/<basename>` (every `--dir` share lives under the single `com.apple.virtio-fs.automount` virtiofs device).
+`<vm-pattern>` is `*` (all dev VMs), a single bare name, or a comma-separated list — the same matching as the forwards file. `<host-path>` is an absolute host path; append `:ro` to mount it read-only. The share surfaces in the guest at `/mnt/shared/<name>`, where `<name>` defaults to the path's basename; prefix `<name>=` to rename it — needed when two shares would otherwise collide on basename (e.g. `~/src/app` and `~/.config/app`). Every `--dir` share lives under the single `com.apple.virtio-fs.automount` virtiofs device.
 
 Example `~/.config/tart-stacks/mounts`:
 
 ```
-* /Users/me/src/dotfiles:ro       # read-only dotfiles in every VM
-build-vm /Users/me/code/project   # writable project dir, one VM
+* /Users/me/src/dotfiles:ro          # read-only dotfiles in every VM
+build-vm /Users/me/code/project      # writable project dir, one VM
+build-vm cfg=/Users/me/.config/app   # renamed share -> /mnt/shared/cfg
 ```
 
 Provisioning adds the mount point and an `/etc/fstab` entry (`nofail`), so the share mounts automatically on boot — a boot with no share attached is a no-op. The equivalent by hand:

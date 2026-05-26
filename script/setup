@@ -124,7 +124,7 @@ fi
 scaffold "$FORWARDS" "forwards file" <<'EOF'
 # tart-stacks per-VM RemoteForward opt-ins. Re-run tart-ssh-sync after editing.
 # Format:  <vm-pattern> RemoteForward <args>
-#   <vm-pattern>:  *  (all VMs) | <name> | <a>,<b>,...  (comma list, no spaces)
+#   <vm-pattern>:  *  (all VMs) | <vm> | <a>,<b>,...  (comma list, no spaces)
 # Example:
 #   * RemoteForward 27123 127.0.0.1:27123   # forward a host service into every VM
 EOF
@@ -134,12 +134,16 @@ scaffold "$MOUNTS" "mounts file" <<'EOF'
 # tart-stacks per-VM directory mounts (virtiofs). Attached at VM boot when an
 # interactive `ssh tart-<name>` starts a stopped VM, so they apply only on that
 # start (an already-running VM won't gain them until a stop + start).
-# Format:  <vm-pattern> <host-path>[:ro]
-#   <vm-pattern>:  *  (all VMs) | <name> | <a>,<b>,...  (comma list, no spaces)
-#   <host-path>:   absolute path on the host; mounts in-VM at /mnt/shared/<basename>
+# Format:  <vm-pattern> [<name>=]<host-path>[:ro]
+#   <vm-pattern>:  *  (all VMs) | <vm> | <a>,<b>,...  (comma list, no spaces)
+#   <name>=        optional in-VM share name (default: <host-path> basename);
+#                  mounts at /mnt/shared/<name> — set it when two shares would
+#                  collide on basename
+#   <host-path>:   absolute path on the host
 #   :ro            optional — mount read-only
 # Example:
-#   * /Users/me/src/dotfiles:ro   # share dotfiles into every VM, read-only
+#   * /Users/me/src/dotfiles:ro    # -> /mnt/shared/dotfiles in every VM, read-only
+#   * cfg=/Users/me/.config/app    # rename the share -> /mnt/shared/cfg
 EOF
 
 echo "setup: done. Build a stack with:  make build STACK=php"
