@@ -68,7 +68,7 @@ fi
 MOUNTS_CONFIG="${TART_MOUNTS:-$HOME/.config/tart-stacks/mounts}"
 
 # tart_pattern_matches <pattern> <bare-vm> — 0 if the vm-pattern selects this VM.
-#   pattern: `*` (any) | <name> | <a>,<b>,... (comma list, no spaces).
+#   pattern: `*` (any) | <vm> | <a>,<b>,... (comma list, no spaces).
 tart_pattern_matches() {
   local pattern="$1" vm="$2"
   [ "$pattern" = "*" ] && return 0
