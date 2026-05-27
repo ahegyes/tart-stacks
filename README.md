@@ -233,6 +233,26 @@ with-gh() {
 
 One function per credential (`with-aws`, `with-stripe`, etc.); adjust `pass-cli read` to whichever secret-store CLI you use.
 
+### In-VM git commit signing (SSH keys)
+
+SSH **commit signing** inside a VM needs two halves, and the [agent forward](#3-ssh-config-sync) already supplies one: the forwarded agent does the signing on the host, so the private key never enters the VM. The other half is the **public** key file — git reads `user.signingKey` (a `.pub`) to know which identity to sign as, and the agent protocol forwards signing, not key files.
+
+So mount the public key in (see [Per-VM directory mounts](#4-per-vm-directory-mounts)) and point git at it. Public keys aren't secret, so a read-only mount of a pubkey-**only** directory is safe — never mount `~/.ssh` itself, which holds private keys. Stage your `.pub`s into a clean directory, then:
+
+```
+# ~/.config/tart-stacks/mounts
+* host-pubkeys=/Users/me/.local/state/tart-pubkeys:ro   # pubkey-only dir -> /mnt/shared/host-pubkeys
+```
+
+```bash
+# inside the VM (e.g. via the VM's own ~/.zshrc, not shared/files/zshrc):
+git config --global gpg.format ssh
+git config --global user.signingKey /mnt/shared/host-pubkeys/id_ed25519.pub
+git config --global commit.gpgSign true
+```
+
+The mounted `.pub` only names the key; the forwarded agent signs. That agent can be Secretive, 1Password, or any relay you forward via `TART_AGENT_SOCKET` — including one that gates each use behind a prompt, so VM-initiated signing needs a present human while the key stays on the host.
+
 ## Adding a new stack
 
 1. `mkdir -p stacks/fedora-<name>/{scripts,files}`
