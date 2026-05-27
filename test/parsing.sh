@@ -73,7 +73,7 @@ out=$(run_sync "")
 assert_contains  "common block uses the tart-* wildcard"       "$out" "Host tart-*"
 assert_contains  "common block sets User admin"                "$out" "User admin"
 assert_contains  "ProxyCommand resolves the IP at connect time" "$out" "ProxyCommand /bin/sh -c"
-assert_contains  "host agent socket forwarded into every VM"   "$out" "RemoteForward /home/admin/.ssh/forwarded-agent.sock /tmp/agent.sock"
+assert_contains  "host agent forwarded via ForwardAgent"       "$out" "ForwardAgent /tmp/agent.sock"
 assert_contains  "auto-start Match gates on interactive shell" "$out" "Match host tart-* sessiontype shell exec"
 assert_contains  "auto-start Match invokes tart-up with %n"    "$out" "/tart-up %n"
 

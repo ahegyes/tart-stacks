@@ -10,12 +10,10 @@ fi
 [ -f /usr/share/fzf/shell/key-bindings.zsh ] && source /usr/share/fzf/shell/key-bindings.zsh
 [ -f /usr/share/fzf/shell/completion.zsh ]   && source /usr/share/fzf/shell/completion.zsh
 
-# Use a host SSH agent forwarded into this VM.
-# If your Mac-side ~/.ssh/config does:
-#   RemoteForward /home/admin/.ssh/forwarded-agent.sock <host-agent-socket>
-# this picks up the resulting in-VM socket so git/ssh/composer transparently
-# use the host's agent (e.g. 1Password, Secretive, ssh-agent) with whatever
-# touch/biometric confirmation the host enforces.
+# Host SSH agent. tart-ssh-sync forwards it via OpenSSH ForwardAgent, so sshd
+# already exports SSH_AUTH_SOCK in every session — this block is just a fallback
+# for the older fixed-path pattern (a manual RemoteForward of the host agent to
+# /home/admin/.ssh/forwarded-agent.sock in your Mac-side ~/.ssh/config).
 if [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "$HOME/.ssh/forwarded-agent.sock" ]; then
   export SSH_AUTH_SOCK="$HOME/.ssh/forwarded-agent.sock"
 fi

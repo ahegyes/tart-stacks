@@ -21,10 +21,11 @@
 #     It starts a *stopped* VM (and waits for it) on an interactive
 #     `ssh tart-<name>`, and only then — git/rsync (exec), sftp (subsystem), and
 #     `ssh -N` (none) don't trigger it, so tools never accidentally boot a VM.
-#   - Agent socket forward for every dev VM:
-#       RemoteForward /home/admin/.ssh/forwarded-agent.sock $TART_AGENT_SOCKET
-#     The in-VM ~/.zshrc auto-sets SSH_AUTH_SOCK to the forwarded socket so
-#     git/ssh inside the VM transparently use the host agent.
+#   - Host SSH agent forwarded into every dev VM via OpenSSH ForwardAgent:
+#       ForwardAgent $TART_AGENT_SOCKET
+#     sshd then exports SSH_AUTH_SOCK in EVERY in-VM session — interactive shells
+#     AND non-interactive `ssh tart-x <cmd>` (git, rsync, provisioning) alike — so
+#     in-VM git/ssh use the host agent with no interactive-rc sourcing required.
 #
 # What you opt into (your personal forwards): ~/.config/tart-stacks/forwards
 #   Each non-blank, non-comment line:
@@ -166,9 +167,11 @@ emit() {
   echo "# (none) never trigger it — only an interactive shell does."
   echo "Match host tart-* sessiontype shell exec \"$TART_UP_BIN %n\""
   echo
-  echo "# Host SSH agent forwarded into every VM."
+  echo "# Host SSH agent forwarded into every VM. ForwardAgent (not a fixed-path"
+  echo "# RemoteForward) so sshd exports SSH_AUTH_SOCK in every session — including"
+  echo "# non-interactive 'ssh tart-x <cmd>' — with no interactive-rc sourcing in the VM."
   echo "Host tart-*"
-  echo "  RemoteForward /home/admin/.ssh/forwarded-agent.sock $AGENT_SOCKET"
+  echo "  ForwardAgent $AGENT_SOCKET"
 
   # One Host block per unique vm-pattern from the forwards config,
   # preserving first-seen order. Forwards sharing a pattern group together.
