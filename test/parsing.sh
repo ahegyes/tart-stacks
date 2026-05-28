@@ -60,9 +60,19 @@ chmod +x "$WORK/bin/ssh-add"
 SYNC_ERR="$WORK/sync.err"
 run_sync() { # forwards-file-content -> stdout of --dry-run (stderr -> $SYNC_ERR)
   printf '%s' "$1" > "$WORK/forwards"
+  : > "$WORK/ssh-agents"   # empty by default; ssh-agents tests below pass their own
   PATH="$WORK/bin:$PATH" \
   TART_FORWARDS="$WORK/forwards" \
-  TART_AGENT_SOCKET="/tmp/agent.sock" \
+  TART_SSH_AGENTS="$WORK/ssh-agents" \
+  TART_SSH_CONFIG_D="$WORK/out" \
+    bash "$BIN/tart-ssh-sync" --dry-run 2>"$SYNC_ERR"
+}
+run_sync_with_agents() { # ssh-agents-content -> stdout of --dry-run with empty forwards
+  printf '%s' "$1" > "$WORK/ssh-agents"
+  : > "$WORK/forwards"
+  PATH="$WORK/bin:$PATH" \
+  TART_FORWARDS="$WORK/forwards" \
+  TART_SSH_AGENTS="$WORK/ssh-agents" \
   TART_SSH_CONFIG_D="$WORK/out" \
     bash "$BIN/tart-ssh-sync" --dry-run 2>"$SYNC_ERR"
 }
@@ -73,9 +83,9 @@ out=$(run_sync "")
 assert_contains  "common block uses the tart-* wildcard"       "$out" "Host tart-*"
 assert_contains  "common block sets User admin"                "$out" "User admin"
 assert_contains  "ProxyCommand resolves the IP at connect time" "$out" "ProxyCommand /bin/sh -c"
-assert_contains  "host agent forwarded via ForwardAgent"       "$out" "ForwardAgent /tmp/agent.sock"
 assert_contains  "auto-start Match gates on interactive shell" "$out" "Match host tart-* sessiontype shell exec"
 assert_contains  "auto-start Match invokes tart-up with %n"    "$out" "/tart-up %n"
+assert_absent    "empty ssh-agents emits no per-VM ForwardAgent" "$out" "ForwardAgent"
 
 out=$(run_sync "* RemoteForward 27123 127.0.0.1:27123")
 assert_contains  "wildcard forward grouped under the tart-* host" "$out" "# Forwards for pattern: *${nl}Host tart-*${nl}"
@@ -101,13 +111,47 @@ assert_absent    "unsupported directive not emitted"      "$out" "LocalForward"
 out=$(run_sync "ghost RemoteForward 1 2")
 assert_contains  "forward for a not-yet-cloned VM is emitted verbatim" "$out" "Host tart-ghost"
 
-echo "bin/tart-ssh-sync — empty-agent guard:"
-export MOCK_SSH_ADD_RC=1
-run_sync "" >/dev/null
-assert_contains  "warns when forwarded agent has no identities" "$(<"$SYNC_ERR")" "has no identities"
-unset MOCK_SSH_ADD_RC
-run_sync "" >/dev/null
-assert_absent    "silent when forwarded agent has identities"   "$(<"$SYNC_ERR")" "has no identities"
+echo "bin/tart-ssh-sync — ssh-agents parser:"
+
+# The ssh-agents file is 3-column: `<vm> <agent> <host-socket>`. The host-socket
+# path is supplied per line so tart-stacks doesn't bake in any caller's path
+# convention — we test by passing arbitrary paths and asserting they appear
+# verbatim in the emitted Host blocks. Agent names below (`alpha`, `beta`)
+# are arbitrary identifiers chosen for the tests — the file format places
+# no semantic on the agent string.
+
+# Single VM, single agent: per-VM Host block with one ForwardAgent at the
+# given host socket. No RemoteForward emitted (only one agent — no additional
+# sockets to expose at /run/tart/agent-<name>.sock).
+out=$(run_sync_with_agents "vm-a alpha /tmp/sock-alpha")
+assert_contains  "single-VM block: Host tart-<name>"          "$out" "Host tart-vm-a"
+assert_contains  "single-VM block: ForwardAgent uses given path" "$out" "ForwardAgent /tmp/sock-alpha"
+assert_absent    "single-VM single-agent: no RemoteForward"   "$out" "RemoteForward /run/tart/agent-"
+
+# Single VM, two agents: ForwardAgent = primary (first listed), additional
+# agent becomes RemoteForward at /run/tart/agent-<name>.sock (tart-stacks's
+# in-VM namespace).
+out=$(run_sync_with_agents "vm-a alpha /tmp/sock-alpha${nl}vm-a beta /tmp/sock-beta")
+assert_contains  "multi-agent: primary becomes ForwardAgent"   "$out" "ForwardAgent /tmp/sock-alpha"
+assert_contains  "multi-agent: additional becomes RemoteForward at /run/tart/agent-<name>.sock" "$out" "RemoteForward /run/tart/agent-beta.sock /tmp/sock-beta"
+
+# Two VMs: two distinct Host blocks in first-seen order.
+out=$(run_sync_with_agents "vm-a alpha /tmp/a${nl}vm-b beta /tmp/b")
+assert_contains  "two-VM: vm-a Host block" "$out" "Host tart-vm-a"
+assert_contains  "two-VM: vm-b Host block" "$out" "Host tart-vm-b"
+assert_contains  "two-VM: vm-a ForwardAgent" "$out" "ForwardAgent /tmp/a"
+assert_contains  "two-VM: vm-b ForwardAgent" "$out" "ForwardAgent /tmp/b"
+
+# Comment + blank line tolerance — `#` strips to end-of-line; blanks skipped.
+# (Writers may use marker comments for managed-block bookkeeping.)
+out=$(run_sync_with_agents "# header comment${nl}${nl}vm-a alpha /tmp/sock${nl}# trailing comment")
+assert_contains  "comments and blanks tolerated" "$out" "ForwardAgent /tmp/sock"
+
+# Malformed line (missing agent or socket) warned and skipped.
+out=$(run_sync_with_agents "lonely-vm${nl}vm-b beta /tmp/b")
+assert_absent    "malformed line not emitted as a Host block" "$out" "Host tart-lonely-vm"
+assert_contains  "malformed line warned to stderr"            "$(<"$SYNC_ERR")" "malformed line"
+assert_contains  "well-formed sibling still emitted"          "$out" "Host tart-vm-b"
 
 # ── bin/tart-up: mounts parser (dir_args_for_vm / tart_pattern_matches) ──────────
 # tart-up has no dry-run and its main flow needs a live VM, so pull the two pure

@@ -5,67 +5,44 @@
 #   tart-ssh-sync             # rewrite ~/.ssh/config.d/tart-vms
 #   tart-ssh-sync --dry-run   # print the config that would be written to stdout
 #
-# The generated config is a `tart-*` wildcard, so it applies to every Tart dev
-# VM — present or future — with no per-VM enumeration. A freshly cloned VM is
-# reachable as `ssh tart-<name>` immediately; you only re-run this after editing
-# your forwards file (below).
+# The generated config has three layers:
+#   1. A `Host tart-*` wildcard block applied to every Tart dev VM (present
+#      or future): User, IdentityAgent (for logging INTO the VM, via Secretive),
+#      ProxyCommand (live IP resolution via `tart ip`), host-key handling, and
+#      an auto-start Match hook that boots a stopped VM on interactive login.
+#   2. Per-VM Host blocks generated from ~/.config/tart-stacks/ssh-agents
+#      (some external owner writes this file from its own source of truth;
+#      tart-stacks just consumes). Each VM listed in that file gets a
+#      Host tart-<name> block carrying:
+#        - ForwardAgent <host-side-socket-path>
+#          The PRIMARY agent (first listed for this VM) becomes the VM's
+#          $SSH_AUTH_SOCK once sshd accepts the session.
+#        - One RemoteForward per ADDITIONAL agent, exposing that agent's host
+#          socket at /run/tart/agent-<name>.sock inside the VM. Per-host SSH
+#          config in the VM uses IdentityAgent to pick the right agent per
+#          target host (only relevant for multi-agent VMs; single-agent VMs
+#          just use $SSH_AUTH_SOCK from the ForwardAgent above).
+#   3. Personal forwards from ~/.config/tart-stacks/forwards:
+#      `<vm-pattern> RemoteForward <args>` accumulating per VM.
 #
-# What it emits unconditionally (universal Tart VM defaults), under `Host tart-*`:
-#   - Common block: User=admin, Secretive agent + pinned identity (IdentityAgent
-#     + IdentityFile + IdentitiesOnly), host-key handling, and a ProxyCommand
-#     that resolves each VM's current IP via `tart ip` at connect time — so plain
-#     ssh, JetBrains Gateway, VS Code, rsync, and git all reach a *running* VM
-#     by name.
-#   - An auto-start hook:
-#       Match host tart-* sessiontype shell exec "<abs>/tart-up %n"
-#     It starts a *stopped* VM (and waits for it) on an interactive
-#     `ssh tart-<name>`, and only then — git/rsync (exec), sftp (subsystem), and
-#     `ssh -N` (none) don't trigger it, so tools never accidentally boot a VM.
-#   - Host SSH agent forwarded into every dev VM via OpenSSH ForwardAgent:
-#       ForwardAgent $TART_AGENT_SOCKET
-#     sshd then exports SSH_AUTH_SOCK in EVERY in-VM session — interactive shells
-#     AND non-interactive `ssh tart-x <cmd>` (git, rsync, provisioning) alike — so
-#     in-VM git/ssh use the host agent with no interactive-rc sourcing required.
-#
-# What you opt into (your personal forwards): ~/.config/tart-stacks/forwards
-#   Each non-blank, non-comment line:
-#     <vm-pattern> RemoteForward <args...>
-#   <vm-pattern>:
-#     *                 — every dev VM (emitted as `Host tart-*`)
-#     <name>            — single VM (bare name; emitted as `Host tart-<name>`)
-#     <a>,<b>,...       — comma-separated list (no spaces)
-#   A forward for a VM that doesn't exist yet is harmless — it simply applies
-#   once that VM is cloned.
+# A VM absent from ssh-agents gets NO agent forwarded — fail-closed by absence.
+# This matches the contract: signing requires an agent socket forwarded to
+# the VM, and an unassigned VM has nothing forwarded so it can't sign.
 #
 # One-time host setup (done by `make setup`):
-#   Add to the top of ~/.ssh/config, ABOVE any `Host *` block (so the specific
-#   tart settings beat the catch-all):
+#   Add to the top of ~/.ssh/config, ABOVE any `Host *` block:
 #     Include ~/.ssh/config.d/tart-vms
 #
 # Overridable via env:
-#   TART_AGENT_SOCKET    host SSH agent socket forwarded into VMs.
-#                        Default: $SSH_AUTH_SOCK (whatever your shell is wired to).
-#   TART_FORWARDS        forwards config file. Default: $HOME/.config/tart-stacks/forwards
-#   TART_SSH_CONFIG_D    output file. Default: $HOME/.ssh/config.d/tart-vms
+#   TART_SSH_AGENTS      VM-agent assignment file. Default: $HOME/.config/tart-stacks/ssh-agents
+#   TART_FORWARDS        forwards config file.     Default: $HOME/.config/tart-stacks/forwards
+#   TART_SSH_CONFIG_D    output file.              Default: $HOME/.ssh/config.d/tart-vms
 
 set -euo pipefail
 
 OUTPUT="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
+SSH_AGENTS_CONFIG="${TART_SSH_AGENTS:-$HOME/.config/tart-stacks/ssh-agents}"
 FORWARDS_CONFIG="${TART_FORWARDS:-$HOME/.config/tart-stacks/forwards}"
-AGENT_SOCKET="${TART_AGENT_SOCKET:-${SSH_AUTH_SOCK:-}}"
-if [ -z "$AGENT_SOCKET" ]; then
-  echo "tart-ssh-sync: no SSH agent socket resolvable. Set \$SSH_AUTH_SOCK in your shell or pass TART_AGENT_SOCKET=<path> when invoking." >&2
-  exit 1
-fi
-
-# Warn (non-fatal) if the resolved agent holds no keys: it still gets forwarded
-# into every VM, where in-VM git/ssh then fail with an opaque 'Permission denied
-# (publickey)'. $SSH_AUTH_SOCK often points at an empty agent (e.g. macOS's
-# launchd one) unless you've added keys — set TART_AGENT_SOCKET to one with keys.
-if command -v ssh-add >/dev/null 2>&1 \
-  && ! SSH_AUTH_SOCK="$AGENT_SOCKET" ssh-add -l >/dev/null 2>&1; then
-  echo "tart-ssh-sync: warning: agent at '$AGENT_SOCKET' has no identities (or is unreachable); VMs will forward an empty agent and in-VM git/ssh will fail. Run 'ssh-add -l', or set TART_AGENT_SOCKET to an agent with keys." >&2
-fi
 
 DRY_RUN=0
 case "${1:-}" in
@@ -122,6 +99,33 @@ if [ -f "$FORWARDS_CONFIG" ]; then
   done < "$FORWARDS_CONFIG"
 fi
 
+# Parse the ssh-agents config into parallel (vm, agent, socket) arrays
+# preserving line order. Each line is `<vm-name> <agent-name> <host-socket>`;
+# a VM with N agents has N lines (the first one is the primary — ForwardAgent
+# target — and the rest become RemoteForwards at /run/tart/agent-<name>.sock
+# paths inside the VM). The host-side socket path is supplied per line so
+# tart-stacks doesn't hardcode any caller's path convention; whoever writes
+# the file decides where their agent sockets live. Blanks and `#` comments
+# are tolerated (including any marker lines the writer uses for managed-block
+# bookkeeping).
+ssh_agents_vms=()
+ssh_agents_names=()
+ssh_agents_sockets=()
+if [ -f "$SSH_AGENTS_CONFIG" ]; then
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    line="${raw%%#*}"
+    IFS=$' \t' read -r vm agent socket <<< "$line"
+    [ -z "$vm" ] && continue
+    if [ -z "$agent" ] || [ -z "$socket" ]; then
+      echo "tart-ssh-sync: $SSH_AGENTS_CONFIG: malformed line (want '<vm> <agent> <host-socket>'), skipping: $raw" >&2
+      continue
+    fi
+    ssh_agents_vms+=("$vm")
+    ssh_agents_names+=("$agent")
+    ssh_agents_sockets+=("$socket")
+  done < "$SSH_AGENTS_CONFIG"
+fi
+
 # Resolve a vm-pattern to a space-joined list of host aliases for a `Host` line.
 #   *            -> tart-*          (the wildcard; matches every dev VM)
 #   <name>       -> tart-<name>
@@ -146,7 +150,7 @@ resolve_pattern() {
 
 emit() {
   echo "# Generated by tart-ssh-sync. Do not edit — re-run the script instead."
-  echo "# Source of truth: this script + $FORWARDS_CONFIG"
+  echo "# Source of truth: this script + $SSH_AGENTS_CONFIG + $FORWARDS_CONFIG"
   echo
 
   echo "# Common settings — every Tart dev VM (present or future)."
@@ -166,12 +170,56 @@ emit() {
   echo "# circuits the exec, so git/rsync (exec), sftp (subsystem) and \`ssh -N\`"
   echo "# (none) never trigger it — only an interactive shell does."
   echo "Match host tart-* sessiontype shell exec \"$TART_UP_BIN %n\""
-  echo
-  echo "# Host SSH agent forwarded into every VM. ForwardAgent (not a fixed-path"
-  echo "# RemoteForward) so sshd exports SSH_AUTH_SOCK in every session — including"
-  echo "# non-interactive 'ssh tart-x <cmd>' — with no interactive-rc sourcing in the VM."
-  echo "Host tart-*"
-  echo "  ForwardAgent $AGENT_SOCKET"
+
+  # One Host block per VM declared in ssh-agents, preserving first-seen order.
+  # PRIMARY agent (first listed for this VM) becomes ForwardAgent — sshd sets
+  # $SSH_AUTH_SOCK from it in every session, so in-VM git/ssh just works.
+  # ADDITIONAL agents become RemoteForwards at /run/tart/agent-<name>.sock so
+  # multi-agent VMs can route per-host via IdentityAgent (single-agent VMs
+  # don't need that — they just read $SSH_AUTH_SOCK).
+  if [ "${#ssh_agents_vms[@]}" -gt 0 ]; then
+    local seen="|"
+    local i j vm agent socket primary_socket count
+    for i in "${!ssh_agents_vms[@]}"; do
+      vm="${ssh_agents_vms[$i]}"
+      case "$seen" in
+        *"|$vm|"*) continue ;;
+      esac
+      seen+="$vm|"
+
+      # Collect this VM's primary (first-listed) socket + count.
+      primary_socket=""
+      count=0
+      for j in "${!ssh_agents_vms[@]}"; do
+        if [ "${ssh_agents_vms[$j]}" = "$vm" ]; then
+          count=$((count + 1))
+          if [ -z "$primary_socket" ]; then
+            primary_socket="${ssh_agents_sockets[$j]}"
+          fi
+        fi
+      done
+
+      echo
+      printf '# VM %q: %d agent' "$vm" "$count"
+      [ "$count" -ne 1 ] && printf 's'
+      printf '\n'
+      echo "Host tart-$vm"
+      echo "  ForwardAgent $primary_socket"
+      # Additional agents — skip the primary on this pass.
+      local first_seen=0
+      for j in "${!ssh_agents_vms[@]}"; do
+        if [ "${ssh_agents_vms[$j]}" = "$vm" ]; then
+          if [ "$first_seen" -eq 0 ]; then
+            first_seen=1
+            continue
+          fi
+          agent="${ssh_agents_names[$j]}"
+          socket="${ssh_agents_sockets[$j]}"
+          echo "  RemoteForward /run/tart/agent-${agent}.sock $socket"
+        fi
+      done
+    done
+  fi
 
   # One Host block per unique vm-pattern from the forwards config,
   # preserving first-seen order. Forwards sharing a pattern group together.
@@ -214,4 +262,9 @@ mv "$tmp" "$OUTPUT"
 chmod 600 "$OUTPUT"
 trap - EXIT
 
-echo "tart-ssh-sync: wrote $OUTPUT (${#patterns[@]} extra forward line(s))" >&2
+if [ "${#ssh_agents_vms[@]}" -gt 0 ]; then
+  vm_count=$(printf '%s\n' "${ssh_agents_vms[@]}" | sort -u | wc -l | tr -d ' ')
+else
+  vm_count=0
+fi
+echo "tart-ssh-sync: wrote $OUTPUT ($vm_count per-VM agent block(s), ${#patterns[@]} extra forward line(s))" >&2
