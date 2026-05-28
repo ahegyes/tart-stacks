@@ -64,6 +64,24 @@ if [[ "${VM#tart-}" =~ ^(fedora-base|fedora-[a-z]+)$ ]]; then
   exit 1
 fi
 
+# ---- net-policy (opt-in; applies uniformly to every VM) --------------------
+# Whitespace-separated tart `--net-*` flags read from a single file; tokens
+# emitted as one CLI arg per line. Comment/blank tolerant (# and empty lines).
+# Empty/absent file = no args (default Tart NAT, unfiltered). Engine writes
+# this file (workbench: ~/.config/tart-stacks/netpolicy with softnet @host-only
+# confinement); tart-stacks just consumes it. Applies at `tart run` start —
+# running VMs need stop+start to pick up changes.
+NETPOLICY_CONFIG="${TART_NETPOLICY:-$HOME/.config/tart-stacks/netpolicy}"
+
+netpolicy_args() {
+  [ -f "$NETPOLICY_CONFIG" ] || return 0
+  local raw line tok
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    line="${raw%%#*}"
+    for tok in $line; do printf '%s\n' "$tok"; done
+  done < "$NETPOLICY_CONFIG"
+}
+
 # ---- per-VM directory mounts (opt-in) --------------------------------------
 MOUNTS_CONFIG="${TART_MOUNTS:-$HOME/.config/tart-stacks/mounts}"
 
@@ -115,7 +133,13 @@ dir_args_for_vm() {
   return 0
 }
 
-# Resolve this VM's mounts once (bare name); reused by the start + warning paths.
+# Resolve this VM's net-policy + mounts once (bare name for mounts; netpolicy
+# is VM-agnostic). Both reused by the start + warning paths.
+NET_ARGS=()
+while IFS= read -r n; do
+  [ -n "$n" ] && NET_ARGS+=("$n")
+done < <(netpolicy_args)
+
 DIR_ARGS=()
 while IFS= read -r d; do
   [ -n "$d" ] && DIR_ARGS+=("$d")
@@ -125,11 +149,16 @@ if [ "$STATE" = "running" ]; then
   if [ "${#DIR_ARGS[@]}" -gt 0 ]; then
     echo "$prog: '$VM' already running — ${#DIR_ARGS[@]} configured mount(s) not attached (stop + start to apply)." >&2
   fi
+  if [ "${#NET_ARGS[@]}" -gt 0 ]; then
+    echo "$prog: '$VM' already running — net-policy from $NETPOLICY_CONFIG not applied (stop + start to apply)." >&2
+  fi
 elif [ "$STATE" = "stopped" ]; then
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
-  # Build the command as one array so the empty-DIR_ARGS case is safe under
-  # `set -u` on bash 3.2 (the macOS system bash).
+  # Build the command as one array so the empty-args case is safe under
+  # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
+  # tart's --net-* family is mutually exclusive, so keep them visually adjacent.
   run_cmd=(tart run "$VM" --no-graphics)
+  [ "${#NET_ARGS[@]}" -gt 0 ] && run_cmd+=("${NET_ARGS[@]}")
   [ "${#DIR_ARGS[@]}" -gt 0 ] && run_cmd+=("${DIR_ARGS[@]}")
   ( "${run_cmd[@]}" >/dev/null 2>&1 & disown )
 else

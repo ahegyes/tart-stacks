@@ -118,7 +118,9 @@ extract_fn() { # function-name file
   # identically across awk flavors (BSD awk on macOS, mawk on the CI runner).
   awk -v fn="$1" 'index($0, fn "() {")==1{p=1} p{print} p && $0=="}"{exit}' "$2"
 }
-{ extract_fn tart_pattern_matches "$BIN/tart-up"; echo; extract_fn dir_args_for_vm "$BIN/tart-up"; } > "$WORK/tart-up-fns.sh"
+{ extract_fn tart_pattern_matches "$BIN/tart-up"; echo
+  extract_fn dir_args_for_vm    "$BIN/tart-up"; echo
+  extract_fn netpolicy_args     "$BIN/tart-up"; } > "$WORK/tart-up-fns.sh"
 # shellcheck source=/dev/null
 source "$WORK/tart-up-fns.sh"
 
@@ -165,6 +167,34 @@ check "exact name matches"             0 tart_pattern_matches app-a   app-a
 check "a different name does not match" 1 tart_pattern_matches app-a   app-b
 check "comma-list matches a member"     0 tart_pattern_matches 'a,b,c' b
 check "comma-list rejects a non-member" 1 tart_pattern_matches 'a,b,c' z
+
+# ── bin/tart-up: netpolicy parser (netpolicy_args) ──────────
+# netpolicy is VM-agnostic — one flag-list file applies uniformly to every VM.
+# Tokens are whitespace-separated, # comments stripped, blank lines tolerated.
+netpolicy() { # netpolicy-file-content -> stdout of netpolicy_args
+  printf '%s' "$1" > "$WORK/netpolicy"
+  # shellcheck disable=SC2034  # netpolicy_args reads this as a global
+  NETPOLICY_CONFIG="$WORK/netpolicy"
+  netpolicy_args
+}
+
+echo "bin/tart-up — netpolicy parser:"
+assert_eq "absent file emits no args" "" "$(NETPOLICY_CONFIG=/no/such/file netpolicy_args)"
+assert_eq "empty file emits no args"  "" "$(netpolicy '')"
+assert_eq "single line, whitespace-separated tokens" \
+  "--net-softnet
+--net-softnet-block=0.0.0.0/0
+--net-softnet-allow=@host" \
+  "$(netpolicy '--net-softnet --net-softnet-block=0.0.0.0/0 --net-softnet-allow=@host')"
+assert_eq "multi-line tokens" \
+  "--net-softnet
+--net-softnet-allow=@host" \
+  "$(netpolicy "--net-softnet${nl}--net-softnet-allow=@host")"
+assert_eq "comment-only line skipped, trailing comment stripped" \
+  "--net-softnet-allow=@host" \
+  "$(netpolicy "# explainer${nl}--net-softnet-allow=@host  # @host = bridge gateway")"
+assert_eq "blank lines tolerated" "--net-softnet" \
+  "$(netpolicy "${nl}${nl}--net-softnet${nl}${nl}")"
 
 echo
 echo "  $pass passed, $fail failed"
