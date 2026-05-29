@@ -184,6 +184,14 @@ fi
 # SSH client's own ProxyCommand does the authenticated connect right after.)
 for _ in $(seq 1 30); do
   if nc -z "$IP" 22 >/dev/null 2>&1; then
+    # Set the guest hostname to the VM name. Tart does NOT do this (VMs boot as
+    # the base-image default), yet consumers key on it: the per-VM MCP-broker
+    # token lookup (`hostname -s`) and the zsh "which-VM" prompt. Use the guest
+    # agent (`tart exec`, over vsock) — NOT ssh — so it never triggers Touch ID.
+    # Idempotent + best-effort: an older guest agent / missing hostnamectl no-ops.
+    if [ "$(tart exec "$VM" hostname -s 2>/dev/null)" != "$VM" ]; then
+      tart exec "$VM" sudo hostnamectl set-hostname "$VM" >/dev/null 2>&1 || true
+    fi
     exit 0
   fi
   sleep 1
