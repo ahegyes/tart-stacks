@@ -164,7 +164,11 @@ emit() {
   echo "  LogLevel ERROR"
   # Live IP resolution for every client. %n (the alias) not %h: a client that
   # sets `-o HostName=<ip>` would poison %h, but %n is always the typed alias.
-  echo "  ProxyCommand /bin/sh -c 'n=%n; exec $NC_BIN \$(\"$TART_BIN\" ip \"\${n#tart-}\") 22'"
+  # Passed as $1 (not interpolated into the script body); a stopped VM yields no
+  # IP, so fail fast with a clear "run tart-up" message rather than letting nc
+  # connect to nothing — BSD nc exits 0 on a bad host, which SSH then surfaces as
+  # an opaque protocol error. `nc -G/-w` bound a stale-IP connect to ~10s.
+  echo "  ProxyCommand /bin/sh -c 'n=\${1#tart-}; ip=\$(\"$TART_BIN\" ip \"\$n\" 2>/dev/null) && [ -n \"\$ip\" ] || { echo \"tart-vm: \$n is not running. Start it: tart-up \$n\" >&2; exit 1; }; exec $NC_BIN -G 5 -w 10 \"\$ip\" 22' _ %n"
   echo
   echo "# Auto-start a stopped VM on interactive login only. sessiontype short-"
   echo "# circuits the exec, so git/rsync (exec), sftp (subsystem) and \`ssh -N\`"
