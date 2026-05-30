@@ -10,41 +10,19 @@
 # Apple Silicon. PHP build dependencies are installed by 00-stack.sh.
 
 set -euo pipefail
+# /tmp/mise-lib.sh is staged on the guest by the Packer template (absent at lint time).
+# shellcheck source=/dev/null
+source /tmp/mise-lib.sh
 
-export PATH="$HOME/.local/bin:$PATH"
-
-# PHP_CONFIGURE_OPTIONS *replaces* asdf-php's os_based_configure_options()
-# block (it doesn't append), so we restate the Linux defaults and add
-# what we actually want on top.
+# PHP_CONFIGURE_OPTIONS *replaces* asdf-php's os_based_configure_options() block
+# (it doesn't append), so we restate the Linux defaults and add what we want on
+# top. Must be exported before mise builds PHP from source.
 export PHP_CONFIGURE_OPTIONS="--with-openssl --with-curl --with-zlib \
 --with-readline --with-gettext \
 --with-sodium --with-bz2"
 
-echo "==> Installing language runtimes per global mise.toml..."
-echo "    (Node ~30s, PHP ~5-10 min from source compile)"
-
-# `mise install` reads ~/.config/mise/config.toml and installs all declared
-# tools. -y auto-accepts plugin trust prompts. --verbose surfaces the actual
-# compiler errors if a tool build fails (otherwise mise summarizes them out
-# of the build log).
-mise install -y --verbose
-
-echo ""
-echo "==> Installed tools:"
-mise list
-
-# Activate mise so all mise-managed tool binaries (node, php, pecl, corepack)
-# are on PATH for the rest of this script.
-eval "$(mise activate bash)"
-
-# Enable Corepack — Node ships it bundled; this flips the symlinks so
-# `pnpm` and `yarn` shim to whatever version each project's
-# `package.json` "packageManager" field declares. WP ecosystem is split
-# (Gutenberg=npm, WooCommerce/Jetpack=pnpm, Calypso=yarn) so per-project
-# shimming beats global installs.
-echo ""
-echo "==> Enabling Corepack for per-project pnpm/yarn shimming..."
-corepack enable
+echo "==> Node ~30s, PHP ~5-10 min from source compile"
+mise_runtime_setup
 
 # Install PECL extensions. `yes ''` answers interactive prompts with defaults.
 # We track per-extension success so we only emit ini files for extensions

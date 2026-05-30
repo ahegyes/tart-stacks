@@ -1,90 +1,40 @@
 #!/usr/bin/env bash
-# mise-install.sh — Install language runtimes declared in the global
-# mise.toml so the base image ships with them ready to use (and every
-# VM cloned from this base inherits them).
+# mise-install.sh — Install the JVM-stack runtimes declared in the global mise.toml
+# and hard-gate on a smoke test, so the base image ships them ready to use (and
+# every cloned VM inherits them).
 #
-# Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/).
+# Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/). The
+# shared mechanism (install/activate, smoke loop) lives in /tmp/mise-lib.sh, uploaded
+# by the Packer template; this file is just the jvm payload + the Maven wiring check.
 #
-# Timing: all six tools are pre-built aarch64 binary downloads. Temurin
-# JDK is the largest (~200 MB extracted); end-to-end install + smoke
-# test is roughly 3–5 min on Apple Silicon with a fast connection.
+# Timing: all tools are pre-built aarch64 binary downloads. Temurin JDK is the
+# largest (~200 MB extracted); end-to-end install + smoke is roughly 3-5 min on
+# Apple Silicon with a fast connection.
 
 set -euo pipefail
+# /tmp/mise-lib.sh is staged on the guest by the Packer template (absent at lint time).
+# shellcheck source=/dev/null
+source /tmp/mise-lib.sh
 
-export PATH="$HOME/.local/bin:$PATH"
+mise_runtime_setup
 
-echo "==> Installing language runtimes per global mise.toml..."
-
-# `mise install` reads ~/.config/mise/config.toml and installs all declared
-# tools. -y auto-accepts plugin trust prompts. --verbose surfaces actual
-# errors if a tool install fails (otherwise mise summarizes them out of
-# the build log).
-mise install -y --verbose
-
-echo ""
-echo "==> Installed tools:"
-mise list
-
-# Activate mise so all mise-managed tool binaries (java, mvn, sbt,
-# scala-cli, uv, node, corepack) are on PATH and JAVA_HOME is set for
-# the rest of this script.
-eval "$(mise activate bash)"
-
-# Enable Corepack — Node ships it bundled; this flips the symlinks so
-# `pnpm` and `yarn` shim to whatever version each project's
-# `package.json` "packageManager" field declares. Mixed JVM+JS projects
-# (e.g., Spring backend with a Vite frontend) get per-project shimming
-# without polluting the global Node install.
-echo ""
-echo "==> Enabling Corepack for per-project pnpm/yarn shimming..."
-corepack enable
-
-# Smoke test — HARD GATE. The Packer build fails if any expected tool
-# is missing or its version check errors. Mirrors fedora-php's pattern.
-echo ""
-echo "==> Smoke test (hard gate): tool version checks"
-
-declare -a checks=(
-  "java --version"
-  "mvn -v"
-  "gradle --version"
-  "sbt --script-version"
-  "scala-cli version"
-  "kotlinc -version"
-  "uv --version"
+smoke_gate "tool version checks" \
+  "java --version" \
+  "mvn -v" \
+  "gradle --version" \
+  "sbt --script-version" \
+  "scala-cli version" \
+  "kotlinc -version" \
+  "uv --version" \
   "node --version"
-)
 
-# `awk` filter prints the first non-empty, non-separator line so commands
-# like `gradle --version` (which leads with `------------`) display
-# something meaningful instead of just the box border.
-failed=0
-for cmd in "${checks[@]}"; do
-  printf "  %-26s " "$cmd"
-  if output=$(eval "$cmd" 2>&1); then
-    echo "$output" | awk '/^[^-]/ && NF { print; exit }'
-  else
-    echo "FAILED"
-    echo "$output" >&2
-    failed=$((failed + 1))
-  fi
-done
-
-if [ "$failed" -gt 0 ]; then
-  echo "" >&2
-  echo "ERROR: $failed tool(s) failed their version check." >&2
-  exit 1
-fi
-
-# Maven hello-world build — proves the toolchain actually wires up, not
-# just that the binaries are present. Catches the case where Java +
-# Maven are individually installed but JAVA_HOME / PATH state leaves
-# Maven unable to find a compiler. Side effect: warms ~/.m2/repository
-# so the first real Maven build in a cloned VM is much faster.
+# Maven hello-world build — proves the toolchain actually wires up, not just that
+# the binaries are present. Catches the case where Java + Maven are individually
+# installed but JAVA_HOME / PATH state leaves Maven unable to find a compiler. Side
+# effect: warms ~/.m2/repository so the first real Maven build in a clone is faster.
 #
-# `release=21` keeps the smoke independent of whatever maven-compiler-plugin
-# version Maven's default-bindings ship; we're proving the toolchain wires,
-# not flexing Java 25 syntax.
+# `release=21` keeps the smoke independent of whatever maven-compiler-plugin version
+# Maven's default bindings ship; we're proving the toolchain wires, not flexing Java 25.
 echo ""
 echo "==> Maven hello-world build (proves toolchain wires correctly)..."
 SMOKE_DIR=$(mktemp -d)

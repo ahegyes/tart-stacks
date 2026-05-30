@@ -96,6 +96,13 @@ build {
     destination = "/home/${var.ssh_username}/.config/mise/config.toml"
   }
 
+  # Shared mise helpers, sourced by the stack's mise-install.sh below (uploaded
+  # rather than added to a scripts=[] block, which would run it in its own shell).
+  provisioner "file" {
+    source      = "shared/scripts/mise-lib.sh"
+    destination = "/tmp/mise-lib.sh"
+  }
+
   # Upload the host's public SSH key (consumed by 99-finalize.sh).
   provisioner "file" {
     source      = pathexpand(var.ssh_pubkey_path)
