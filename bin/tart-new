@@ -20,7 +20,10 @@ while [ -L "$src" ]; do
   src=$(readlink "$src")
   case "$src" in /*) ;; *) src="$dir/$src" ;; esac
 done
-REPO=$(cd -P "$(dirname "$src")/.." >/dev/null 2>&1 && pwd)
+SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+# shellcheck source=bin/lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 
 # image_for_stack <stack> — the one place the fedora- OS prefix lives. A future
@@ -62,8 +65,8 @@ usage() {
   echo "usage: tart-new <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]" >&2
 }
 
-command -v tart >/dev/null 2>&1 || { echo "tart-new: 'tart' not on PATH. Install: brew install cirruslabs/cli/tart" >&2; exit 1; }
-command -v jq   >/dev/null 2>&1 || { echo "tart-new: 'jq' not on PATH. Install: brew install jq" >&2; exit 1; }
+need_cmd tart "Install: brew install cirruslabs/cli/tart"
+need_cmd jq   "Install: brew install jq"
 
 CPU="" MEM="" DISK=""
 positionals=()

@@ -40,9 +40,21 @@
 
 set -euo pipefail
 
+# Resolve this script's real dir (following the ~/.local/bin symlink that
+# script/setup installs) to source the shared bin/lib helpers.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+# shellcheck source=bin/lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+
 OUTPUT="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
-SSH_AGENTS_CONFIG="${TART_SSH_AGENTS:-$HOME/.config/tart-stacks/ssh-agents}"
-FORWARDS_CONFIG="${TART_FORWARDS:-$HOME/.config/tart-stacks/forwards}"
+SSH_AGENTS_CONFIG=$(tart_config_path ssh-agents)
+FORWARDS_CONFIG=$(tart_config_path forwards)
 
 DRY_RUN=0
 case "${1:-}" in
@@ -51,22 +63,12 @@ case "${1:-}" in
   *) echo "tart-ssh-sync: unknown arg '$1' (use --dry-run or no args)" >&2; exit 64 ;;
 esac
 
-command -v tart >/dev/null 2>&1 || { echo "tart-ssh-sync: 'tart' not on PATH. brew install cirruslabs/cli/tart" >&2; exit 1; }
+need_cmd tart "brew install cirruslabs/cli/tart"
 
 # Resolve tart-up to an absolute path for the generated Match line (the Match
-# exec runs under the user's shell, which for a GUI client or non-login shell
-# may lack ~/.local/bin on PATH). Resolve it like tart/nc below — via
-# `command -v`, i.e. its installed ~/.local/bin handle, so the config tracks the
-# install rather than this repo's path. Fall back to the sibling in this
-# checkout only when tart-up isn't installed yet (a dev/CI run from the repo);
-# the symlink-follow yields that fallback path.
-src="${BASH_SOURCE[0]}"
-while [ -L "$src" ]; do
-  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
-  src=$(readlink "$src")
-  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
-done
-SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+# exec runs under a GUI/non-login shell that may lack ~/.local/bin on PATH).
+# Prefer the installed ~/.local/bin handle; fall back to this checkout's sibling
+# (SCRIPT_DIR resolved at the top) for a dev/CI run from the repo.
 TART_UP_BIN="$(command -v tart-up 2>/dev/null || true)"
 [ -n "$TART_UP_BIN" ] || TART_UP_BIN="$SCRIPT_DIR/tart-up"
 

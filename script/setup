@@ -31,11 +31,15 @@ done
 SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 REPO_DIR=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 BIN_DIR="$REPO_DIR/bin"
+# shellcheck source=bin/lib/config.sh
+# bin/lib/ ships with the bins and is sourced via each script's symlink-resolved
+# real dir — it is never symlinked onto PATH.
+. "$BIN_DIR/lib/config.sh"
 
 LOCAL_BIN="${TART_LOCAL_BIN:-$HOME/.local/bin}"
 SSH_CONFIG="${TART_SSH_CONFIG:-$HOME/.ssh/config}"
-FORWARDS="${TART_FORWARDS:-$HOME/.config/tart-stacks/forwards}"
-MOUNTS="${TART_MOUNTS:-$HOME/.config/tart-stacks/mounts}"
+FORWARDS=$(tart_config_path forwards)
+MOUNTS=$(tart_config_path mounts)
 INCLUDE_LINE='Include ~/.ssh/config.d/tart-vms'
 
 info() { printf '  %s\n' "$*"; }

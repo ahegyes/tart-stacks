@@ -240,6 +240,18 @@ assert_eq "comment-only line skipped, trailing comment stripped" \
 assert_eq "blank lines tolerated" "--net-softnet" \
   "$(netpolicy "${nl}${nl}--net-softnet${nl}${nl}")"
 
+# ── bin/lib/config.sh: config-path resolver ─────────────────────────────────
+# Precedence: per-concern TART_<CONCERN> > TART_STACKS_CONFIG_DIR > ~/.config/tart-stacks.
+# shellcheck source=bin/lib/config.sh
+. "$BIN/lib/config.sh"
+echo "bin/lib/config.sh — config-path resolver:"
+assert_eq "default dir per concern" \
+  "$HOME/.config/tart-stacks/forwards" "$(unset TART_STACKS_CONFIG_DIR TART_FORWARDS; tart_config_path forwards)"
+assert_eq "TART_STACKS_CONFIG_DIR relocates a concern" \
+  "/tmp/cfg/mounts" "$(unset TART_MOUNTS; TART_STACKS_CONFIG_DIR=/tmp/cfg tart_config_path mounts)"
+assert_eq "per-concern TART_* wins over the dir" \
+  "/custom/np" "$(TART_NETPOLICY=/custom/np TART_STACKS_CONFIG_DIR=/tmp/cfg tart_config_path netpolicy)"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
