@@ -14,7 +14,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 ## Making changes
 
 1. Edit the relevant `shared/scripts/*.sh`, `stacks/<name>/scripts/*.sh`, or `*/files/*` file.
-2. Run `cd stacks/<name> && packer validate stack.pkr.hcl` — ~1s; catches HCL syntax errors.
+2. Run `packer validate -var stack=<name> stack.pkr.hcl` (from the repo root) — ~1s; catches HCL syntax errors.
 3. Run `bash -n` on any script you changed.
 4. For non-trivial changes: `make rebuild STACK=<name>` (15-20 min for PHP) and confirm a fresh clone works:
    ```bash
@@ -28,7 +28,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 
 - **One logical change per PR.** Renaming + a bug fix in the same PR is two PRs.
 - **`shared/` changes affect every stack.** Bear that in mind — a tweak that helps one stack may regress another.
-- **If you add a new script** to an existing stack, reference it from that stack's `stack.pkr.hcl` provisioner block. If you add a new stack, also add it to the CI matrix in `.github/workflows/validate.yml` and the stack table in the top-level `README.md`.
+- **If you add a new script** to an existing stack, reference it from the root `stack.pkr.hcl` provisioner block (parameterized by `var.stack`). To add a new stack, run `make scaffold STACK=<name>` and add a row to the stack table in the top-level `README.md` — CI discovers `stacks/fedora-*/` automatically, no workflow edit.
 - **Comments explain WHY, not WHAT** — see [`AGENTS.md`](./AGENTS.md) for the full convention list.
 
 ## Reporting bugs

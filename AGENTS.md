@@ -25,15 +25,14 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 │   │   ├── 00-base.sh                  # First. dnf upgrade + core dev pkgs + build toolchain + zellij (root)
 │   │   ├── 99-finalize.sh              # LAST. Authorize SSH key + sshd drop-in + NOPASSWD sudo + lock admin password (root)
 │   │   ├── docker.sh                   # Docker CE from Docker's Fedora repo (root)
-│   │   ├── mise.sh                     # mise binary install to ~/.local/bin (user)
+│   │   ├── mise.sh                     # mise install system-wide from the jdxcode COPR (root)
 │   │   ├── terminfo.sh                 # Compile vendored xterm-ghostty terminfo, which ncurses-term omits (root)
 │   │   └── user-config.sh              # zsh default shell + mise/PATH activation for bash & non-interactive shells (root)
 │   └── files/
 │       ├── xterm-ghostty.terminfo      # Ghostty terminfo source; compiled by terminfo.sh into the image
 │       └── zshrc                       # In-VM shell baseline; uploaded to /home/admin/.zshrc
 ├── stacks/
-│   └── fedora-php/                     # PHP stack
-│       ├── stack.pkr.hcl               # Provisioner chain; references ../../shared + ./scripts
+│   └── fedora-php/                     # PHP stack — per-stack content only; the template is the repo-root stack.pkr.hcl
 │       ├── scripts/
 │       │   ├── 00-stack.sh             # Runs immediately after shared/00-base.sh; PHP build deps (root)
 │       │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
@@ -42,7 +41,7 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 │       └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
 └── .github/
     └── workflows/
-        └── validate.yml                # packer validate + shellcheck on push/PR to trunk; matrixed over stacks
+        └── validate.yml                # packer validate + shellcheck on push/PR to trunk; matrix auto-discovered from stacks/fedora-*/
 ```
 
 ## Conventions
@@ -58,7 +57,7 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 
 ## Build pipeline — load-order rules
 
-Each stack's `stack.pkr.hcl` defines a provisioner chain combining shared and stack-specific scripts. Only two scripts have hard ordering constraints — `shared/scripts/00-base.sh` must run first and `shared/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block (so the `dnf` cache from the upgrade is fresh and the build toolchain is already in place when stack-specific build deps install).
+The root `stack.pkr.hcl` (one parameterized template, built with `make build STACK=<name>` from the repo root) defines the provisioner chain combining shared and stack-specific scripts. Only two scripts have hard ordering constraints — `shared/scripts/00-base.sh` must run first and `shared/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block (so the `dnf` cache from the upgrade is fresh and the build toolchain is already in place when stack-specific build deps install).
 
 Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts share a provisioner block; user scripts share another), not by filename. The table below shows the execution order for the `fedora-php` stack.
 
@@ -66,20 +65,20 @@ Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts 
 |---|---|---|---|
 | 1 | `shared/scripts/00-base.sh` | root | First (`00-` sentinel). System update, core dev packages, build toolchain, zellij. Foundation for everything else |
 | 2 | `stacks/fedora-php/scripts/00-stack.sh` | root | Same root provisioner block as 00-base; stack-specific `dnf install` (PHP build deps). Bundled with 00-base so the toolchain group and PHP-`-devel` headers land in one transaction |
-| 3 | `shared/scripts/docker.sh` | root | Same root provisioner block as 00-base/00-stack (uses `dnf-plugins-core` to add Docker's repo) |
-| 4 | `shared/scripts/mise.sh` | user | The user provisioner block — installs mise binary to `~/.local/bin` |
+| 3 | `shared/scripts/docker.sh` | root | Same root block (uses `dnf-plugins-core` to add Docker's repo). **Opt-in** via `var.with_docker` — off by default; php/jvm enable it in the Makefile |
+| 4 | `shared/scripts/mise.sh` | root | Same root block; installs mise system-wide (`/usr/bin/mise`) from the jdxcode COPR |
 | 5 | `shared/scripts/user-config.sh` | root | Needs to `chsh` and update bash/zshenv after user-level installs are done |
 | 6 | `shared/scripts/terminfo.sh` | root | Same root block as user-config; compiles the uploaded `xterm-ghostty.terminfo` into the system terminfo (`ncurses-term` omits it) |
 | 7 | `stacks/fedora-php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
 | 8 | `shared/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
 
-If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the appropriate provisioner block in that stack's `stack.pkr.hcl`. Ordering within a privilege block is determined by the list order in `stack.pkr.hcl`, not by filename. If a new file is universally useful, put it in `shared/scripts/` and reference it from every stack's `stack.pkr.hcl`.
+If you add a new script to an existing stack, drop it in `stacks/fedora-<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the root `stack.pkr.hcl` provisioner block. Ordering within a privilege block is the list order in `stack.pkr.hcl`, not the filename. A universally-useful file goes in `shared/scripts/` and is referenced once in the root template. To add a whole new stack, use `make scaffold STACK=<name>`.
 
 ## Testing changes
 
 ```bash
 # Per-stack syntax/schema check
-cd stacks/fedora-php && packer validate stack.pkr.hcl    # ~1s; catches HCL syntax errors
+packer validate -var stack=php stack.pkr.hcl    # ~1s; catches HCL syntax errors (run from repo root)
 bash -n shared/scripts/*.sh stacks/fedora-php/scripts/*.sh
 
 # Full rebuild (~15-20 min for PHP)

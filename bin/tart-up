@@ -207,6 +207,7 @@ for _ in $(seq 1 30); do
     # Per-VM host keys: clones share the base's baked-in key, so regenerate once
     # (marker-gated, over vsock — no Touch ID). Stage to .new then swap so sshd is
     # never keyless; restart is synchronous, so :22 is back when tart exec returns.
+    # shellcheck disable=SC2016  # $t/${t} are for the GUEST shell — keep single-quoted
     regen='test -e /etc/ssh/.tart-keys && exit 0; cd /etc/ssh || exit 1; for t in rsa ecdsa ed25519; do ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new" || exit 1; done; for t in rsa ecdsa ed25519; do mv -f "ssh_host_${t}_key.new" "ssh_host_${t}_key"; mv -f "ssh_host_${t}_key.new.pub" "ssh_host_${t}_key.pub"; done; touch .tart-keys && systemctl restart sshd'
     tart exec "$VM" sudo sh -c "$regen" >/dev/null 2>&1 || true
     exit 0

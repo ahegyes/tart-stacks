@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# mise-install.sh (__STACK__) — install the runtimes declared in files/mise.toml
+# (uploaded to ~/.config/mise/config.toml) as the unprivileged build user, then
+# HARD-GATE the build on a smoke test so a missing tool fails the build instead
+# of shipping a broken image.
+
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$PATH"
+
+echo "==> Installing mise tools..."
+mise install -y
+mise list
+
+eval "$(mise activate bash)"
+
+# Smoke test (hard gate): `set -euo pipefail` aborts the build if any runtime is
+# missing. Add one line per tool declared in files/mise.toml.
+echo "==> Smoke test (__STACK__):"
+node --version
+
+echo "==> mise-install.sh (__STACK__) complete."

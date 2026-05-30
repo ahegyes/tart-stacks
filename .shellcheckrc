@@ -1,0 +1,2 @@
+# Follow `# shellcheck source=` directives (the bin/ scripts source bin/lib/*).
+external-sources=true

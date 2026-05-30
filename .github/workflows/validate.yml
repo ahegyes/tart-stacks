@@ -7,14 +7,36 @@ on:
     branches: [trunk]
 
 jobs:
+  discover:
+    name: discover stacks
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: build the stack matrix from stacks/fedora-*/
+        id: set
+        shell: bash
+        # nullglob → [] on a zero-stack tree; select(length>0) drops the trailing
+        # newline split() leaves; jq -R -s -c → valid single-line JSON for fromJSON.
+        run: |
+          shopt -s nullglob
+          printf '%s\n' stacks/fedora-*/ \
+            | sed 's|^stacks/||; s|/$||' \
+            | sort \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))' \
+            | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+
   packer:
     name: packer validate (${{ matrix.stack }})
+    needs: discover
+    if: needs.discover.outputs.matrix != '[]'
     # macOS runner: cirruslabs/tart Packer plugin ships macOS-only binaries.
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        stack: [fedora-php, fedora-jvm]
+        stack: ${{ fromJSON(needs.discover.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
       # macos-latest preinstalls packer; no setup-packer action needed.
@@ -22,14 +44,15 @@ jobs:
       - name: packer init
         env:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: stacks/${{ matrix.stack }}
         run: packer init .
       # packer validate stat()s file provisioner source paths; stub the pubkey so validate passes.
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub
+      # One parameterized template at the repo root; derive the short token from the fedora-* matrix value.
       - name: packer validate
-        working-directory: stacks/${{ matrix.stack }}
-        run: packer validate stack.pkr.hcl
+        env:
+          STACK: ${{ matrix.stack }}
+        run: packer validate -var stack="${STACK#fedora-}" stack.pkr.hcl
 
   shellcheck:
     name: shellcheck

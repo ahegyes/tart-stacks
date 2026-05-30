@@ -31,14 +31,15 @@ All stacks share a common base: Fedora + Docker + mise + zellij + standard dev u
 │       ├── xterm-ghostty.terminfo    # Ghostty terminfo, compiled into the image by terminfo.sh
 │       └── zshrc                     # Baseline in-VM shell config
 ├── stacks/
-│   └── fedora-php/
-│       ├── stack.pkr.hcl             # References ../../shared + ./scripts in the privilege-grouped provisioner chain
+│   └── fedora-php/                   # A stack = per-stack content only (no per-stack Packer file)
 │       ├── scripts/                  # Stack-specific: 00-stack.sh (build deps), mise-install.sh (runtimes + smoke test)
 │       ├── files/
 │       │   └── mise.toml             # Stack-specific tool versions
 │       └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
+├── stack.pkr.hcl                     # ONE parameterized Packer template for every stack (`-var stack=<name>`)
+├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/fedora-<name>/
 ├── Makefile                          # Single top-level Makefile; commands take STACK=<name>
-└── .github/workflows/validate.yml    # packer validate + shellcheck across all stacks
+└── .github/workflows/validate.yml    # packer validate + shellcheck; matrix auto-discovered from stacks/fedora-*/
 ```
 
 `script/` (singular) is the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`; `scripts/` (plural, under `shared/` and `stacks/*/`) are in-VM provisioner collections. Different roles, hence the different names.
@@ -154,7 +155,7 @@ sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/shared
 ### 5. Build a stack image
 
 ```bash
-make init STACK=php        # one-time per stack: installs the Tart Packer plugin
+make init                  # one-time: installs the Tart Packer plugin
 make build STACK=php       # bootstrap + build (~15-20 min for PHP — compiles from source)
 tart list                  # confirm fedora-php is present
 ```
@@ -255,14 +256,11 @@ The mounted `.pub` only names the key; the forwarded agent signs. That agent can
 
 ## Adding a new stack
 
-1. `mkdir -p stacks/fedora-<name>/{scripts,files}`
-2. Create `stacks/fedora-<name>/stack.pkr.hcl` — copy `stacks/fedora-php/stack.pkr.hcl` as a starting point; set `output_name`, adjust the provisioner chain to reference your stack's scripts.
-3. Add `stacks/fedora-<name>/scripts/00-stack.sh` for any stack-specific `dnf install`. Runs immediately after `shared/scripts/00-base.sh` in the same root provisioner block.
-4. Add `stacks/fedora-<name>/scripts/mise-install.sh` (or equivalent) to install the language runtime + tooling + smoke test.
-5. Add `stacks/fedora-<name>/files/mise.toml` for tool versions.
-6. Add `stacks/fedora-<name>/README.md` with stack-specific details.
-7. `make init STACK=<name> && make build STACK=<name>`.
-8. Add the stack to the table at the top of this README and to the CI matrix in `.github/workflows/validate.yml`.
+1. `make scaffold STACK=<name>` — stamps `stacks/fedora-<name>/` from `templates/stack/`: a placeholder `00-stack.sh`, a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, and a `README.md`. One parameterized root `stack.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
+2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). Add `dnf install` lines to `scripts/00-stack.sh` only if something must compile from source.
+3. If the stack needs a Docker engine, set `WITH_DOCKER_<name> := true` in the `Makefile` (off by default for new stacks).
+4. `make build STACK=<name>` — or `packer validate -var stack=<name> stack.pkr.hcl` for a fast HCL pre-check.
+5. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/fedora-*/` — no workflow edit needed.
 
 ## Troubleshooting
 

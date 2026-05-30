@@ -7,16 +7,26 @@ packer {
   }
 }
 
+# One parameterized template builds every stack: `packer build -var stack=<name>`
+# from the repo root (the Makefile runs it there — provisioner script paths
+# resolve against the cwd, not this file). The invariant pipeline lives here;
+# per-stack content is just stacks/fedora-<stack>/{scripts,files}.
+
+variable "stack" {
+  type        = string
+  description = "Short stack token (php, jvm, …). The built image is fedora-<stack>, cloned from stacks/fedora-<stack>/."
+}
+
+variable "with_docker" {
+  type        = bool
+  default     = false
+  description = "Install the Docker engine (shared/scripts/docker.sh). Off by default; stacks that need it (php=wp-env, jvm=container cluster proxies) opt in via the Makefile."
+}
+
 variable "source_image" {
   type        = string
   description = "Local Tart image to clone as the source. `make bootstrap` creates this from ghcr.io/cirruslabs/fedora:latest."
   default     = "fedora-base"
-}
-
-variable "output_name" {
-  type        = string
-  description = "Name of the resulting Tart image."
-  default     = "fedora-jvm"
 }
 
 variable "ssh_username" {
@@ -53,9 +63,9 @@ variable "disk_size_gb" {
   default = 30
 }
 
-source "tart-cli" "fedora-jvm" {
+source "tart-cli" "stack" {
   vm_base_name = var.source_image
-  vm_name      = var.output_name
+  vm_name      = "fedora-${var.stack}"
   cpu_count    = var.cpu_count
   memory_gb    = var.memory_gb
   disk_size_gb = var.disk_size_gb
@@ -66,31 +76,34 @@ source "tart-cli" "fedora-jvm" {
 }
 
 build {
-  name    = "fedora-jvm"
-  sources = ["source.tart-cli.fedora-jvm"]
+  name    = "fedora-${var.stack}"
+  sources = ["source.tart-cli.stack"]
 
   # System-level provisioning (runs as root via sudo). Shared base first, then
-  # the stack-specific hook (currently a no-op — JVM runtimes are all binary
-  # downloads via mise, no native build deps), then Docker, then mise. One root
-  # provisioner block keeps the dnf transaction sequence unambiguous.
+  # the stack's dnf hook, then Docker (opt-in via with_docker), then mise. One
+  # root provisioner block keeps the dnf transaction sequence unambiguous.
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
-    scripts = [
-      "../../shared/scripts/00-base.sh",
-      "./scripts/00-stack.sh",
-      "../../shared/scripts/docker.sh",
-      "../../shared/scripts/mise.sh",
-    ]
+    scripts = concat(
+      [
+        "shared/scripts/00-base.sh",
+        "stacks/fedora-${var.stack}/scripts/00-stack.sh",
+      ],
+      var.with_docker ? ["shared/scripts/docker.sh"] : [],
+      [
+        "shared/scripts/mise.sh",
+      ],
+    )
   }
 
   # Drop in config files.
   provisioner "file" {
-    source      = "../../shared/files/zshrc"
+    source      = "shared/files/zshrc"
     destination = "/home/${var.ssh_username}/.zshrc"
   }
 
   provisioner "file" {
-    source      = "./files/mise.toml"
+    source      = "stacks/fedora-${var.stack}/files/mise.toml"
     destination = "/home/${var.ssh_username}/.config/mise/config.toml"
   }
 
@@ -102,7 +115,7 @@ build {
 
   # Vendored terminfo, compiled by terminfo.sh below (ncurses-term omits xterm-ghostty).
   provisioner "file" {
-    source      = "../../shared/files/xterm-ghostty.terminfo"
+    source      = "shared/files/xterm-ghostty.terminfo"
     destination = "/tmp/xterm-ghostty.terminfo"
   }
 
@@ -111,8 +124,8 @@ build {
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
-      "../../shared/scripts/user-config.sh",
-      "../../shared/scripts/terminfo.sh",
+      "shared/scripts/user-config.sh",
+      "shared/scripts/terminfo.sh",
     ]
   }
 
@@ -120,7 +133,7 @@ build {
   # Runs before final lockdown because it needs mise.toml uploaded and the
   # build user still SSH-able with the provisioning password.
   provisioner "shell" {
-    scripts = ["./scripts/mise-install.sh"]
+    scripts = ["stacks/fedora-${var.stack}/scripts/mise-install.sh"]
   }
 
   # Final lockdown — runs LAST as a single atomic step. 99-finalize.sh
@@ -131,6 +144,6 @@ build {
   provisioner "shell" {
     execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     expect_disconnect = true
-    scripts           = ["../../shared/scripts/99-finalize.sh"]
+    scripts           = ["shared/scripts/99-finalize.sh"]
   }
 }

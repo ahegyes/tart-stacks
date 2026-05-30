@@ -1,0 +1,17 @@
+# fedora-__STACK__
+
+<One line: what this stack is for.> Builds a `fedora-__STACK__` Tart image; clone
+it per-project with `tart-new <name> __STACK__`.
+
+For host setup, build flow, and daily use, see the [top-level README](../../README.md).
+This file documents what's in *this* stack.
+
+## What's in this stack
+
+- **\<runtime\>** — version-managed via mise ([`files/mise.toml`](./files/mise.toml)).
+
+## Customization
+
+- **Tool versions**: [`files/mise.toml`](./files/mise.toml).
+- **Stack-specific build deps**: add `dnf install` lines to [`scripts/00-stack.sh`](./scripts/00-stack.sh).
+- **Docker**: off by default — opt in via the Makefile's `WITH_DOCKER_<stack>` if this stack needs a container engine.

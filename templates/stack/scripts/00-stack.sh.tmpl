@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# 00-stack.sh (__STACK__) — stack-specific dnf build deps, run as root right after
+# shared/scripts/00-base.sh in the same provisioner block. A no-op is fine when
+# every runtime is a mise binary download (see fedora-jvm). Add
+# `dnf install -y --skip-unavailable <pkgs>` here for anything that compiles from
+# source (see fedora-php's *-devel list).
+
+set -euo pipefail
+
+echo "==> 00-stack.sh (__STACK__): no stack-specific packages."
