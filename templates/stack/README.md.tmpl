@@ -14,4 +14,4 @@ This file documents what's in *this* stack.
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
 - **Stack-specific build deps**: add `dnf install` lines to [`scripts/00-stack.sh`](./scripts/00-stack.sh).
-- **Docker**: off by default — opt in via the Makefile's `WITH_DOCKER_<stack>` if this stack needs a container engine.
+- **Docker**: not in the base — install it per-profile via your provisioning layer (e.g. workbench) if this stack needs a container engine.

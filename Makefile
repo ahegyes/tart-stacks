@@ -5,8 +5,9 @@
 STACK ?=
 
 # Override to pin a non-latest Fedora tag: `FEDORA_TAG=42 make bootstrap`.
-# Cirrus publishes `latest`, `42`, `39`, `38`, but 39/38 ship dnf4 and break
-# docker.sh. Effective supported set: `latest`, `42`.
+# Cirrus publishes `latest`, `42`, `39`, `38`, but 39/38 ship dnf4 and the
+# provisioners need dnf5 (`config-manager addrepo`, used by mise.sh). Effective
+# supported set: `latest`, `42`.
 FEDORA_TAG ?= latest
 
 # Intermediate Tart base image (shared across stacks). `bootstrap` clones the
@@ -14,13 +15,6 @@ FEDORA_TAG ?= latest
 TART_BASE_NAME ?= fedora-base
 
 STACK_DIR := stacks/fedora-$(STACK)
-
-# Stacks that bake in a Docker engine (opt-in; new stacks get none). php = wp-env;
-# jvm = container-based cluster proxies. Longer term this moves to per-profile
-# workbench provisioning so the base image itself stays Docker-free.
-WITH_DOCKER_php := true
-WITH_DOCKER_jvm := true
-DOCKER_VAR := $(if $(WITH_DOCKER_$(STACK)),-var with_docker=$(WITH_DOCKER_$(STACK)),)
 
 help:
 	@echo "tart-stacks — common commands"
@@ -85,10 +79,10 @@ bootstrap:
 # Build a stack from the one parameterized template, run from the repo root so
 # the provisioner script paths (shared/…, stacks/fedora-$(STACK)/…) resolve.
 build: check-stack bootstrap
-	packer build -var stack=$(STACK) $(DOCKER_VAR) stack.pkr.hcl
+	packer build -var stack=$(STACK) stack.pkr.hcl
 
 rebuild: check-stack bootstrap
-	packer build -force -var stack=$(STACK) $(DOCKER_VAR) stack.pkr.hcl
+	packer build -force -var stack=$(STACK) stack.pkr.hcl
 
 # Scaffold a new stack from templates/stack/ (substitutes __STACK__). Refuses to
 # clobber an existing dir; the root template + dynamic CI then cover it with no

@@ -9,7 +9,7 @@ Multi-stack collection of [Tart](https://tart.run/) base images for development 
 | `php` | `fedora-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/fedora-php/](./stacks/fedora-php/README.md) |
 | `jvm` | `fedora-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/fedora-jvm/](./stacks/fedora-jvm/README.md) |
 
-All stacks share a common base: Fedora + Docker + mise + zellij + standard dev utilities. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory.
+All stacks share a common base: Fedora + mise + zellij + standard dev utilities. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. Owner-specific tooling (Docker, Claude Code, …) is installed per-profile by your provisioning layer, not baked into the base.
 
 ## Repo layout
 
@@ -26,7 +26,7 @@ All stacks share a common base: Fedora + Docker + mise + zellij + standard dev u
 │   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
 │   └── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 ├── shared/
-│   ├── scripts/                      # Provisioners shared across all stacks (00-base, docker, mise, user-config, terminfo, 99-finalize)
+│   ├── scripts/                      # Provisioners shared across all stacks (00-base, mise, user-config, terminfo, 99-finalize)
 │   └── files/
 │       ├── xterm-ghostty.terminfo    # Ghostty terminfo, compiled into the image by terminfo.sh
 │       └── zshrc                     # Baseline in-VM shell config
@@ -164,7 +164,7 @@ tart list                  # confirm fedora-php is present
 
 **Build auth.** Cirrus's `admin/admin` for provisioning. Each stack's `shared/scripts/99-finalize.sh` runs LAST and atomically establishes the final access posture: authorizes your `tart-vm.pub`, writes `00-vm-hardening.conf` disabling password auth (the `00-` prefix is load-bearing — it wins over cloud-init's `50-cloud-init.conf` which re-enables password auth), installs NOPASSWD sudoers, and locks the admin password (`passwd -l`). Bundling these means Packer's password-authed session stays valid through every preceding script and there's no fragility window between disabling password auth and disconnect.
 
-**Pin a Fedora version:** `FEDORA_TAG=42 make bootstrap`. Cirrus publishes `latest`, `42`, `39`, `38`; only `latest` and `42` work here (39 and 38 are pre-dnf5 — they break `docker.sh`).
+**Pin a Fedora version:** `FEDORA_TAG=42 make bootstrap`. Cirrus publishes `latest`, `42`, `39`, `38`; only `latest` and `42` work here (39 and 38 are pre-dnf5 — the provisioners need dnf5's `config-manager addrepo`).
 
 ## Daily use
 
@@ -258,7 +258,7 @@ The mounted `.pub` only names the key; the forwarded agent signs. That agent can
 
 1. `make scaffold STACK=<name>` — stamps `stacks/fedora-<name>/` from `templates/stack/`: a placeholder `00-stack.sh`, a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, and a `README.md`. One parameterized root `stack.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
 2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). Add `dnf install` lines to `scripts/00-stack.sh` only if something must compile from source.
-3. If the stack needs a Docker engine, set `WITH_DOCKER_<name> := true` in the `Makefile` (off by default for new stacks).
+3. Docker isn't in the base — if the stack needs a container engine, install it per-profile via your provisioning layer (e.g. workbench), not here.
 4. `make build STACK=<name>` — or `packer validate -var stack=<name> stack.pkr.hcl` for a fast HCL pre-check.
 5. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/fedora-*/` — no workflow edit needed.
 

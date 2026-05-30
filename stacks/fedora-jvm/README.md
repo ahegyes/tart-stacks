@@ -1,6 +1,6 @@
 # fedora-jvm
 
-JVM development stack. Builds a `fedora-jvm` Tart image preconfigured with Temurin 25 (current Java LTS), Maven, Gradle, sbt, Scala CLI, Kotlin, plus uv (Python project manager), Node LTS, and Docker. Intended as a per-project clone source for Java/Scala/Kotlin/mixed-runtime work.
+JVM development stack. Builds a `fedora-jvm` Tart image preconfigured with Temurin 25 (current Java LTS), Maven, Gradle, sbt, Scala CLI, Kotlin, plus uv (Python project manager) and Node LTS. Intended as a per-project clone source for Java/Scala/Kotlin/mixed-runtime work.
 
 For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
@@ -20,7 +20,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 **Toolchain extras**
 
 - **Corepack** enabled — `pnpm` / `yarn` shim to whatever version each project's `package.json` `"packageManager"` field declares.
-- **Docker** (CE from Docker's Fedora repo, via [`shared/scripts/docker.sh`](../../shared/scripts/docker.sh)). Required for projects that talk to remote clusters via container-based proxies (e.g., a Hadoop proxy container against a real cluster) and for ad-hoc service stacks.
+- **Docker** — NOT baked into this image. Install it per-profile via your provisioning layer (e.g. workbench) when a project needs it: container-based proxies against a remote cluster, or ad-hoc service stacks.
 
 **Stack-specific build dependencies** (installed by [`scripts/00-stack.sh`](./scripts/00-stack.sh))
 

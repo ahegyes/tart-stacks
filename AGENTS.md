@@ -24,7 +24,6 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First. dnf upgrade + core dev pkgs + build toolchain + zellij (root)
 │   │   ├── 99-finalize.sh              # LAST. Authorize SSH key + sshd drop-in + NOPASSWD sudo + lock admin password (root)
-│   │   ├── docker.sh                   # Docker CE from Docker's Fedora repo (root)
 │   │   ├── mise.sh                     # mise install system-wide from the jdxcode COPR (root)
 │   │   ├── terminfo.sh                 # Compile vendored xterm-ghostty terminfo, which ncurses-term omits (root)
 │   │   └── user-config.sh              # zsh default shell + mise/PATH activation for bash & non-interactive shells (root)
@@ -65,12 +64,11 @@ Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts 
 |---|---|---|---|
 | 1 | `shared/scripts/00-base.sh` | root | First (`00-` sentinel). System update, core dev packages, build toolchain, zellij. Foundation for everything else |
 | 2 | `stacks/fedora-php/scripts/00-stack.sh` | root | Same root provisioner block as 00-base; stack-specific `dnf install` (PHP build deps). Bundled with 00-base so the toolchain group and PHP-`-devel` headers land in one transaction |
-| 3 | `shared/scripts/docker.sh` | root | Same root block (uses `dnf-plugins-core` to add Docker's repo). **Opt-in** via `var.with_docker` — off by default; php/jvm enable it in the Makefile |
-| 4 | `shared/scripts/mise.sh` | root | Same root block; installs mise system-wide (`/usr/bin/mise`) from the jdxcode COPR |
-| 5 | `shared/scripts/user-config.sh` | root | Needs to `chsh` and update bash/zshenv after user-level installs are done |
-| 6 | `shared/scripts/terminfo.sh` | root | Same root block as user-config; compiles the uploaded `xterm-ghostty.terminfo` into the system terminfo (`ncurses-term` omits it) |
-| 7 | `stacks/fedora-php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
-| 8 | `shared/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
+| 3 | `shared/scripts/mise.sh` | root | Same root block; installs mise system-wide (`/usr/bin/mise`) from the jdxcode COPR |
+| 4 | `shared/scripts/user-config.sh` | root | Needs to `chsh` and update bash/zshenv after user-level installs are done |
+| 5 | `shared/scripts/terminfo.sh` | root | Same root block as user-config; compiles the uploaded `xterm-ghostty.terminfo` into the system terminfo (`ncurses-term` omits it) |
+| 6 | `stacks/fedora-php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
+| 7 | `shared/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
 
 If you add a new script to an existing stack, drop it in `stacks/fedora-<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the root `stack.pkr.hcl` provisioner block. Ordering within a privilege block is the list order in `stack.pkr.hcl`, not the filename. A universally-useful file goes in `shared/scripts/` and is referenced once in the root template. To add a whole new stack, use `make scaffold STACK=<name>`.
 
@@ -88,7 +86,7 @@ make rebuild STACK=php
 tart clone fedora-php test-vm
 ssh tart-test-vm   # auto-starts the stopped VM, then connects
 # inside VM (PHP stack):
-node --version && php --version && composer --version && docker --version
+node --version && php --version && composer --version
 ```
 
 The smoke test inside `stacks/fedora-php/scripts/mise-install.sh` is a hard gate — the Packer build fails if any expected PHP extension is missing. Don't bypass it.

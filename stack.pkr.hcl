@@ -17,12 +17,6 @@ variable "stack" {
   description = "Short stack token (php, jvm, …). The built image is fedora-<stack>, cloned from stacks/fedora-<stack>/."
 }
 
-variable "with_docker" {
-  type        = bool
-  default     = false
-  description = "Install the Docker engine (shared/scripts/docker.sh). Off by default; stacks that need it (php=wp-env, jvm=container cluster proxies) opt in via the Makefile."
-}
-
 variable "source_image" {
   type        = string
   description = "Local Tart image to clone as the source. `make bootstrap` creates this from ghcr.io/cirruslabs/fedora:latest."
@@ -80,20 +74,16 @@ build {
   sources = ["source.tart-cli.stack"]
 
   # System-level provisioning (runs as root via sudo). Shared base first, then
-  # the stack's dnf hook, then Docker (opt-in via with_docker), then mise. One
-  # root provisioner block keeps the dnf transaction sequence unambiguous.
+  # the stack's dnf hook, then mise. One root provisioner block keeps the dnf
+  # transaction sequence unambiguous. (Docker is NOT in the base — owner tooling
+  # like it is installed per-profile by workbench, same as Claude Code.)
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
-    scripts = concat(
-      [
-        "shared/scripts/00-base.sh",
-        "stacks/fedora-${var.stack}/scripts/00-stack.sh",
-      ],
-      var.with_docker ? ["shared/scripts/docker.sh"] : [],
-      [
-        "shared/scripts/mise.sh",
-      ],
-    )
+    scripts = [
+      "shared/scripts/00-base.sh",
+      "stacks/fedora-${var.stack}/scripts/00-stack.sh",
+      "shared/scripts/mise.sh",
+    ]
   }
 
   # Drop in config files.

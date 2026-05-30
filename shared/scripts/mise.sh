@@ -6,8 +6,8 @@
 set -euo pipefail
 
 echo "==> Installing mise (COPR jdxcode/mise)..."
-# Add the COPR repo via its repo file (like docker.sh) — `dnf copr enable` flaked
-# writing the repo file mid-build. gpgcheck=1 keeps the install signature-verified.
+# Add the COPR repo via its repo file (`dnf config-manager addrepo`) — `dnf copr
+# enable` flaked writing the repo file mid-build. gpgcheck=1 keeps it signature-verified.
 dnf install -y dnf-plugins-core
 fedver="$(rpm -E %fedora)"
 dnf config-manager addrepo --from-repofile="https://copr.fedorainfracloud.org/coprs/jdxcode/mise/repo/fedora-${fedver}/jdxcode-mise-fedora-${fedver}.repo"

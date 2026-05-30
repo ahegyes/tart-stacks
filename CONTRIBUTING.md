@@ -21,7 +21,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
    tart clone fedora-<name> test-vm
    ssh tart-test-vm            # auto-starts the stopped VM, then connects
    # inside VM (example for fedora-php):
-   node --version && php --version && composer --version && docker --version
+   node --version && php --version && composer --version
    ```
 
 ## PR conventions

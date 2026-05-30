@@ -53,7 +53,6 @@ declare -a checks=(
   "kotlinc -version"
   "uv --version"
   "node --version"
-  "docker --version"
 )
 
 # `awk` filter prints the first non-empty, non-separator line so commands
