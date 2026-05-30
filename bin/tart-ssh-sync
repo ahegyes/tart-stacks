@@ -159,8 +159,14 @@ emit() {
   echo "  IdentityAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
   echo "  IdentityFile ~/.ssh/tart-vm.pub"
   echo "  IdentitiesOnly yes"
-  echo "  UserKnownHostsFile /dev/null"
-  echo "  StrictHostKeyChecking no"
+  # Host-key policy: trust-on-first-use into a dedicated known_hosts and block
+  # if a known VM's key later changes (accept-new) — this catches a substituted
+  # endpoint at a VM's NAT IP, which `no` + /dev/null silently accepted. Clones
+  # currently share the base image's baked-in host key, so there's no per-recreate
+  # churn here (and no cross-VM distinction); regenerating host keys per VM in the
+  # base image would upgrade this to true per-VM identity.
+  echo "  UserKnownHostsFile ~/.ssh/known_hosts.tart"
+  echo "  StrictHostKeyChecking accept-new"
   echo "  LogLevel ERROR"
   # Live IP resolution for every client. %n (the alias) not %h: a client that
   # sets `-o HostName=<ip>` would poison %h, but %n is always the typed alias.
