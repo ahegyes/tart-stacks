@@ -69,21 +69,15 @@ build {
   name    = "fedora-php"
   sources = ["source.tart-cli.fedora-php"]
 
-  # System-level provisioning (runs as root via sudo). Shared base first,
-  # then PHP build deps. Both root-provisioner scripts are bundled so the
-  # transaction sequence is unambiguous.
+  # System-level provisioning (runs as root via sudo). Shared base first, then
+  # PHP build deps, then Docker, then mise. One root provisioner block keeps the
+  # dnf transaction sequence unambiguous.
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
       "../../shared/scripts/00-base.sh",
       "./scripts/00-stack.sh",
       "../../shared/scripts/docker.sh",
-    ]
-  }
-
-  # User-level provisioning (per-user installs to ~/.local/).
-  provisioner "shell" {
-    scripts = [
       "../../shared/scripts/mise.sh",
     ]
   }

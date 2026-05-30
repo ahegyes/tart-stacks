@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# mise.sh — Install mise binary (per-user, ~/.local/bin/mise).
-# Tool versions are installed later by mise-install.sh, after mise.toml is uploaded.
+# mise.sh — Install mise system-wide from the jdxcode/mise COPR. Runs as root in
+# the system provisioner block (dnf needs it); tool versions install later via
+# mise-install.sh, after mise.toml is uploaded.
 
 set -euo pipefail
 
-echo "==> Installing mise..."
-curl -fsSL --retry 3 --retry-delay 2 https://mise.run | sh
-
-export PATH="$HOME/.local/bin:$PATH"
+echo "==> Installing mise (COPR jdxcode/mise)..."
+# Add the COPR repo via its repo file (like docker.sh) — `dnf copr enable` flaked
+# writing the repo file mid-build. gpgcheck=1 keeps the install signature-verified.
+dnf install -y dnf-plugins-core
+fedver="$(rpm -E %fedora)"
+dnf config-manager addrepo --from-repofile="https://copr.fedorainfracloud.org/coprs/jdxcode/mise/repo/fedora-${fedver}/jdxcode-mise-fedora-${fedver}.repo"
+dnf install -y mise
 mise --version
 
-# Ensure ~/.config/mise/ exists for the Packer file provisioner that uploads
-# files/mise.toml in the next step (file provisioner does not create parent dirs).
-mkdir -p "$HOME/.config/mise"
+# Create the target user's ~/.config/mise/ (owned by them, since we run as root)
+# so the next Packer file provisioner can upload files/mise.toml into it.
+install -d -o "${SUDO_USER:-admin}" -g "${SUDO_USER:-admin}" "/home/${SUDO_USER:-admin}/.config/mise"
 
 echo "==> mise.sh complete."

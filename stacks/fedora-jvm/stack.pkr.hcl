@@ -69,23 +69,16 @@ build {
   name    = "fedora-jvm"
   sources = ["source.tart-cli.fedora-jvm"]
 
-  # System-level provisioning (runs as root via sudo). Shared base first,
-  # then the stack-specific hook (currently a no-op — JVM runtimes are all
-  # binary downloads via mise, no native build deps), then Docker. All three
-  # share one root provisioner block so the dnf transaction sequence is
-  # unambiguous.
+  # System-level provisioning (runs as root via sudo). Shared base first, then
+  # the stack-specific hook (currently a no-op — JVM runtimes are all binary
+  # downloads via mise, no native build deps), then Docker, then mise. One root
+  # provisioner block keeps the dnf transaction sequence unambiguous.
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
       "../../shared/scripts/00-base.sh",
       "./scripts/00-stack.sh",
       "../../shared/scripts/docker.sh",
-    ]
-  }
-
-  # User-level provisioning (per-user installs to ~/.local/).
-  provisioner "shell" {
-    scripts = [
       "../../shared/scripts/mise.sh",
     ]
   }

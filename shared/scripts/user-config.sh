@@ -17,7 +17,7 @@ BASHRC="${TARGET_HOME}/.bashrc"
 if [ ! -f "${BASHRC}" ] || ! grep -q "mise activate" "${BASHRC}"; then
   cat >> "${BASHRC}" <<'EOF'
 # mise activation — added by tart-stacks provisioning.
-[ -x "$HOME/.local/bin/mise" ] && eval "$($HOME/.local/bin/mise activate bash)"
+command -v mise >/dev/null 2>&1 && eval "$(mise activate bash)"
 EOF
   chown "${TARGET_USER}:${TARGET_USER}" "${BASHRC}"
 fi
