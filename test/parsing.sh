@@ -48,15 +48,6 @@ exit 0
 TART
 chmod +x "$WORK/bin/tart"
 
-# Default `ssh-add` mock: report identities present (exit 0) so tart-ssh-sync's
-# empty-agent warning stays silent for the parser tests below. The empty-agent
-# test flips it via MOCK_SSH_ADD_RC.
-cat > "$WORK/bin/ssh-add" <<'SA'
-#!/usr/bin/env bash
-exit "${MOCK_SSH_ADD_RC:-0}"
-SA
-chmod +x "$WORK/bin/ssh-add"
-
 SYNC_ERR="$WORK/sync.err"
 run_sync() { # forwards-file-content -> stdout of --dry-run (stderr -> $SYNC_ERR)
   printf '%s' "$1" > "$WORK/forwards"
