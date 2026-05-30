@@ -159,12 +159,9 @@ emit() {
   echo "  IdentityAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
   echo "  IdentityFile ~/.ssh/tart-vm.pub"
   echo "  IdentitiesOnly yes"
-  # Host-key policy: trust-on-first-use into a dedicated known_hosts and block
-  # if a known VM's key later changes (accept-new) — this catches a substituted
-  # endpoint at a VM's NAT IP, which `no` + /dev/null silently accepted. Clones
-  # currently share the base image's baked-in host key, so there's no per-recreate
-  # churn here (and no cross-VM distinction); regenerating host keys per VM in the
-  # base image would upgrade this to true per-VM identity.
+  # accept-new into a dedicated known_hosts: trust-on-first-use, then block on a
+  # changed key (catches a substituted endpoint). tart-up gives each VM a distinct
+  # key; tart-new clears the stale entry on recreate so the new key re-accepts.
   echo "  UserKnownHostsFile ~/.ssh/known_hosts.tart"
   echo "  StrictHostKeyChecking accept-new"
   echo "  LogLevel ERROR"

@@ -124,4 +124,8 @@ set_args=()
 [ -n "$DISK" ] && set_args+=(--disk-size "$DISK")
 [ "${#set_args[@]}" -gt 0 ] && tart set "$NAME" "${set_args[@]}"
 
+# Drop any stale known_hosts entry for this alias: a recreated VM gets a fresh
+# per-VM host key (tart-up regenerates it), which would otherwise trip accept-new.
+ssh-keygen -R "tart-$NAME" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
+
 echo "tart-new: created '$NAME' from $img — next: ssh tart-$NAME" >&2
