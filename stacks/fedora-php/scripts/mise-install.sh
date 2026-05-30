@@ -7,7 +7,7 @@
 #
 # Timing: Node (LTS) is a pre-built binary download (~30 seconds). PHP is
 # compiled from source via the asdf-php plugin and takes 5-10 minutes on
-# Apple Silicon. PHP build dependencies are installed by 00-base.sh.
+# Apple Silicon. PHP build dependencies are installed by 00-stack.sh.
 
 set -euo pipefail
 

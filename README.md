@@ -31,11 +31,12 @@ All stacks share a common base: Fedora + mise + zellij + standard dev utilities.
 │       ├── xterm-ghostty.terminfo    # Ghostty terminfo, compiled into the image by terminfo.sh
 │       └── zshrc                     # Baseline in-VM shell config
 ├── stacks/
-│   └── fedora-php/                   # A stack = per-stack content only (no per-stack Packer file)
-│       ├── scripts/                  # Stack-specific: 00-stack.sh (build deps), mise-install.sh (runtimes + smoke test)
-│       ├── files/
-│       │   └── mise.toml             # Stack-specific tool versions
-│       └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
+│   ├── fedora-php/                   # A stack = per-stack content only (no per-stack Packer file)
+│   │   ├── scripts/                  # Stack-specific: 00-stack.sh (build deps), mise-install.sh (runtimes + smoke test)
+│   │   ├── files/
+│   │   │   └── mise.toml             # Stack-specific tool versions
+│   │   └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
+│   └── fedora-jvm/                   # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
 ├── stack.pkr.hcl                     # ONE parameterized Packer template for every stack (`-var stack=<name>`)
 ├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/fedora-<name>/
 ├── Makefile                          # Single top-level Makefile; commands take STACK=<name>

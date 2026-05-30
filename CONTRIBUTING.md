@@ -14,15 +14,16 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 ## Making changes
 
 1. Edit the relevant `shared/scripts/*.sh`, `stacks/<name>/scripts/*.sh`, or `*/files/*` file.
-2. Run `packer validate -var stack=<name> stack.pkr.hcl` (from the repo root) — ~1s; catches HCL syntax errors.
-3. Run `bash -n` on any script you changed.
-4. For non-trivial changes: `make rebuild STACK=<name>` (15-20 min for PHP) and confirm a fresh clone works:
+2. Fast pre-checks — **syntax only, not proof of runtime behavior**: `packer validate -var stack=<name> stack.pkr.hcl` (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed.
+3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name>` (15-20 min for PHP), then confirm a fresh clone works:
    ```bash
    tart clone fedora-<name> test-vm
    ssh tart-test-vm            # auto-starts the stopped VM, then connects
    # inside VM (example for fedora-php):
    node --version && php --version && composer --version
    ```
+
+> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup` and `test`, run via `make`. `shared/scripts/` and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
 
 ## PR conventions
 

@@ -31,13 +31,14 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 │       ├── xterm-ghostty.terminfo      # Ghostty terminfo source; compiled by terminfo.sh into the image
 │       └── zshrc                       # In-VM shell baseline; uploaded to /home/admin/.zshrc
 ├── stacks/
-│   └── fedora-php/                     # PHP stack — per-stack content only; the template is the repo-root stack.pkr.hcl
-│       ├── scripts/
-│       │   ├── 00-stack.sh             # Runs immediately after shared/00-base.sh; PHP build deps (root)
-│       │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
-│       ├── files/
-│       │   └── mise.toml               # In-VM global tool versions (php = "8.5", node = "lts")
-│       └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
+│   ├── fedora-php/                     # PHP stack — per-stack content only; the template is the repo-root stack.pkr.hcl
+│   │   ├── scripts/
+│   │   │   ├── 00-stack.sh             # Runs immediately after shared/00-base.sh; PHP build deps (root)
+│   │   │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
+│   │   ├── files/
+│   │   │   └── mise.toml               # In-VM global tool versions (php = "8.5", node = "lts")
+│   │   └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
+│   └── fedora-jvm/                     # JVM stack — same shape; Temurin 25 + Maven/Gradle/sbt/Kotlin/scala-cli + uv + Node
 └── .github/
     └── workflows/
         └── validate.yml                # packer validate + shellcheck on push/PR to trunk; matrix auto-discovered from stacks/fedora-*/
@@ -73,6 +74,8 @@ Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts 
 If you add a new script to an existing stack, drop it in `stacks/fedora-<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the root `stack.pkr.hcl` provisioner block. Ordering within a privilege block is the list order in `stack.pkr.hcl`, not the filename. A universally-useful file goes in `shared/scripts/` and is referenced once in the root template. To add a whole new stack, use `make scaffold STACK=<name>`.
 
 ## Testing changes
+
+`packer validate` + `bash -n` catch syntax only — a real `make rebuild` is the only proof of runtime behavior. Run the fast checks first, then rebuild:
 
 ```bash
 # Per-stack syntax/schema check
