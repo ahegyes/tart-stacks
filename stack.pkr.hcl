@@ -1,7 +1,10 @@
 packer {
   required_plugins {
     tart = {
-      version = ">= 1.20.0"
+      # Float within 1.x, but cap below 2.0: a new major could break the build and
+      # Dependabot has no Packer-plugin ecosystem to flag it. Raise the ceiling
+      # deliberately after testing a 2.0 release.
+      version = ">= 1.20.0, < 2.0.0"
       source  = "github.com/cirruslabs/tart"
     }
   }
