@@ -26,9 +26,8 @@ Every stack inherits the same hardened SSH posture from `shared/scripts/99-final
 The base images rely on the following upstream sources for their content. Vulnerabilities in these should be reported upstream, not here:
 
 - `ghcr.io/cirruslabs/fedora:latest` — the base Fedora image; built from [`cirruslabs/linux-image-templates`](https://github.com/cirruslabs/linux-image-templates).
-- `mise.run` — the [mise](https://mise.jdx.dev/) install script.
-- `download.docker.com/linux/fedora/docker-ce.repo` — Docker CE's official Fedora repository.
-- `varlad/zellij` — the [zellij](https://github.com/zellij-org/zellij) COPR.
+- `copr.fedorainfracloud.org/coprs/jdxcode/mise` — the [mise](https://mise.jdx.dev/) COPR.
+- `copr.fedorainfracloud.org/coprs/varlad/zellij` — the [zellij](https://github.com/zellij-org/zellij) COPR.
 
 Stack-specific upstream sources:
 

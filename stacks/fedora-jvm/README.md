@@ -20,7 +20,6 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 **Toolchain extras**
 
 - **Corepack** enabled — `pnpm` / `yarn` shim to whatever version each project's `package.json` `"packageManager"` field declares.
-- **Docker** — NOT baked into this image. Install it per-profile via your provisioning layer (e.g. workbench) when a project needs it: container-based proxies against a remote cluster, or ad-hoc service stacks.
 
 **Stack-specific build dependencies** (installed by [`scripts/00-stack.sh`](./scripts/00-stack.sh))
 

@@ -75,8 +75,7 @@ build {
 
   # System-level provisioning (runs as root via sudo). Shared base first, then
   # the stack's dnf hook, then mise. One root provisioner block keeps the dnf
-  # transaction sequence unambiguous. (Docker is NOT in the base — owner tooling
-  # like it is installed per-profile by workbench, same as Claude Code.)
+  # transaction sequence unambiguous.
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [

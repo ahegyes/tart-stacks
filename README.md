@@ -9,7 +9,7 @@ Multi-stack collection of [Tart](https://tart.run/) base images for development 
 | `php` | `fedora-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/fedora-php/](./stacks/fedora-php/README.md) |
 | `jvm` | `fedora-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/fedora-jvm/](./stacks/fedora-jvm/README.md) |
 
-All stacks share a common base: Fedora + mise + zellij + standard dev utilities. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. Owner-specific tooling (Docker, Claude Code, …) is installed per-profile by your provisioning layer, not baked into the base.
+All stacks share a common base: Fedora + mise + zellij + standard dev utilities. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
 ## Repo layout
 
@@ -193,7 +193,7 @@ ssh tart-app-a   # in tab 1
 za term          # attach to (or create) "term" session — terminal work
 
 ssh tart-app-a   # in tab 2
-za docker        # attach to (or create) "docker" session — independent
+za logs          # attach to (or create) "logs" session — independent
 ```
 
 Detach (leaving the session running) with `Ctrl-o` then `d`; reconnect later from any new `ssh tart-<name>` with `za <name>`. Run `za` with no args to list sessions. Don't use `Ctrl-q` to leave — it quits zellij and ends the session.
@@ -258,9 +258,8 @@ The mounted `.pub` only names the key; the forwarded agent signs. That agent can
 
 1. `make scaffold STACK=<name>` — stamps `stacks/fedora-<name>/` from `templates/stack/`: a placeholder `00-stack.sh`, a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, and a `README.md`. One parameterized root `stack.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
 2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). Add `dnf install` lines to `scripts/00-stack.sh` only if something must compile from source.
-3. Docker isn't in the base — if the stack needs a container engine, install it per-profile via your provisioning layer (e.g. workbench), not here.
-4. `make build STACK=<name>` — or `packer validate -var stack=<name> stack.pkr.hcl` for a fast HCL pre-check.
-5. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/fedora-*/` — no workflow edit needed.
+3. `make build STACK=<name>` — or `packer validate -var stack=<name> stack.pkr.hcl` for a fast HCL pre-check.
+4. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/fedora-*/` — no workflow edit needed.
 
 ## Troubleshooting
 

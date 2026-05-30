@@ -11,8 +11,8 @@ TARGET_HOME="/home/${TARGET_USER}"
 echo "==> Setting zsh as default shell for ${TARGET_USER}..."
 chsh -s /usr/bin/zsh "${TARGET_USER}"
 
-# Activate mise in bash too — so non-zsh sessions (`docker exec`, scripts,
-# manual `bash` invocations) still get per-directory tool version switching.
+# Activate mise in bash too — so non-zsh sessions (SSH command invocations,
+# scripts, manual `bash`) still get per-directory tool version switching.
 BASHRC="${TARGET_HOME}/.bashrc"
 if [ ! -f "${BASHRC}" ] || ! grep -q "mise activate" "${BASHRC}"; then
   cat >> "${BASHRC}" <<'EOF'
@@ -24,7 +24,7 @@ fi
 
 # Ensure ~/.local/bin is on PATH for every zsh session. .zshenv loads before
 # .zshrc and runs for both interactive and non-interactive shells (so PATH is
-# set even when Claude Code, mise, or another tool spawns a non-interactive zsh).
+# set even when an editor, mise, or another tool spawns a non-interactive zsh).
 ZSHENV="${TARGET_HOME}/.zshenv"
 if [ ! -f "${ZSHENV}" ] || ! grep -q "HOME/.local/bin" "${ZSHENV}"; then
   cat >> "${ZSHENV}" <<'EOF'

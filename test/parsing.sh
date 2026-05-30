@@ -194,7 +194,7 @@ assert_eq "comment and blank lines skipped" \
 assert_eq "trailing comment and whitespace stripped from the path" \
   "--dir=data:/srv/data" "$(mounts '* /srv/data   # my data dir' app-a)"
 assert_eq "explicit share name via name=path (avoids basename collision)" \
-  "--dir=workbench-config:/Users/me/.config/workbench:ro" "$(mounts '* workbench-config=/Users/me/.config/workbench:ro' app-a)"
+  "--dir=hostcfg:/Users/me/.config/myapp:ro" "$(mounts '* hostcfg=/Users/me/.config/myapp:ro' app-a)"
 out=$(mounts '* relative/path' app-a)
 assert_eq        "non-absolute mount path emits no --dir"   "" "$out"
 assert_contains  "non-absolute mount path warned to stderr" "$(<"$MNT_ERR")" "malformed mount"

@@ -1,6 +1,6 @@
 # fedora-php
 
-PHP development stack. Builds a `fedora-php` Tart image preconfigured with PHP 8.5, Node (Active LTS), and standard backend dev essentials. Intended as a per-project clone source. (Docker is not baked in — install it per-profile via your provisioning layer, e.g. for wp-env, if your projects need it.)
+PHP development stack. Builds a `fedora-php` Tart image preconfigured with PHP 8.5, Node (Active LTS), and standard backend dev essentials. Intended as a per-project clone source.
 
 For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
