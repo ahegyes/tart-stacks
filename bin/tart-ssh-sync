@@ -37,6 +37,7 @@
 #   TART_SSH_AGENTS      VM-agent assignment file. Default: $HOME/.config/tart-stacks/ssh-agents
 #   TART_FORWARDS        forwards config file.     Default: $HOME/.config/tart-stacks/forwards
 #   TART_SSH_CONFIG_D    output file.              Default: $HOME/.ssh/config.d/tart-vms
+#   TART_IDENTITY_AGENT  Secretive agent socket.   Default: $HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 
 set -euo pipefail
 
@@ -55,6 +56,7 @@ SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 OUTPUT="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
 SSH_AGENTS_CONFIG=$(tart_config_path ssh-agents)
 FORWARDS_CONFIG=$(tart_config_path forwards)
+IDENTITY_AGENT="${TART_IDENTITY_AGENT:-$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh}"
 
 DRY_RUN=0
 case "${1:-}" in
@@ -158,7 +160,7 @@ emit() {
   echo "# Common settings — every Tart dev VM (present or future)."
   echo "Host tart-*"
   echo "  User admin"
-  echo "  IdentityAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+  echo "  IdentityAgent $IDENTITY_AGENT"
   echo "  IdentityFile ~/.ssh/tart-vm.pub"
   echo "  IdentitiesOnly yes"
   # accept-new into a dedicated known_hosts: trust-on-first-use, then block on a
