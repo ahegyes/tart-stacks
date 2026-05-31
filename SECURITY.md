@@ -25,16 +25,23 @@ Every stack inherits the same hardened SSH posture from `shared/scripts/99-final
 
 The base images rely on the following upstream sources for their content. Vulnerabilities in these should be reported upstream, not here:
 
-- `ghcr.io/cirruslabs/fedora:latest` — the base Fedora image; built from [`cirruslabs/linux-image-templates`](https://github.com/cirruslabs/linux-image-templates).
+- `ghcr.io/cirruslabs/<distro>:latest` (fedora/ubuntu/debian per `shared/distros`) — the base distro images; built from [`cirruslabs/linux-image-templates`](https://github.com/cirruslabs/linux-image-templates).
+
+dnf-family (Fedora) sources:
 - `copr.fedorainfracloud.org/coprs/jdxcode/mise` — the [mise](https://mise.jdx.dev/) COPR.
 - `copr.fedorainfracloud.org/coprs/varlad/zellij` — the [zellij](https://github.com/zellij-org/zellij) COPR.
 
+apt-family (Debian/Ubuntu) sources:
+- `mise.jdx.dev/gpg-key.pub` + `mise.jdx.dev/deb` — the signed mise apt repo.
+- `cli.github.com/packages/githubcli-archive-keyring.gpg` + `cli.github.com/packages` — the GitHub CLI signed apt repo.
+- `github.com/zellij-org/zellij/releases/latest` — the zellij static-musl release tarball (no apt package exists).
+
 Stack-specific upstream sources:
 
-- **`fedora-php`** — `getcomposer.org/installer`, verified against `composer.github.io/installer.sig` (SHA-384).
+- **php stack** — `getcomposer.org/installer`, verified against `composer.github.io/installer.sig` (SHA-384).
 
-The only verification this repo adds on top of these is the Composer SHA-384 check in `stacks/fedora-php/scripts/mise-install.sh`. If you spot a missing verification on any of the above, that's a valid finding for this repo — please report.
+The verifications this repo adds on top of upstream's own: the Composer SHA-384 check in `stacks/php/scripts/mise-install.sh`, and (on apt-family distros) a sha256 check of the downloaded zellij binary against its published `.sha256sum` in `shared/scripts/distro-lib.sh`. If you spot a missing verification on any of the above, that's a valid finding for this repo — please report.
 
 ## Supported versions
 
-This is a personal base-image collection, not a published distribution. Only the `trunk` branch is supported. Cut a fresh build (`make rebuild STACK=<name>`) to pick up upstream fixes.
+This is a personal base-image collection, not a published distribution. Only the `trunk` branch is supported. Cut a fresh build (`make rebuild STACK=<name> DISTRO=<distro>`) to pick up upstream fixes.

@@ -1,15 +1,17 @@
 # tart-stacks
 
-Multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. Each stack is a Packer template that builds a Fedora-on-ARM64 VM preconfigured for a specific language toolchain. Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
+Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any blessed distro (Fedora, Ubuntu, Debian — see `shared/distros`), producing a `<distro>-<stack>` image. Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
 
 ## Stacks
 
 | Stack | Image name | Purpose | Details |
 |---|---|---|---|
-| `php` | `fedora-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/fedora-php/](./stacks/fedora-php/README.md) |
-| `jvm` | `fedora-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/fedora-jvm/](./stacks/fedora-jvm/README.md) |
+| `php` | `<distro>-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/php/](./stacks/php/README.md) |
+| `jvm` | `<distro>-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/jvm/](./stacks/jvm/README.md) |
 
-All stacks share a common base: Fedora + mise + zellij + standard dev utilities. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
+`<distro>` is the distribution token (e.g. `fedora`). `shared/distros` lists the blessed values.
+
+All stacks share a common base: mise + zellij + standard dev utilities, wired through a distro-abstraction layer (`shared/scripts/distro-lib.sh`) that handles dnf (Fedora/RHEL) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
 ## Repo layout
 
@@ -31,16 +33,17 @@ All stacks share a common base: Fedora + mise + zellij + standard dev utilities.
 │       ├── xterm-ghostty.terminfo    # Ghostty terminfo, compiled into the image by terminfo.sh
 │       └── zshrc                     # Baseline in-VM shell config
 ├── stacks/
-│   ├── fedora-php/                   # A stack = per-stack content only (no per-stack Packer file)
+│   ├── php/                          # A stack = per-stack content only (no per-stack Packer file)
 │   │   ├── scripts/                  # Stack-specific: 00-stack.sh (build deps), mise-install.sh (runtimes + smoke test)
 │   │   ├── files/
 │   │   │   └── mise.toml             # Stack-specific tool versions
 │   │   └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
-│   └── fedora-jvm/                   # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
-├── stack.pkr.hcl                     # ONE parameterized Packer template for every stack (`-var stack=<name>`)
-├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/fedora-<name>/
-├── Makefile                          # Single top-level Makefile; commands take STACK=<name>
-└── .github/workflows/validate.yml    # packer validate + shellcheck; matrix auto-discovered from stacks/fedora-*/
+│   └── jvm/                          # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
+├── stack.pkr.hcl                     # ONE parameterized Packer template (`-var stack=<name> -var distro=<distro>`)
+├── shared/distros                    # Blessed distro list (one token per line); consumed by Makefile, tart-new, CI
+├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/
+├── Makefile                          # Single top-level Makefile; commands take STACK=<name> DISTRO=<distro>
+└── .github/workflows/validate.yml    # packer validate + shellcheck; CI matrix is stack × distro cross-product
 ```
 
 `script/` (singular) is the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`; `scripts/` (plural, under `shared/` and `stacks/*/`) are in-VM provisioner collections. Different roles, hence the different names.
@@ -156,27 +159,27 @@ sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/shared
 ### 5. Build a stack image
 
 ```bash
-make init                  # one-time: installs the Tart Packer plugin
-make build STACK=php       # bootstrap + build (~15-20 min for PHP — compiles from source)
-tart list                  # confirm fedora-php is present
+make init                             # one-time: installs the Tart Packer plugin
+make build STACK=php DISTRO=fedora    # bootstrap + build (~15-20 min for PHP — compiles from source)
+tart list                             # confirm fedora-php is present
 ```
 
-`make build` chains `make bootstrap` first (pulls `ghcr.io/cirruslabs/fedora:latest`, refreshes the local `fedora-base` image), then runs Packer through the stack's provisioner chain.
+`make build` chains `make bootstrap` first (pulls `ghcr.io/cirruslabs/<distro>:latest`, refreshes the local `<distro>-base` image), then runs Packer through the stack's provisioner chain.
 
 **Build auth.** Cirrus's `admin/admin` for provisioning. Each stack's `shared/scripts/99-finalize.sh` runs LAST and atomically establishes the final access posture: authorizes your `tart-vm.pub`, writes `00-vm-hardening.conf` disabling password auth (the `00-` prefix is load-bearing — it wins over cloud-init's `50-cloud-init.conf` which re-enables password auth), installs NOPASSWD sudoers, and locks the admin password (`passwd -l`). Bundling these means Packer's password-authed session stays valid through every preceding script and there's no fragility window between disabling password auth and disconnect.
 
-**Pin a Fedora version:** `FEDORA_TAG=42 make bootstrap`. Cirrus publishes `latest`, `42`, `39`, `38`; only `latest` and `42` work here (39 and 38 are pre-dnf5 — the provisioners need dnf5's `config-manager addrepo`).
+**Pin a base image tag:** `IMAGE_TAG=42 make bootstrap DISTRO=fedora`. Cirrus publishes `latest` and version-pinned tags per distro.
 
 ## Daily use
 
 ### Clone for a project
 
 ```bash
-tart-new app-a php          # validate stack + image, clone (resources optional)
+tart-new app-a php fedora   # validate stack + image, clone (resources optional)
 ssh tart-app-a              # auto-starts the stopped clone and connects
 ```
 
-`tart-new <name> <stack>` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php`; the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
+`tart-new <name> <stack> <distro>` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
 
 **Per-clone tweaks** (no rebuild required):
 
@@ -205,7 +208,7 @@ Detach (leaving the session running) with `Ctrl-o` then `d`; reconnect later fro
 
 ```bash
 # edit a file under shared/ or stacks/<name>/
-make rebuild STACK=php         # force-overwrites the existing fedora-php image
+make rebuild STACK=php DISTRO=fedora    # force-overwrites the existing fedora-php image
 ```
 
 New project VMs cloned after the rebuild get the updated base. Existing project VMs are unaffected — they're already independent clones.
@@ -214,21 +217,29 @@ New project VMs cloned after the rebuild get the updated base. Existing project 
 
 ```bash
 tart stop app-a && tart delete app-a
-tart-new app-a php
+tart-new app-a php fedora
 # fresh, identical, ready in seconds (Tart uses copy-on-write).
 ```
 
 ## Adding a new stack
 
-1. `make scaffold STACK=<name>` — stamps `stacks/fedora-<name>/` from `templates/stack/`: a placeholder `00-stack.sh`, a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, and a `README.md`. One parameterized root `stack.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
-2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). Add `dnf install` lines to `scripts/00-stack.sh` only if something must compile from source.
-3. `make build STACK=<name>` — or `packer validate -var stack=<name> stack.pkr.hcl` for a fast HCL pre-check.
-4. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/fedora-*/` — no workflow edit needed.
+1. `make scaffold STACK=<name>` — stamps `stacks/<name>/` from `templates/stack/`: a generic `00-stack.sh` (reads `packages.<family>` for the build distro), a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, `packages.dnf`, `packages.apt`, and a `README.md`. One parameterized root `stack.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
+2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). If the stack needs native build deps (e.g., compile-from-source runtimes), add them to `packages.dnf` (Fedora/dnf names) and `packages.apt` (Debian/Ubuntu/apt names) — keep the two files aligned.
+3. `make build STACK=<name> DISTRO=<distro>` — or `packer validate -var stack=<name> -var distro=<distro> stack.pkr.hcl` for a fast HCL pre-check. `<distro>` must appear in `shared/distros`.
+4. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/*/` and cross-products with `shared/distros` — no workflow edit needed.
+
+## Adding a distro
+
+1. Add the distro token (one line) to `shared/distros`.
+2. Confirm a `ghcr.io/cirruslabs/<distro>` Tart image exists (Cirrus must publish it).
+3. If the distro belongs to a new package family (neither dnf nor apt), add a branch to `shared/scripts/distro-lib.sh` that exports `_DISTRO_FAMILY` and implements `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean`, and the relevant `repo_add_*` functions.
+4. For each stack that has native build deps, add the equivalent packages to `packages.<new-family>` in that stack's directory.
+5. CI picks up the new distro automatically (matrix is `stacks/*` × `shared/distros`).
 
 ## Troubleshooting
 
 - **`packer init` fails with "no plugins for github.com/cirruslabs/tart"** → upgrade Packer (`brew upgrade hashicorp/tap/packer`); the tart plugin requires Packer 1.7+.
-- **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip fedora-base`. If blank, the VM didn't get DHCP — `tart stop fedora-base; tart delete fedora-base; make bootstrap` to start over.
+- **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip <distro>-base` (e.g. `tart ip fedora-base`). If blank, the VM didn't get DHCP — `tart stop <distro>-base; tart delete <distro>-base; make bootstrap DISTRO=<distro>` to start over.
 - **`ssh tart-<name>` triggers Touch ID more than once** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below a `Host *` catch-all), so ssh falls back to defaults and offers every key in Secretive's agent — one Touch ID prompt per key tried. The generated config pins just the Tart VM key (`IdentityFile` + `IdentitiesOnly yes`), so a match is what collapses it to a single prompt. Re-run `make setup` — it adds the `Include` line and warns if an existing one is misplaced. See [Setup §2](#2-install-the-host-tools).
 
 Stack-specific troubleshooting lives in each stack's README.

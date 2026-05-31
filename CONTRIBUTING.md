@@ -14,10 +14,10 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 ## Making changes
 
 1. Edit the relevant `shared/scripts/*.sh`, `stacks/<name>/scripts/*.sh`, or `*/files/*` file.
-2. Fast pre-checks — **syntax only, not proof of runtime behavior**: `packer validate -var stack=<name> stack.pkr.hcl` (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed.
-3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name>` (15-20 min for PHP), then confirm a fresh clone works:
+2. Fast pre-checks — **syntax only, not proof of runtime behavior**: `packer validate -var stack=<name> -var distro=<distro> stack.pkr.hcl` (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed.
+3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name> DISTRO=<distro>` (15-20 min for PHP), then confirm a fresh clone works:
    ```bash
-   tart clone fedora-<name> test-vm
+   tart clone <distro>-<name> test-vm
    ssh tart-test-vm            # auto-starts the stopped VM, then connects
    # inside VM (example for fedora-php):
    node --version && php --version && composer --version
@@ -29,7 +29,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 
 - **One logical change per PR.** Renaming + a bug fix in the same PR is two PRs.
 - **`shared/` changes affect every stack.** Bear that in mind — a tweak that helps one stack may regress another.
-- **If you add a new script** to an existing stack, reference it from the root `stack.pkr.hcl` provisioner block (parameterized by `var.stack`). To add a new stack, run `make scaffold STACK=<name>` and add a row to the stack table in the top-level `README.md` — CI discovers `stacks/fedora-*/` automatically, no workflow edit.
+- **If you add a new script** to an existing stack, reference it from the root `stack.pkr.hcl` provisioner block (parameterized by `var.stack`). To add a new stack, run `make scaffold STACK=<name>` and add a row to the stack table in the top-level `README.md` — CI runs `packer validate` for every `stacks/*/` × `shared/distros` cell automatically, no workflow edit needed for new stacks or new distros.
 - **Comments explain WHY, not WHAT** — see [`AGENTS.md`](./AGENTS.md) for the full convention list.
 
 ## Reporting bugs
