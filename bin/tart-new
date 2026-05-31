@@ -5,10 +5,11 @@
 # flags fold in the otherwise-separate `tart set` step.
 #
 # Usage:
-#   tart-new <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]
+#   tart-new <name> <stack> <distro> [--cpu N] [--memory MB] [--disk-size GB]
 #
 # <stack> is the short token (php, jvm) — the same one `make build STACK=…`
-# takes; the cloned image is `fedora-<stack>`.
+# takes; <distro> is the OS token (fedora) — the same one `make build DISTRO=…`
+# takes; the cloned image is `<distro>-<stack>`.
 set -euo pipefail
 
 prog="${0##*/}"
@@ -27,31 +28,34 @@ SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 
-# image_for_stack <stack> — the image name for a stack token (php → fedora-php).
+DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+distro_blessed() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" 2>/dev/null); }
+
+# image_for_stack <stack> <distro> — the image name (php, ubuntu → ubuntu-php).
 image_for_stack() {
-  printf 'fedora-%s\n' "$1"
+  printf '%s-%s\n' "$2" "$1"
 }
 
-# list_stacks — short stack tokens (php, jvm) discovered from stacks/fedora-*/.
+# list_stacks — short stack tokens (php, jvm) discovered from stacks/*/.
 list_stacks() {
   local d
-  for d in "$STACKS_DIR"/fedora-*/; do
+  for d in "$STACKS_DIR"/*/; do
     [ -d "$d" ] || continue
     d="${d%/}"
-    printf '%s\n' "${d##*/fedora-}"
+    printf '%s\n' "${d##*/}"
   done
 }
 
-# stack_exists <stack> — 0 if stacks/fedora-<stack>/ is present.
+# stack_exists <stack> — 0 if stacks/<stack>/ is present.
 stack_exists() {
-  [ -d "$STACKS_DIR/fedora-$1" ]
+  [ -d "$STACKS_DIR/$1" ]
 }
 
-# image_built <stack> — 0 if image_for_stack(<stack>) is a *local* row in
-# `tart list` (an OCI-pulled row of the same name does not count as built).
+# image_built <stack> <distro> — 0 if image_for_stack(<stack>, <distro>) is a
+# *local* row in `tart list` (an OCI-pulled row of the same name does not count as built).
 image_built() {
   tart list --format json 2>/dev/null \
-    | jq -e --arg n "$(image_for_stack "$1")" \
+    | jq -e --arg n "$(image_for_stack "$1" "$2")" \
         'any(.[]; .Name == $n and .Source == "local")' >/dev/null
 }
 
@@ -62,7 +66,7 @@ vm_exists() {
 }
 
 usage() {
-  echo "usage: $prog <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]" >&2
+  echo "usage: $prog <name> <stack> <distro> [--cpu N] [--memory MB] [--disk-size GB]" >&2
 }
 
 tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
@@ -83,9 +87,10 @@ while [ $# -gt 0 ]; do
     *)             positionals+=("$1"); shift ;;
   esac
 done
-[ "${#positionals[@]}" -eq 2 ] || { usage; exit 64; }
+[ "${#positionals[@]}" -eq 3 ] || { usage; exit 64; }
 NAME="${positionals[0]}"
 STACK="${positionals[1]}"
+DISTRO="${positionals[2]}"
 
 # 1. Stack must exist in the repo.
 if ! stack_exists "$STACK"; then
@@ -93,19 +98,25 @@ if ! stack_exists "$STACK"; then
   exit 1
 fi
 
-# Image name for this stack — used by the not-built hint and the clone below.
-img="$(image_for_stack "$STACK")"
+# 2. Distro must be blessed.
+if ! distro_blessed "$DISTRO"; then
+  echo "$prog: distro '$DISTRO' not blessed; available: $(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" | paste -sd, - | sed 's/,/, /g')" >&2
+  exit 1
+fi
 
-# 2. Image must be built. Offer to build interactively; otherwise fail with the
+# Image name for this stack + distro — used by the not-built hint and the clone below.
+img="$(image_for_stack "$STACK" "$DISTRO")"
+
+# 3. Image must be built. Offer to build interactively; otherwise fail with the
 #    exact command (no silent 15-20 min side-effect).
-if ! image_built "$STACK"; then
+if ! image_built "$STACK" "$DISTRO"; then
   echo "$prog: stack '$STACK' image '$img' is not built." >&2
-  echo "  build it with: make build STACK=$STACK" >&2
+  echo "  build it with: make build STACK=$STACK DISTRO=$DISTRO" >&2
   if [ -t 0 ] && [ -t 1 ]; then
     printf '%s: build it now? [y/N] ' "$prog" >&2
     read -r reply
     case "$reply" in
-      [yY]|[yY][eE][sS]) make -C "$REPO" build STACK="$STACK" || { echo "$prog: build failed." >&2; exit 1; } ;;
+      [yY]|[yY][eE][sS]) make -C "$REPO" build STACK="$STACK" DISTRO="$DISTRO" || { echo "$prog: build failed." >&2; exit 1; } ;;
       *) exit 1 ;;
     esac
   else
@@ -113,13 +124,13 @@ if ! image_built "$STACK"; then
   fi
 fi
 
-# 3. No clobbering an existing VM.
+# 4. No clobbering an existing VM.
 if vm_exists "$NAME"; then
   echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
   exit 1
 fi
 
-# 4. Clone, then fold in resources if any were given.
+# 5. Clone, then fold in resources if any were given.
 tart clone "$img" "$NAME"
 set_args=()
 [ -n "$CPU" ]  && set_args+=(--cpu "$CPU")

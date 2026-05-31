@@ -1,10 +1,11 @@
 #compdef tart-new
 #
 # Zsh completion for tart-new. Positional 1 is the new VM name (no completion);
-# positional 2 is the stack token, completed from stacks/fedora-*/ in the repo
-# this command is symlinked from (real path via `:A`). _arguments tracks
-# positions net of options, so the stack still completes when resource flags
-# come first (e.g. `tart-new --cpu 4 myvm <TAB>`), and the flags complete too.
+# positional 2 is the stack token, completed from stacks/*/ in the repo this
+# command is symlinked from (real path via `:A`); positional 3 is the distro
+# token, completed from shared/distros. _arguments tracks positions net of
+# options, so the stack and distro still complete when resource flags come first
+# (e.g. `tart-new --cpu 4 myvm <TAB>`), and the flags complete too.
 #
 # Install:
 #   fpath=(/path/to/tart-stacks/completions $fpath)   # before compinit
@@ -21,17 +22,26 @@ _tart-new() {
     '--disk-size[disk size in GB]:GB' \
     '(-h --help)'{-h,--help}'[show usage and exit]' \
     '1:new VM name:' \
-    '2:stack:->stack'
+    '2:stack:->stack' \
+    '3:distro:->distro'
 
-  [[ $state == stack ]] || return 0
+  [[ $state == stack || $state == distro ]] || return 0
 
   bin=${commands[tart-new]}
   [[ -n $bin ]] || { _message 'tart-new not on PATH'; return 1; }
   repo=${bin:A:h:h}
-  stacks=(${repo}/stacks/fedora-*(/N:t))
-  stacks=(${stacks#fedora-})
-  (( ${#stacks} )) || { _message 'no stacks found under stacks/fedora-*/'; return 1; }
-  _describe -t stacks 'stack' stacks
+
+  [[ $state == stack ]] && {
+    stacks=(${repo}/stacks/*(/N:t))
+    (( ${#stacks} )) || { _message 'no stacks found under stacks/*/'; return 1; }
+    _describe -t stacks 'stack' stacks; return 0
+  }
+
+  [[ $state == distro ]] && {
+    local -a distros
+    distros=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' "${repo}/shared/distros" 2>/dev/null)"})
+    _describe -t distros 'distro' distros; return 0
+  }
 }
 
 _tart-new "$@"

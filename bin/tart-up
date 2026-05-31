@@ -39,6 +39,22 @@ SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 # base-image guard below to recognize any built stack image regardless of OS.
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
+DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+
+# is_base_image <bare-name> <stacks-dir> <distros-file> — 0 if the name is a
+# clone-source (the <distro>-base bootstrap intermediate, or a <distro>-<stack>
+# built image), not a dev VM. Anchored on the blessed distro set so hyphenated
+# dev-VM names (e.g. web-php) are NOT misread as base images.
+is_base_image() {
+  local bare="$1" stacks_dir="$2" distros_file="$3" d rest
+  case "$bare" in *-base) return 0 ;; esac
+  while IFS= read -r d; do
+    case "$bare" in
+      "$d"-*) rest="${bare#"$d"-}"; [ -d "$stacks_dir/$rest" ] && return 0 ;;
+    esac
+  done < <(grep -vE '^[[:space:]]*(#|$)' "$distros_file" 2>/dev/null)
+  return 1
+}
 
 usage() {
   echo "usage: $prog <vm-name>" >&2
@@ -76,14 +92,12 @@ if [ -z "$STATE" ]; then
   VM="$ALT"
 fi
 
-# Base images (the `<os>-base` bootstrap intermediate + every stacks/*/ image) are
-# clone-sources, not dev VMs — but the `tart-*` SSH wildcard matches them too. Refuse.
-bare="${VM#tart-}"
-is_base=0
-case "$bare" in *-base) is_base=1 ;; esac
-[ -d "$STACKS_DIR/$bare" ] && is_base=1
-if [ "$is_base" = 1 ]; then
-  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack>'." >&2
+# Base images (the `<distro>-base` bootstrap intermediate + every <distro>-<stack>
+# built image) are clone-sources, not dev VMs — but the `tart-*` SSH wildcard
+# matches them too. Refuse. Anchored on the blessed distro set so a hyphenated
+# dev-VM name (e.g. web-php) is NOT misread as a base image.
+if is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE"; then
+  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <distro>'." >&2
   exit 1
 fi
 
