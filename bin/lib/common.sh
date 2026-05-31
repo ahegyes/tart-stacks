@@ -8,5 +8,5 @@
 # shellcheck source=bin/lib/config.sh
 . "${BASH_SOURCE[0]%/*}/config.sh"
 
-# need_cmd <tool> [install-hint] — preflight; exit 1 if the tool is missing.
-need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "${prog:-${0##*/}}: '$1' not on PATH. ${2:-}" >&2; exit 1; }; }
+# tart_need_cmd <tool> [install-hint] — preflight; exit 1 if the tool is missing.
+tart_need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "${prog:-${0##*/}}: '$1' not on PATH. ${2:-}" >&2; exit 1; }; }

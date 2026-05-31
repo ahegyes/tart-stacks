@@ -8,9 +8,10 @@
 #   tart-new <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]
 #
 # <stack> is the short token (php, jvm) — the same one `make build STACK=…`
-# takes. The `fedora-` image prefix is supplied by image_for_stack(), the
-# single point that encodes the only-OS-is-fedora assumption.
+# takes; the cloned image is `fedora-<stack>`.
 set -euo pipefail
+
+prog="${0##*/}"
 
 # Resolve this script's real path (following symlinks) to find the repo's
 # stacks/. TART_STACKS_DIR overrides for tests.
@@ -26,8 +27,7 @@ SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 
-# image_for_stack <stack> — the one place the fedora- OS prefix lives. A future
-# multi-OS change starts here (and in the Makefile's stacks/fedora-$(STACK)).
+# image_for_stack <stack> — the image name for a stack token (php → fedora-php).
 image_for_stack() {
   printf 'fedora-%s\n' "$1"
 }
@@ -62,11 +62,11 @@ vm_exists() {
 }
 
 usage() {
-  echo "usage: tart-new <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]" >&2
+  echo "usage: $prog <name> <stack> [--cpu N] [--memory MB] [--disk-size GB]" >&2
 }
 
-need_cmd tart "Install: brew install cirruslabs/cli/tart"
-need_cmd jq   "Install: brew install jq"
+tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
+tart_need_cmd jq   "Install: brew install jq"
 
 CPU="" MEM="" DISK=""
 positionals=()
@@ -79,7 +79,7 @@ while [ $# -gt 0 ]; do
     --memory=*)    MEM="${1#*=}"; shift ;;
     --disk-size=*) DISK="${1#*=}"; shift ;;
     -h|--help)     usage; exit 0 ;;
-    -*)            echo "tart-new: unknown option '$1'" >&2; usage; exit 64 ;;
+    -*)            echo "$prog: unknown option '$1'" >&2; usage; exit 64 ;;
     *)             positionals+=("$1"); shift ;;
   esac
 done
@@ -89,7 +89,7 @@ STACK="${positionals[1]}"
 
 # 1. Stack must exist in the repo.
 if ! stack_exists "$STACK"; then
-  echo "tart-new: no stack '$STACK'; available: $(list_stacks | sort | paste -sd, - | sed 's/,/, /g')" >&2
+  echo "$prog: no stack '$STACK'; available: $(list_stacks | sort | paste -sd, - | sed 's/,/, /g')" >&2
   exit 1
 fi
 
@@ -99,13 +99,13 @@ img="$(image_for_stack "$STACK")"
 # 2. Image must be built. Offer to build interactively; otherwise fail with the
 #    exact command (no silent 15-20 min side-effect).
 if ! image_built "$STACK"; then
-  echo "tart-new: stack '$STACK' image '$img' is not built." >&2
+  echo "$prog: stack '$STACK' image '$img' is not built." >&2
   echo "  build it with: make build STACK=$STACK" >&2
   if [ -t 0 ] && [ -t 1 ]; then
-    printf 'tart-new: build it now? [y/N] ' >&2
+    printf '%s: build it now? [y/N] ' "$prog" >&2
     read -r reply
     case "$reply" in
-      [yY]|[yY][eE][sS]) make -C "$REPO" build STACK="$STACK" || { echo "tart-new: build failed." >&2; exit 1; } ;;
+      [yY]|[yY][eE][sS]) make -C "$REPO" build STACK="$STACK" || { echo "$prog: build failed." >&2; exit 1; } ;;
       *) exit 1 ;;
     esac
   else
@@ -115,7 +115,7 @@ fi
 
 # 3. No clobbering an existing VM.
 if vm_exists "$NAME"; then
-  echo "tart-new: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
+  echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
   exit 1
 fi
 
@@ -131,4 +131,4 @@ set_args=()
 # per-VM host key (tart-up regenerates it), which would otherwise trip accept-new.
 ssh-keygen -R "tart-$NAME" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
-echo "tart-new: created '$NAME' from $img — next: ssh tart-$NAME" >&2
+echo "$prog: created '$NAME' from $img — next: ssh tart-$NAME" >&2

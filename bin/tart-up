@@ -17,7 +17,7 @@
 # Directory mounts: if ~/.config/tart-stacks/mounts (override $TART_MOUNTS)
 # selects this VM, the matching `--dir` virtiofs shares are added to the
 # `tart run` that starts it. A `--dir` attaches at boot, so it applies only when
-# tart-up STARTS the VM — see dir_args_for_vm.
+# tart-up STARTS the VM — see dir_args.
 
 set -euo pipefail
 
@@ -35,16 +35,23 @@ SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 # shellcheck source=bin/lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $prog <vm-name>" >&2
-  exit 64
-fi
+# Repo root + stacks dir (TART_STACKS_DIR overrides for tests), used by the
+# base-image guard below to recognize any built stack image regardless of OS.
+REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
+
+usage() {
+  echo "usage: $prog <vm-name>" >&2
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+[ $# -eq 1 ] || { usage; exit 64; }
 
 VM="$1"
 
-need_cmd tart "Install: brew install cirruslabs/cli/tart"
-need_cmd jq   "Install: brew install jq"
-need_cmd nc   "Install netcat, or use the macOS built-in at /usr/bin/nc."
+tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
+tart_need_cmd jq   "Install: brew install jq"
+tart_need_cmd nc   "Install netcat, or use the macOS built-in at /usr/bin/nc."
 
 # Query Tart for one VM's state by exact name; empty output = no such VM.
 resolve_state() {
@@ -69,9 +76,13 @@ if [ -z "$STATE" ]; then
   VM="$ALT"
 fi
 
-# Refuse stack clone-sources (base images) — they aren't dev VMs. A `tart-*`
-# wildcard SSH config matches them too, so fail fast rather than boot one.
-if [[ "${VM#tart-}" =~ ^(fedora-base|fedora-[a-z]+)$ ]]; then
+# Base images (the `<os>-base` bootstrap intermediate + every stacks/*/ image) are
+# clone-sources, not dev VMs — but the `tart-*` SSH wildcard matches them too. Refuse.
+bare="${VM#tart-}"
+is_base=0
+case "$bare" in *-base) is_base=1 ;; esac
+[ -d "$STACKS_DIR/$bare" ] && is_base=1
+if [ "$is_base" = 1 ]; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack>'." >&2
   exit 1
 fi
@@ -97,9 +108,9 @@ netpolicy_args() {
 # ---- per-VM directory mounts (opt-in) --------------------------------------
 MOUNTS_CONFIG=$(tart_config_path mounts)
 
-# tart_pattern_matches <pattern> <bare-vm> — 0 if the vm-pattern selects this VM.
+# pattern_matches <pattern> <bare-vm> — 0 if the vm-pattern selects this VM.
 #   pattern: `*` (any) | <vm> | <a>,<b>,... (comma list, no spaces).
-tart_pattern_matches() {
+pattern_matches() {
   local pattern="$1" vm="$2"
   [ "$pattern" = "*" ] && return 0
   local -a names=()
@@ -111,12 +122,12 @@ tart_pattern_matches() {
   return 1
 }
 
-# dir_args_for_vm <bare-vm> — print one `--dir=<name>:<path>[:ro]` per mounts
+# dir_args <bare-vm> — print one `--dir=<name>:<path>[:ro]` per mounts
 # line selecting this VM. Line format: `<vm-pattern> [<name>=]<host-path>[:ro]`;
 # the in-VM share name is <name> when given (mounts at /mnt/shared/<name>), else
 # the path's basename. Give an explicit name when two mounts would otherwise
 # collide on basename (e.g. ~/Source/.../workbench vs ~/.config/workbench).
-dir_args_for_vm() {
+dir_args() {
   local vm="$1"
   [ -f "$MOUNTS_CONFIG" ] || return 0
   local raw line pattern rest path ro name
@@ -128,17 +139,20 @@ dir_args_for_vm() {
       echo "${prog:-tart-up}: $MOUNTS_CONFIG: no path on line, skipping: $raw" >&2
       continue
     fi
-    tart_pattern_matches "$pattern" "$vm" || continue
+    pattern_matches "$pattern" "$vm" || continue
     case "$rest" in
       *:ro) ro=":ro"; path="${rest%:ro}" ;;
       *)    ro="";    path="$rest" ;;
     esac
     # Optional explicit share name: `name=/abs/path`. Falls back to the path
     # basename — give a name when two mounts would otherwise collide on basename.
+    name=""
     case "$path" in
-      /*)   name="$(basename "$path")" ;;
       *=/*) name="${path%%=*}"; path="${path#*=}" ;;
-      *)    echo "${prog:-tart-up}: $MOUNTS_CONFIG: malformed mount (need [<name>=]<absolute-path>), skipping: $raw" >&2; continue ;;
+    esac
+    case "$path" in
+      /*) [ -n "$name" ] || name="$(basename "$path")" ;;
+      *)  echo "${prog:-tart-up}: $MOUNTS_CONFIG: malformed mount (need [<name>=]<absolute-path>), skipping: $raw" >&2; continue ;;
     esac
     printf -- '--dir=%s:%s%s\n' "$name" "$path" "$ro"
   done < "$MOUNTS_CONFIG"
@@ -147,21 +161,21 @@ dir_args_for_vm() {
 
 # Resolve this VM's net-policy + mounts once (bare name for mounts; netpolicy
 # is VM-agnostic). Both reused by the start + warning paths.
-NET_ARGS=()
+NETPOLICY_ARGS=()
 while IFS= read -r n; do
-  [ -n "$n" ] && NET_ARGS+=("$n")
+  [ -n "$n" ] && NETPOLICY_ARGS+=("$n")
 done < <(netpolicy_args)
 
 DIR_ARGS=()
 while IFS= read -r d; do
   [ -n "$d" ] && DIR_ARGS+=("$d")
-done < <(dir_args_for_vm "${VM#tart-}")
+done < <(dir_args "${VM#tart-}")
 
 if [ "$STATE" = "running" ]; then
   if [ "${#DIR_ARGS[@]}" -gt 0 ]; then
     echo "$prog: '$VM' already running — ${#DIR_ARGS[@]} configured mount(s) not attached (stop + start to apply)." >&2
   fi
-  if [ "${#NET_ARGS[@]}" -gt 0 ]; then
+  if [ "${#NETPOLICY_ARGS[@]}" -gt 0 ]; then
     echo "$prog: '$VM' already running — net-policy from $NETPOLICY_CONFIG not applied (stop + start to apply)." >&2
   fi
 elif [ "$STATE" = "stopped" ]; then
@@ -170,7 +184,7 @@ elif [ "$STATE" = "stopped" ]; then
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
   # tart's --net-* family is mutually exclusive, so keep them visually adjacent.
   run_cmd=(tart run "$VM" --no-graphics)
-  [ "${#NET_ARGS[@]}" -gt 0 ] && run_cmd+=("${NET_ARGS[@]}")
+  [ "${#NETPOLICY_ARGS[@]}" -gt 0 ] && run_cmd+=("${NETPOLICY_ARGS[@]}")
   [ "${#DIR_ARGS[@]}" -gt 0 ] && run_cmd+=("${DIR_ARGS[@]}")
   ( "${run_cmd[@]}" >/dev/null 2>&1 & disown )
 else

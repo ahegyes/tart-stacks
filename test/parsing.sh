@@ -144,7 +144,7 @@ assert_absent    "malformed line not emitted as a Host block" "$out" "Host tart-
 assert_contains  "malformed line warned to stderr"            "$(<"$SYNC_ERR")" "malformed line"
 assert_contains  "well-formed sibling still emitted"          "$out" "Host tart-vm-b"
 
-# ── bin/tart-up: mounts parser (dir_args_for_vm / tart_pattern_matches) ──────────
+# ── bin/tart-up: mounts parser (dir_args / pattern_matches) ──────────
 # tart-up has no dry-run and its main flow needs a live VM, so pull the two pure
 # parsing functions out of the source and exercise them directly. Re-extracts
 # every run, so it tracks the real source through refactors.
@@ -153,19 +153,19 @@ extract_fn() { # function-name file
   # identically across awk flavors (BSD awk on macOS, mawk on the CI runner).
   awk -v fn="$1" 'index($0, fn "() {")==1{p=1} p{print} p && $0=="}"{exit}' "$2"
 }
-{ extract_fn tart_pattern_matches "$BIN/tart-up"; echo
-  extract_fn dir_args_for_vm    "$BIN/tart-up"; echo
+{ extract_fn pattern_matches "$BIN/tart-up"; echo
+  extract_fn dir_args    "$BIN/tart-up"; echo
   extract_fn netpolicy_args     "$BIN/tart-up"; } > "$WORK/tart-up-fns.sh"
 # shellcheck source=/dev/null
 source "$WORK/tart-up-fns.sh"
 
 MNT_ERR="$WORK/mounts.err"
-mounts() { # mounts-file-content vm -> stdout of dir_args_for_vm (stderr -> $MNT_ERR)
+mounts() { # mounts-file-content vm -> stdout of dir_args (stderr -> $MNT_ERR)
   printf '%s' "$1" > "$WORK/mounts"
-  # dir_args_for_vm (sourced above) reads MOUNTS_CONFIG as a global.
+  # dir_args (sourced above) reads MOUNTS_CONFIG as a global.
   # shellcheck disable=SC2034
   MOUNTS_CONFIG="$WORK/mounts"
-  dir_args_for_vm "$2" 2>"$MNT_ERR"
+  dir_args "$2" 2>"$MNT_ERR"
 }
 
 echo "bin/tart-up — mounts parser:"
@@ -196,12 +196,12 @@ out=$(mounts 'app-a' app-a)
 assert_eq        "no-path line emits no --dir"   "" "$out"
 assert_contains  "no-path line warned to stderr" "$(<"$MNT_ERR")" "no path on line, skipping"
 
-echo "bin/tart-up — tart_pattern_matches:"
-check "'*' matches any VM"              0 tart_pattern_matches '*'     anything
-check "exact name matches"             0 tart_pattern_matches app-a   app-a
-check "a different name does not match" 1 tart_pattern_matches app-a   app-b
-check "comma-list matches a member"     0 tart_pattern_matches 'a,b,c' b
-check "comma-list rejects a non-member" 1 tart_pattern_matches 'a,b,c' z
+echo "bin/tart-up — pattern_matches:"
+check "'*' matches any VM"              0 pattern_matches '*'     anything
+check "exact name matches"             0 pattern_matches app-a   app-a
+check "a different name does not match" 1 pattern_matches app-a   app-b
+check "comma-list matches a member"     0 pattern_matches 'a,b,c' b
+check "comma-list rejects a non-member" 1 pattern_matches 'a,b,c' z
 
 # ── bin/tart-up: netpolicy parser (netpolicy_args) ──────────
 # netpolicy is VM-agnostic — one flag-list file applies uniformly to every VM.

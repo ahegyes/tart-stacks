@@ -41,6 +41,8 @@
 
 set -euo pipefail
 
+prog="${0##*/}"
+
 # Resolve this script's real dir (following the ~/.local/bin symlink that
 # script/setup installs) to source the shared bin/lib helpers.
 src="${BASH_SOURCE[0]}"
@@ -58,14 +60,19 @@ SSH_AGENTS_CONFIG=$(tart_config_path ssh-agents)
 FORWARDS_CONFIG=$(tart_config_path forwards)
 IDENTITY_AGENT="${TART_IDENTITY_AGENT:-$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh}"
 
+usage() {
+  echo "usage: $prog [--dry-run]" >&2
+}
+
 DRY_RUN=0
 case "${1:-}" in
   --dry-run|-n) DRY_RUN=1 ;;
+  -h|--help)    usage; exit 0 ;;
   '') ;;
-  *) echo "tart-ssh-sync: unknown arg '$1' (use --dry-run or no args)" >&2; exit 64 ;;
+  *) echo "$prog: unknown arg '$1'" >&2; usage; exit 64 ;;
 esac
 
-need_cmd tart "brew install cirruslabs/cli/tart"
+tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
 
 # Resolve tart-up to an absolute path for the generated Match line (the Match
 # exec runs under a GUI/non-login shell that may lack ~/.local/bin on PATH).
@@ -94,7 +101,7 @@ if [ -f "$FORWARDS_CONFIG" ]; then
     [ -z "$pattern" ] && continue
     directive="${rest%%[[:space:]]*}"
     if [ "$directive" != "RemoteForward" ]; then
-      echo "tart-ssh-sync: $FORWARDS_CONFIG:$lineno: skipping unsupported directive '$directive' (only RemoteForward today)" >&2
+      echo "$prog: $FORWARDS_CONFIG:$lineno: skipping unsupported directive '$directive' (only RemoteForward today)" >&2
       continue
     fi
 
@@ -121,7 +128,7 @@ if [ -f "$SSH_AGENTS_CONFIG" ]; then
     IFS=$' \t' read -r vm agent socket <<< "$line"
     [ -z "$vm" ] && continue
     if [ -z "$agent" ] || [ -z "$socket" ]; then
-      echo "tart-ssh-sync: $SSH_AGENTS_CONFIG: malformed line (want '<vm> <agent> <host-socket>'), skipping: $raw" >&2
+      echo "$prog: $SSH_AGENTS_CONFIG: malformed line (want '<vm> <agent> <host-socket>'), skipping: $raw" >&2
       continue
     fi
     ssh_agents_vms+=("$vm")
@@ -278,4 +285,4 @@ if [ "${#ssh_agents_vms[@]}" -gt 0 ]; then
 else
   vm_count=0
 fi
-echo "tart-ssh-sync: wrote $OUTPUT ($vm_count per-VM agent block(s), ${#patterns[@]} extra forward line(s))" >&2
+echo "$prog: wrote $OUTPUT ($vm_count per-VM agent block(s), ${#patterns[@]} extra forward line(s))" >&2
