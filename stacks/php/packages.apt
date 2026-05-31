@@ -1,0 +1,31 @@
+# PHP build dependencies (Debian/Ubuntu/apt names), one or more per line; '#' comments
+# and blank lines ignored. Equivalent capabilities to packages.dnf (names differ); keep the two aligned.
+
+# Build toolchain (autoconf/automake/libtool/pkg-config also come via build-essential)
+re2c bison
+# Core compile deps
+libssl-dev libxml2-dev
+# pdo_sqlite, sqlite3
+libsqlite3-dev
+# mbstring
+libonig-dev
+# curl
+libcurl4-openssl-dev
+# zip
+libzip-dev
+# gd + JPEG/PNG/WebP/XPM/AVIF/FreeType
+libgd-dev libpng-dev libjpeg-dev libwebp-dev libxpm-dev libavif-dev libfreetype-dev
+# sodium
+libsodium-dev
+# readline
+libedit-dev libreadline-dev
+# bz2
+libbz2-dev
+# PHP-FPM systemd notify
+libsystemd-dev
+# pdo_pgsql
+libpq-dev
+# PECL imagick (runtime + MagickWand headers)
+imagemagick libmagickwand-dev
+# PECL memcached
+libmemcached-dev

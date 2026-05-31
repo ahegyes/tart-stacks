@@ -1,6 +1,6 @@
-# fedora-php
+# php
 
-PHP development stack. Builds a `fedora-php` Tart image preconfigured with PHP 8.5, Node (Active LTS), and standard backend dev essentials. Intended as a per-project clone source.
+PHP development stack. Builds a `<distro>-php` Tart image (e.g. `fedora-php`) preconfigured with PHP 8.5, Node (Active LTS), and standard backend dev essentials. Intended as a per-project clone source.
 
 For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
@@ -17,16 +17,16 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 
 **Stack-specific build dependencies** (installed by [`scripts/00-stack.sh`](./scripts/00-stack.sh))
 
-PHP is compiled from source via mise+asdf-php. The `*-devel` packages installed by `00-stack.sh` map to specific PHP extensions; removing a `-devel` package silently drops its extension from the next build. See the comment block at the top of `00-stack.sh` for the full mapping.
+PHP is compiled from source via mise+asdf-php. The packages in [`packages.dnf`](./packages.dnf) (Fedora/RHEL) and [`packages.apt`](./packages.apt) (Debian/Ubuntu) map to specific PHP extensions; removing a package silently drops its extension from the next build. The inline comments in those files list which extension each package enables.
 
 ## Known limitations
 
-- **Playwright `install chrome` fails on Linux ARM64** — Google doesn't ship Chrome stable for ARM64 yet ([Chromium blog, 2026-03](https://blog.chromium.org/2026/03/bringing-chrome-to-arm64-linux-devices.html)). Use `--browser=chromium` (or `channel: 'chromium'` in playwright config) — the bundled Chromium build works. WebKit on Fedora needs manual libs.
+- **Playwright `install chrome` fails on Linux ARM64** — Google doesn't ship Chrome stable for ARM64 yet ([Chromium blog, 2026-03](https://blog.chromium.org/2026/03/bringing-chrome-to-arm64-linux-devices.html)). Use `--browser=chromium` (or `channel: 'chromium'` in playwright config) — the bundled Chromium build works. On Fedora, WebKit requires additional native libs not installed by default; run `playwright install-deps webkit` inside the clone to add them.
 
 ## Customization
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
-- **Add or drop a PHP extension**: each PHP extension is gated by a corresponding `-devel` package in [`scripts/00-stack.sh`](./scripts/00-stack.sh) (e.g., `libpq-devel` → `pdo_pgsql`, `libzip-devel` → `zip`). See the comment block above the dnf install in that script for the full mapping. Removing a `-devel` package drops its extension from the next build; adding one enables a new extension.
+- **Add or drop a PHP extension**: each PHP extension is gated by a corresponding package in [`packages.dnf`](./packages.dnf) (Fedora/RHEL) or [`packages.apt`](./packages.apt) (Debian/Ubuntu) — the inline comments list the extension each entry enables (e.g., `libpq-devel` / `libpq-dev` → `pdo_pgsql`). Removing a package drops its extension from the next build for that distro family; adding one enables a new extension.
 - **Per-project version pin**: drop a `.mise.toml` in the project repo root and commit it:
   ```toml
   [tools]
@@ -38,6 +38,6 @@ PHP is compiled from source via mise+asdf-php. The `*-devel` packages installed 
 
 ## Troubleshooting
 
-- **PHP compile fails midway** → the smoke test at the end of `mise-install.sh` names the missing extension; the comment block in `00-stack.sh` maps each extension to its required `-devel` package. Fedora release bumps occasionally rename packages — pin a specific Fedora tag in the Makefile (instead of `:latest`) to roll back while investigating.
+- **PHP compile fails midway** → the smoke test at the end of `mise-install.sh` names the missing extension; `packages.dnf` / `packages.apt` (whichever family you're building) maps each extension to its required build-dep package via inline comments. Distro release bumps occasionally rename packages — pin a specific image tag (`IMAGE_TAG=<tag> make bootstrap DISTRO=<distro>`) to roll back while investigating.
 - **`composer` command not found inside a VM clone** → confirm mise activated: `which php` should resolve under `~/.local/share/mise/installs/`. If not, `eval "$(mise activate bash)"` then re-test; the `shared/scripts/user-config.sh` adds this to `~/.bashrc` and `~/.zshrc` automatically, but a corrupted clone's shell rc may have lost it.
 - **`xdebug` doesn't attach** → it's in trigger mode; set `XDEBUG_TRIGGER=1` in env (or send the trigger cookie) before the request. The IDE side needs to listen on port 9003 inside the VM (forward it if the IDE is on the host).

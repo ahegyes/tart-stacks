@@ -1,6 +1,6 @@
-# fedora-jvm
+# jvm
 
-JVM development stack. Builds a `fedora-jvm` Tart image preconfigured with Temurin 25 (current Java LTS), Maven, Gradle, sbt, Scala CLI, Kotlin, plus uv (Python project manager) and Node LTS. Intended as a per-project clone source for Java/Scala/Kotlin/mixed-runtime work.
+JVM development stack. Builds a `<distro>-jvm` Tart image (e.g. `fedora-jvm`) preconfigured with Temurin 25 (current Java LTS), Maven, Gradle, sbt, Scala CLI, Kotlin, plus uv (Python project manager) and Node LTS. Intended as a per-project clone source for Java/Scala/Kotlin/mixed-runtime work.
 
 For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
@@ -14,7 +14,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 - **sbt** (latest launcher). The bundled binary is the sbt launcher only; actual sbt + Scala compiler versions are pinned per project by each project's `project/build.properties` and resolved on first invocation.
 - **Scala CLI** (latest). Modern Scala command-line tool — self-bootstraps the compiler version each script or project declares. Replaces the legacy system `scala` package.
 - **Kotlin** (latest `kotlinc`). Standalone Kotlin compiler for ad-hoc / single-file work and for bootstrapping. Real Kotlin projects pin the compiler via Gradle's `kotlin` plugin or Maven's `kotlin-maven-plugin`.
-- **uv** (latest). Python project manager. Fedora ships `/usr/bin/python3` (3.13) in the base image for system use; uv handles per-project Pythons via `python-build-standalone`.
+- **uv** (latest). Python project manager. The base image provides a system Python for distro tooling; uv handles per-project Pythons via `python-build-standalone`.
 - **Node** — whichever LTS line mise's `lts` alias currently points to (`node = "lts"` in `files/mise.toml`). Useful for mixed-runtime projects (Java backend + JS frontend) and for build tooling that ships as npm packages.
 
 **Toolchain extras**
@@ -23,7 +23,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 
 **Stack-specific build dependencies** (installed by [`scripts/00-stack.sh`](./scripts/00-stack.sh))
 
-None currently. All JVM runtimes ship as pre-built aarch64 binaries via mise; there's no compile-from-source step like fedora-php's. The `shared/scripts/00-base.sh` baseline already provides `gcc` + autotools + standard headers for the rare native-image / JNI build that needs them. `00-stack.sh` stays as a placeholder so the provisioner chain matches the other stacks; add stack-specific `dnf install` lines there when first needed (e.g., `xmlstarlet` for `pom.xml` editing, `graphviz` for rendering `mvn dependency:tree`).
+None currently. All JVM runtimes ship as pre-built aarch64 binaries via mise; there's no compile-from-source step like the php stack's. The `shared/scripts/00-base.sh` baseline already provides `gcc` + autotools + standard headers for the rare native-image / JNI build that needs them. `00-stack.sh` stays as a placeholder so the provisioner chain matches the other stacks; add stack-specific package install lines there when first needed (e.g., `xmlstarlet` for `pom.xml` editing, `graphviz` for rendering `mvn dependency:tree`).
 
 ## Customization
 

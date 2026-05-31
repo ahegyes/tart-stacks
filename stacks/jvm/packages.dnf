@@ -1,0 +1,2 @@
+# JVM stack native build dependencies (Fedora/dnf names); '#' comments and blanks
+# ignored. Empty — all JVM runtimes are prebuilt mise binaries.

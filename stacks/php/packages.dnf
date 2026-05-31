@@ -1,0 +1,34 @@
+# PHP build dependencies (Fedora/dnf names), one or more per line; '#' comments and
+# blank lines ignored. Each provides headers for a --with-X configure flag or a PECL
+# extension; a missing one silently drops that extension (mise-install.sh smoke gate
+# is the backstop). Equivalent capabilities to packages.apt (names differ); keep both
+# and PHP_CONFIGURE_OPTIONS aligned.
+
+# Build toolchain
+re2c bison autoconf automake libtool pkgconf
+# Core compile deps
+openssl-devel libxml2-devel
+# pdo_sqlite, sqlite3
+sqlite-devel
+# mbstring
+oniguruma-devel
+# curl
+libcurl-devel
+# zip
+libzip-devel
+# gd + JPEG/PNG/WebP/XPM/AVIF/FreeType (gd-devel is load-bearing: --with-external-gd)
+gd-devel libpng-devel libjpeg-turbo-devel libwebp-devel libXpm-devel libavif-devel freetype-devel
+# sodium
+libsodium-devel
+# readline
+libedit-devel readline-devel
+# bz2
+bzip2-devel
+# PHP-FPM systemd notify
+systemd-devel
+# pdo_pgsql
+libpq-devel
+# PECL imagick (runtime + headers)
+ImageMagick ImageMagick-devel
+# PECL memcached
+libmemcached-devel
