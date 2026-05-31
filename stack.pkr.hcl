@@ -10,20 +10,29 @@ packer {
   }
 }
 
-# One parameterized template builds every stack: `packer build -var stack=<name>`
+# One parameterized template builds every stack: `packer build -var stack=<name> -var distro=<distro>`
 # from the repo root (the Makefile runs it there — provisioner script paths
 # resolve against the cwd, not this file). The invariant pipeline lives here;
-# per-stack content is just stacks/fedora-<stack>/{scripts,files}.
+# per-stack content is just stacks/<stack>/{scripts,files}.
 
 variable "stack" {
   type        = string
-  description = "Short stack token (php, jvm, …). The built image is fedora-<stack>, cloned from stacks/fedora-<stack>/."
+  description = "Short stack token (php, jvm, …). The built image is <distro>-<stack>, cloned from stacks/<stack>/."
+}
+
+variable "distro" {
+  type        = string
+  description = "Distro token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/distros and a branch in distro-lib.sh. The built image is <distro>-<stack>, cloned from <distro>-base."
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.distro))
+    error_message = "Distro must be a lowercase alphanumeric token such as fedora, ubuntu, or debian."
+  }
 }
 
 variable "source_image" {
   type        = string
-  description = "Local Tart image to clone as the source. `make bootstrap` creates this from ghcr.io/cirruslabs/fedora:latest."
-  default     = "fedora-base"
+  description = "Local Tart image to clone as the source. Defaults to <distro>-base, created by `make bootstrap`."
+  default     = ""
 }
 
 variable "ssh_username" {
@@ -37,6 +46,9 @@ locals {
   # locks the password at the end of the build, so cloned VMs only accept SSH
   # key auth.
   ssh_password = "admin"
+
+  # source_image defaults to <distro>-base (the make-bootstrap intermediate) unless overridden.
+  source_image = var.source_image != "" ? var.source_image : "${var.distro}-base"
 }
 
 variable "ssh_pubkey_path" {
@@ -61,8 +73,8 @@ variable "disk_size_gb" {
 }
 
 source "tart-cli" "stack" {
-  vm_base_name = var.source_image
-  vm_name      = "fedora-${var.stack}"
+  vm_base_name = local.source_image
+  vm_name      = "${var.distro}-${var.stack}"
   cpu_count    = var.cpu_count
   memory_gb    = var.memory_gb
   disk_size_gb = var.disk_size_gb
@@ -73,17 +85,34 @@ source "tart-cli" "stack" {
 }
 
 build {
-  name    = "fedora-${var.stack}"
+  name    = "${var.distro}-${var.stack}"
   sources = ["source.tart-cli.stack"]
 
+  # Distro abstraction, sourced by every system provisioner — must land before they run.
+  provisioner "file" {
+    source      = "shared/scripts/distro-lib.sh"
+    destination = "/tmp/distro-lib.sh"
+  }
+
+  # Per-stack, per-family package lists, read by 00-stack.sh.
+  provisioner "file" {
+    source      = "stacks/${var.stack}/packages.dnf"
+    destination = "/tmp/packages.dnf"
+  }
+
+  provisioner "file" {
+    source      = "stacks/${var.stack}/packages.apt"
+    destination = "/tmp/packages.apt"
+  }
+
   # System-level provisioning (runs as root via sudo). Shared base first, then
-  # the stack's dnf hook, then mise. One root provisioner block keeps the dnf
-  # transaction sequence unambiguous.
+  # the stack's package hook, then mise. One root provisioner block keeps the
+  # package-manager transaction sequence unambiguous.
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
       "shared/scripts/00-base.sh",
-      "stacks/fedora-${var.stack}/scripts/00-stack.sh",
+      "stacks/${var.stack}/scripts/00-stack.sh",
       "shared/scripts/mise.sh",
     ]
   }
@@ -95,7 +124,7 @@ build {
   }
 
   provisioner "file" {
-    source      = "stacks/fedora-${var.stack}/files/mise.toml"
+    source      = "stacks/${var.stack}/files/mise.toml"
     destination = "/home/${var.ssh_username}/.config/mise/config.toml"
   }
 
@@ -132,7 +161,7 @@ build {
   # Runs before final lockdown because it needs mise.toml uploaded and the
   # build user still SSH-able with the provisioning password.
   provisioner "shell" {
-    scripts = ["stacks/fedora-${var.stack}/scripts/mise-install.sh"]
+    scripts = ["stacks/${var.stack}/scripts/mise-install.sh"]
   }
 
   # Final lockdown — runs LAST as a single atomic step. 99-finalize.sh
