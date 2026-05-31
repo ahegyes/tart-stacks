@@ -1,4 +1,4 @@
-# Global tool versions for fedora-php.
+# Global tool versions for the php stack (image <distro>-php, e.g. fedora-php).
 # Override per-project with a .mise.toml in the project root.
 
 [tools]

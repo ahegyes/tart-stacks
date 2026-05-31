@@ -114,9 +114,11 @@ scaffold: check-stack-name
 	done
 	@chmod +x "$(STACK_DIR)"/scripts/*.sh
 	@echo "scaffolded $(STACK_DIR)/ — next:"
-	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions) + scripts/mise-install.sh (smoke test)"
-	@echo "  2. make build STACK=$(STACK) DISTRO=<distro>"
-	@echo "  3. add a row to the stack table in README.md"
+	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions)"
+	@echo "  2. in scripts/mise-install.sh, add ONE smoke_gate check per tool — a"
+	@echo "     missing check ships an unverified runtime (the gate only tests what you list)"
+	@echo "  3. make build STACK=$(STACK) DISTRO=<distro>"
+	@echo "  4. add a row to the stack table in README.md"
 
 # Clean Packer artifacts at the repo root and inside every stack directory
 # (packer creates these next to the cwd / .pkr.hcl it was invoked from).

@@ -1,4 +1,4 @@
-# Global tool versions for fedora-jvm.
+# Global tool versions for the jvm stack (image <distro>-jvm, e.g. fedora-jvm).
 # Override per-project with a .mise.toml in the project root.
 
 [tools]
@@ -40,11 +40,11 @@ sbt = "latest"
 # `kotlin-maven-plugin`); this global is the standalone CLI.
 kotlin = "latest"
 
-# Python project manager. Fedora ships `/usr/bin/python3` (3.13) in the
-# base image for system use; per-project Pythons go through `uv venv` /
-# `uv python install` and live under `~/.local/share/uv/`. Avoids
-# dual-managing the system Python alongside a mise-managed one (Modern
-# Fedora's PEP 668 enforcement makes the system Python read-only anyway).
+# Python project manager. Each distro ships a system `/usr/bin/python3` for
+# its own tooling; per-project Pythons go through `uv venv` / `uv python
+# install` and live under `~/.local/share/uv/`. Avoids dual-managing the
+# system Python alongside a mise-managed one (PEP 668 marks the system
+# Python externally-managed on modern distros anyway).
 uv = "latest"
 
 # Node tracks whichever LTS line mise's `lts` alias points to. The alias

@@ -3,7 +3,7 @@
 # via sudo, after the file provisioner uploads the source to /tmp.
 #
 # ncurses-term (00-base.sh) ships most terminals but NOT xterm-ghostty — Ghostty's entry
-# is newer than Fedora's ncurses, so without this an interactive `ssh tart-<name>` from
+# is newer than the base ncurses, so without this an interactive `ssh tart-<name>` from
 # Ghostty dies with "'xterm-ghostty': unknown terminal type". Compiling a vendored copy
 # into the system terminfo makes every clone work regardless of the ncurses version.
 # `tic` ships with ncurses (installed in 00-base.sh, which runs first).

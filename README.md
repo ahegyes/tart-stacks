@@ -17,16 +17,22 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 
 ```
 .
+├── README.md  AGENTS.md  CLAUDE.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── bin/
 │   ├── tart-new                      # Creates a project VM by cloning a stack base image, with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size` pass-through
 │   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start)
-│   └── tart-up                       # Starts a stopped VM (+ mounts) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
+│   ├── tart-up                       # Starts a stopped VM (+ mounts) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
+│   └── lib/                          # config.sh + common.sh — sourced helpers (config-path resolver, tart_need_cmd); never on PATH
 ├── script/
 │   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards, mounts
 │   └── test                          # Runs the test suite (test/*.sh) via `make test` / CI
+├── completions/
+│   └── _tart-new                     # zsh completion for tart-new; installed by make setup
 ├── test/
 │   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
-│   └── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
+│   ├── tart-up.sh                    # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc)
+│   ├── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
+│   └── distro-lib.sh                 # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt)
 ├── shared/
 │   ├── scripts/                      # Provisioners shared across all stacks (00-base, mise, user-config, terminfo, 99-finalize)
 │   └── files/
@@ -97,7 +103,7 @@ There's no SSH wrapper to remember — you connect with plain **`ssh tart-<name>
 
 Because the connection settings live in the wildcard, **a freshly cloned VM connects immediately** — `ssh tart-<newname>` needs no per-VM registration. Re-run `tart-ssh-sync` by hand only to:
 
-- pick up edits to `~/.config/tart-stacks/ssh-agents` — per-VM agent forwarding (`<vm> <agent> <host-socket>`; a VM's first line becomes its primary `ForwardAgent`, any extra agents become `RemoteForward`s). A VM needs an entry here for in-VM git/ssh to use a forwarded agent;
+- pick up edits to `~/.config/tart-stacks/ssh-agents` (not created by `make setup` — the tooling that manages your VMs writes it, or you create it by hand) — per-VM agent forwarding (`<vm> <agent> <host-socket>`; a VM's first line becomes its primary `ForwardAgent`, any extra agents become `RemoteForward`s). A VM needs an entry here for in-VM git/ssh to use a forwarded agent;
 - pick up edits to `~/.config/tart-stacks/forwards` (below).
 
 ```bash
@@ -156,7 +162,20 @@ sudo mkdir -p /mnt/shared
 sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/shared
 ```
 
-### 5. Build a stack image
+### 5. Network egress policy (optional)
+
+`~/.config/tart-stacks/netpolicy` confines every VM's outbound network. `tart-up` reads it and passes its contents as Tart `--net-*` flags when it **starts** a VM, so it applies at VM start (a running VM needs a stop + start to pick up changes). An absent or empty file means default Tart NAT — unfiltered.
+
+Each non-blank, non-comment line contributes whitespace-separated flags (`#` comments and blanks ignored). Example — softnet egress confined to the host gateway:
+
+```
+--net-softnet
+--net-softnet-allow=@host
+```
+
+See Tart's `--net-*` documentation for the flag vocabulary. This file is a consumed contract: `tart-stacks` only reads it — the tooling that manages your VMs writes it, or you hand-write it.
+
+### 6. Build a stack image
 
 ```bash
 make init                             # one-time: installs the Tart Packer plugin

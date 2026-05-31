@@ -19,7 +19,9 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   └── _tart-new                       # Zsh completion for tart-new (stack token, arg 2); installed by `make setup`
 ├── test/
 │   ├── tart-new.sh                     # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
-│   └── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
+│   ├── tart-up.sh                      # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc)
+│   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
+│   └── distro-lib.sh                   # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt)
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First. System update + core dev pkgs + build toolchain + zellij via distro-lib.sh (root)

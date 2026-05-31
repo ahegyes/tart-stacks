@@ -3,6 +3,8 @@
 # (uploaded to /tmp). Distro variance lives in those data files, not here. A missing
 # package silently drops the capability it provides, so the stack's smoke test (in
 # mise-install.sh) is the backstop. Runs as root after shared/scripts/00-base.sh.
+# Per-stack on purpose — the slot for any imperative build-prep beyond the
+# packages.<family> list; identical across stacks until one needs more.
 set -euo pipefail
 # shellcheck source=/dev/null
 source /tmp/distro-lib.sh

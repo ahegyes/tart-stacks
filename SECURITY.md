@@ -20,6 +20,7 @@ Every stack inherits the same hardened SSH posture from `shared/scripts/99-final
 - **Admin password locked.** `99-finalize.sh` runs `passwd -l admin`, setting the hash to `!`. Password login, `su`, and password-based `sudo` are all impossible. Only the SSH key authorized by `99-finalize.sh` (same script) grants access.
 - **NOPASSWD sudo for admin.** A `/etc/sudoers.d/admin-nopasswd` drop-in (validated with `visudo -cf` before landing on disk) ensures interactive `sudo` still works inside clones, since the password is locked.
 - **The base images are intended only as clone sources.** They should never be booted directly or exposed to a network on their own. Clones get the hardened sshd config on first boot.
+- **Optional network egress confinement.** `~/.config/tart-stacks/netpolicy` (consumed by `tart-up`, applied at VM start — not baked into the image) passes Tart `--net-*` flags to restrict a VM's outbound network; see the [README](./README.md#5-network-egress-policy-optional). Absent ⇒ default unfiltered NAT.
 
 ## Out of scope (inherited trust)
 
