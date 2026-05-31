@@ -9,6 +9,8 @@ libssl-dev libxml2-dev
 libsqlite3-dev
 # mbstring
 libonig-dev
+# intl (ICU)
+libicu-dev
 # curl
 libcurl4-openssl-dev
 # zip
@@ -18,7 +20,7 @@ libgd-dev libpng-dev libjpeg-dev libwebp-dev libxpm-dev libavif-dev libfreetype-
 # sodium
 libsodium-dev
 # readline
-libedit-dev libreadline-dev
+libreadline-dev
 # bz2
 libbz2-dev
 # PHP-FPM systemd notify

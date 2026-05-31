@@ -12,6 +12,8 @@ openssl-devel libxml2-devel
 sqlite-devel
 # mbstring
 oniguruma-devel
+# intl (ICU)
+libicu-devel
 # curl
 libcurl-devel
 # zip
@@ -21,7 +23,7 @@ gd-devel libpng-devel libjpeg-turbo-devel libwebp-devel libXpm-devel libavif-dev
 # sodium
 libsodium-devel
 # readline
-libedit-devel readline-devel
+readline-devel
 # bz2
 bzip2-devel
 # PHP-FPM systemd notify
