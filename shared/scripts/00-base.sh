@@ -1,43 +1,39 @@
 #!/usr/bin/env bash
-# 00-base.sh — System updates, core dev packages, zellij, build toolchain.
-# Runs as root via sudo from Packer. Stack-agnostic; every stack runs this
+# 00-base.sh — system update, core dev packages, zellij, build toolchain. Runs as
+# root; stack-agnostic, distro-agnostic via distro-lib.sh. Every stack runs this
 # before its own 00-stack.sh.
-
 set -euo pipefail
+# shellcheck source=/dev/null
+source /tmp/distro-lib.sh
 
 echo "==> Updating system packages..."
-dnf upgrade -y --refresh
+pkg_refresh
 
+# gh ships in dnf base repos but needs an added repo on apt (repo_add_github_cli);
+# ncurses terminfo for common terminals is in the core set so interactive ssh renders
+# right without per-connect terminfo push.
 echo "==> Installing core development packages (fail-loud)..."
-# ncurses-term ships terminfo entries for common terminals (alacritty, kitty,
-# wezterm, tmux-256color, …) so an interactive `ssh tart-<name>` renders right
-# without the host pushing terminfo per-connect. ncurses provides tic/infocmp.
-dnf install -y \
-  curl wget ca-certificates \
-  git gh \
-  zsh nano \
-  unzip tar \
-  ncurses ncurses-term \
-  gcc gcc-c++ make
+repo_add_github_cli
+case "$_DISTRO_FAMILY" in
+  dnf) core="curl wget ca-certificates git gh zsh nano unzip tar ncurses ncurses-term gcc gcc-c++ make" ;;
+  apt) core="curl wget ca-certificates git gh zsh nano unzip tar ncurses-base ncurses-bin g++ gcc make gnupg" ;;
+esac
+# shellcheck disable=SC2086  # intentional word-split of the package list
+pkg_install $core
 
 echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."
-dnf install -y --skip-unavailable \
-  htop lsof bind-utils nmap-ncat \
-  jq \
-  mariadb \
-  ShellCheck \
-  ripgrep fd-find fzf bat git-delta
+case "$_DISTRO_FAMILY" in
+  dnf) qol="htop lsof bind-utils nmap-ncat jq mariadb ShellCheck ripgrep fd-find fzf bat git-delta" ;;
+  apt) qol="htop lsof dnsutils netcat-openbsd jq mariadb-client shellcheck ripgrep fd-find fzf bat git-delta" ;;
+esac
+# shellcheck disable=SC2086
+pkg_install_optional $qol
 
-# Build toolchain group. dnf5 prefers `group install` over `@` shorthand
-# inside a mixed-package transaction (stricter about display-name vs ID).
-dnf group install -y development-tools
+echo "==> Installing build toolchain group..."
+pkg_group_devtools
 
-# zellij isn't in Fedora's default repos; varlad/zellij is the canonical COPR.
-# Override via `ZELLIJ_COPR=other/repo make build` if needed.
-ZELLIJ_COPR="${ZELLIJ_COPR:-varlad/zellij}"
-echo "==> Enabling COPR ${ZELLIJ_COPR} for zellij..."
-dnf copr enable -y "${ZELLIJ_COPR}"
-dnf install -y zellij
+echo "==> Installing zellij..."
+install_zellij
 
 echo "==> Verifying baseline tooling..."
 git --version

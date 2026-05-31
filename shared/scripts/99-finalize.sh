@@ -8,8 +8,8 @@
 #
 # This script handles end-of-build operations that must run after every other
 # provisioner:
-#   - Assert SELinux is still enforcing (a regressed base fails the build here).
-#   - Clean dnf cache (free image size before state is locked).
+#   - Assert mandatory access control is still active (a regressed base fails the build here).
+#   - Clean the package cache (free image size before state is locked).
 #   - Authorize the user's SSH key (uploaded earlier to /tmp/authorized_key.pub).
 #   - Install NOPASSWD sudoers drop-in for admin.
 #   - Write sshd drop-in disabling password auth.
@@ -24,30 +24,26 @@
 # Runs as root via sudo from Packer.
 
 set -euo pipefail
+# shellcheck source=/dev/null
+source /tmp/distro-lib.sh
 
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"
 SUDOERS_FILE="/etc/sudoers.d/${TARGET_USER}-nopasswd"
 
-# Assert the inherited SELinux posture survived the build. The Cirrus base
-# ships Enforcing and nothing in this repo touches it, so this check is free
-# today — but asserting it at the end turns an inherited property into a
-# guaranteed one: a future base that silently shipped SELinux disabled (or a
-# stray provisioner that flipped it) fails the build here instead of minting a
-# downgraded image that every clone would inherit.
-echo "==> Verifying SELinux is enforcing..."
-selinux_mode="$(getenforce 2>/dev/null || true)"
-if [ "${selinux_mode}" != "Enforcing" ]; then
-  echo "ERROR: SELinux is '${selinux_mode:-unavailable}', expected 'Enforcing'. Refusing to finalize a downgraded image." >&2
-  exit 1
-fi
+# Assert the inherited mandatory-access-control posture survived the build. The base
+# ships it active and nothing here touches it, so this is free today — but asserting it
+# at the end turns an inherited property into a guaranteed one: a future base that
+# silently shipped MAC disabled (or a stray provisioner that flipped it) fails the build
+# here instead of minting a downgraded image every clone would inherit.
+echo "==> Verifying mandatory access control is active..."
+assert_mac_enforcing || exit 1
 
-# Clean dnf cache before locking down the image. ~200-300 MB of RPMs +
-# metadata + solver cache in /var/cache/libdnf5/ would otherwise ship in
-# every tart clone. Runs in finalize (not in the last dnf script) so any
-# future dnf operations anywhere in the build get cleaned automatically.
-echo "==> Cleaning dnf cache..."
-dnf clean all
+# Clean the package cache before locking down the image — cached packages + metadata
+# (hundreds of MB) would otherwise ship in every clone. Runs in finalize so any package
+# operation anywhere in the build gets cleaned automatically.
+echo "==> Cleaning package cache..."
+pkg_clean
 
 # Authorize the user's SSH key.
 if [ ! -f /tmp/authorized_key.pub ]; then
@@ -80,7 +76,7 @@ install -m 440 -o root -g root "$TMP" "${SUDOERS_FILE}"
 # sshd start (first boot of any clone) — sshd is intentionally not restarted
 # here, so Packer's existing session continues working through the passwd -l
 # below. The 00- prefix wins over cloud-init's 50-cloud-init.conf via
-# "first occurrence wins" + Fedora's top-of-file Include directive.
+# "first occurrence wins" + OpenSSH's top-of-file Include directive.
 echo "==> Writing sshd drop-in to disable password auth..."
 install -m 600 -o root -g root /dev/stdin /etc/ssh/sshd_config.d/00-vm-hardening.conf <<'EOF'
 # tart-stacks hardening — applies on next sshd start.
@@ -94,6 +90,9 @@ PermitRootLogin no
 # socket on each session instead of failing if a stale one exists.
 StreamLocalBindUnlink yes
 EOF
+# sshd -t needs the privilege-separation dir to exist; it's created at service start,
+# so it's absent mid-build on apt-family images (present on dnf). Create it idempotently.
+mkdir -p /run/sshd
 sshd -t
 
 # Lock admin's password. After this, SSH key auth is the only way in.

@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# mise.sh — Install mise system-wide from the jdxcode/mise COPR. Runs as root in
-# the system provisioner block (dnf needs it); tool versions install later via
-# mise-install.sh, after mise.toml is uploaded.
-
+# mise.sh — install mise system-wide via the family's signed repo. Tool versions
+# install later via mise-install.sh, after mise.toml is uploaded. Runs as root.
 set -euo pipefail
+# shellcheck source=/dev/null
+source /tmp/distro-lib.sh
 
-echo "==> Installing mise (COPR jdxcode/mise)..."
-# Add the COPR repo via its repo file (`dnf config-manager addrepo`) — `dnf copr
-# enable` flaked writing the repo file mid-build. gpgcheck=1 keeps it signature-verified.
-dnf install -y dnf-plugins-core
-fedver="$(rpm -E %fedora)"
-dnf config-manager addrepo --from-repofile="https://copr.fedorainfracloud.org/coprs/jdxcode/mise/repo/fedora-${fedver}/jdxcode-mise-fedora-${fedver}.repo"
-dnf install -y mise
-mise --version
+echo "==> Installing mise..."
+repo_add_mise
+# Verify with HOME=/root so root's mise can't seed the build user's ~/.cache: sudo's
+# HOME handling varies by distro (apt preserves /home/<user>, dnf resets to /root), and a
+# root-owned ~/.cache would block the later unprivileged `mise install`.
+HOME=/root mise --version
 
-# Create the target user's ~/.config/mise/ (owned by them, since we run as root)
-# so the next Packer file provisioner can upload files/mise.toml into it.
-install -d -o "${SUDO_USER:-admin}" -g "${SUDO_USER:-admin}" "/home/${SUDO_USER:-admin}/.config/mise"
+# Pre-create the build user's ~/.config/mise/ (for the uploaded config.toml) and make
+# sure they own ~/.cache, so the unprivileged mise-install.sh can populate both.
+u="${SUDO_USER:-admin}"
+install -d -o "$u" -g "$u" "/home/$u/.config/mise"
+mkdir -p "/home/$u/.cache"
+chown -R "$u:$u" "/home/$u/.cache"
 
 echo "==> mise.sh complete."
