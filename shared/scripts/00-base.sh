@@ -24,7 +24,7 @@ pkg_install $core
 echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."
 case "$_DISTRO_FAMILY" in
   dnf) qol="htop lsof bind-utils nmap-ncat jq mariadb ShellCheck ripgrep fd-find fzf bat git-delta" ;;
-  apt) qol="htop lsof dnsutils netcat-openbsd jq mariadb-client shellcheck ripgrep fd-find fzf bat git-delta" ;;
+  apt) qol="htop lsof bind9-dnsutils netcat-openbsd jq mariadb-client shellcheck ripgrep fd-find fzf bat git-delta" ;;
 esac
 # shellcheck disable=SC2086
 pkg_install_optional $qol

@@ -76,7 +76,6 @@ pkg_clean() {
 repo_add_mise() {
   case "$_DISTRO_FAMILY" in
     dnf)
-      dnf install -y dnf-plugins-core
       local ver; ver="$(rpm -E %fedora)"
       dnf config-manager addrepo --from-repofile="https://copr.fedorainfracloud.org/coprs/jdxcode/mise/repo/fedora-${ver}/jdxcode-mise-fedora-${ver}.repo"
       dnf install -y mise ;;
@@ -142,9 +141,9 @@ install_zellij() {
 assert_mac_enforcing() {
   case "$_DISTRO_FAMILY" in
     dnf) local m; m="$(getenforce 2>/dev/null || true)"
-         [ "$m" = "Enforcing" ] || { echo "ERROR: SELinux is '${m:-unavailable}', expected 'Enforcing'." >&2; return 1; } ;;
+         [ "$m" = "Enforcing" ] || { echo "ERROR: SELinux is '${m:-unavailable}', expected 'Enforcing' — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
     apt) local n; n="$(aa-status --enforced 2>/dev/null || true)"
          case "$n" in ''|*[!0-9]*) n=0 ;; esac
-         [ "$n" -gt 0 ] || { echo "ERROR: AppArmor has no profiles in enforce mode." >&2; return 1; } ;;
+         [ "$n" -gt 0 ] || { echo "ERROR: AppArmor has no enforce-mode profiles — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
   esac
 }
