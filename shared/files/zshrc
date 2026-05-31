@@ -35,6 +35,11 @@ PROMPT='%F{cyan}%n@%m%f:%F{yellow}%~%f$ '
 alias ll='ls -lah'
 alias gs='git status -sb'
 
+# bat/fd install as batcat/fdfind on Debian/Ubuntu — alias to the familiar
+# names there (no-op where bat/fd already exist, e.g. Fedora). Interactive only.
+command -v batcat >/dev/null 2>&1 && ! command -v bat >/dev/null 2>&1 && alias bat='batcat'
+command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1 && alias fd='fdfind'
+
 # Attach to or create a named zellij session. No args = list existing.
 # Each host terminal tab/session can attach to a different session for
 # parallel work (e.g., `za term` in one tab, `za docker` in another) —
