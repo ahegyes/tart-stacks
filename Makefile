@@ -65,15 +65,15 @@ check-stack-name:
 		exit 1; \
 	fi
 
-# Validate DISTRO is set and blessed (a non-comment line in shared/distros).
+# Validate DISTRO is set and supported (a non-comment line in shared/distros).
 check-distro:
 	@if [ -z "$(DISTRO)" ]; then \
-		echo "ERROR: DISTRO is required (e.g., make build STACK=php DISTRO=fedora). Blessed distros:" >&2; \
+		echo "ERROR: DISTRO is required (e.g., make build STACK=php DISTRO=fedora). Supported distros:" >&2; \
 		grep -vE '^\s*(#|$$)' shared/distros | sed 's/^/  /' >&2; \
 		exit 1; \
 	fi
 	@if ! grep -qxF "$(DISTRO)" <(grep -vE '^\s*(#|$$)' shared/distros); then \
-		echo "ERROR: distro '$(DISTRO)' is not blessed. Add it to shared/distros (and a branch in distro-lib.sh) first. Blessed:" >&2; \
+		echo "ERROR: distro '$(DISTRO)' is not supported. Add it to shared/distros (and a branch in distro-lib.sh) first. Supported:" >&2; \
 		grep -vE '^\s*(#|$$)' shared/distros | sed 's/^/  /' >&2; \
 		exit 1; \
 	fi

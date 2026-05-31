@@ -29,7 +29,7 @@ REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
-distro_blessed() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" 2>/dev/null); }
+distro_supported() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" 2>/dev/null); }
 
 # image_for_stack <stack> <distro> — the image name (php, ubuntu → ubuntu-php).
 image_for_stack() {
@@ -98,9 +98,9 @@ if ! stack_exists "$STACK"; then
   exit 1
 fi
 
-# 2. Distro must be blessed.
-if ! distro_blessed "$DISTRO"; then
-  echo "$prog: distro '$DISTRO' not blessed; available: $(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" | paste -sd, - | sed 's/,/, /g')" >&2
+# 2. Distro must be supported.
+if ! distro_supported "$DISTRO"; then
+  echo "$prog: distro '$DISTRO' not supported; available: $(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" | paste -sd, - | sed 's/,/, /g')" >&2
   exit 1
 fi
 

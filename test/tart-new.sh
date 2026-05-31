@@ -27,7 +27,7 @@ trap 'rm -rf "$WORK"' EXIT
 # Fixture stacks/ tree: two stacks present (dirs no longer carry distro prefix).
 mkdir -p "$WORK/stacks/php/scripts" "$WORK/stacks/jvm/scripts"
 
-# Blessed-distros fixture used by the pure-helper and main-flow sections.
+# Supported-distros fixture used by the pure-helper and main-flow sections.
 printf 'fedora\n' > "$WORK/distros"
 # A two-distro variant for is_base_image tests that need ubuntu too.
 printf 'fedora\nubuntu\n' > "$WORK/distros2"
@@ -105,10 +105,10 @@ run_new app-x rust fedora
 assert_eq       "unknown stack exits 1" 1 "$rc"
 assert_contains "unknown stack lists available" "$(<"$WORK/err")" "available: jvm, php"
 
-# Unblessed distro → exit 1, mentions "not blessed".
+# Unsupported distro → exit 1, mentions "not supported".
 run_new app-x php arch
-assert_eq       "unblessed distro exits 1" 1 "$rc"
-assert_contains "unblessed distro mentions not blessed" "$(<"$WORK/err")" "not blessed"
+assert_eq       "unsupported distro exits 1" 1 "$rc"
+assert_contains "unsupported distro mentions not supported" "$(<"$WORK/err")" "not supported"
 
 # Unbuilt stack, non-interactive → exit 1, prints the build command, no clone.
 : > "$TART_CALLS"
@@ -162,7 +162,7 @@ check "<distro>-<stack> is a base"     0 is_base_image fedora-php  "$WORK/stacks
 check "ubuntu-jvm is a base"           0 is_base_image ubuntu-jvm  "$WORK/stacks" "$WORK/distros2"
 check "plain dev VM not a base"        1 is_base_image app-a       "$WORK/stacks" "$WORK/distros2"
 check "hyphenated dev VM not a base"   1 is_base_image web-php     "$WORK/stacks" "$WORK/distros2"
-check "unblessed-prefix not a base"    1 is_base_image arch-php    "$WORK/stacks" "$WORK/distros2"
+check "unsupported-prefix not a base"    1 is_base_image arch-php    "$WORK/stacks" "$WORK/distros2"
 
 echo
 echo "  $pass passed, $fail failed"

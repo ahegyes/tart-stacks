@@ -1,7 +1,7 @@
-# shared/distros — blessed distros tart-stacks builds + tests. One token per line;
-# '#' comments and blank lines ignored. A blessed distro needs a published
-# ghcr.io/cirruslabs/<distro> Tart image; once the provider layer lands
-# (shared/scripts/distro-lib.sh) it also needs a matching family branch there.
+# shared/distros — supported distros tart-stacks builds + tests. One token per line;
+# '#' comments and blank lines ignored. A supported distro needs a published
+# ghcr.io/cirruslabs/<distro> Tart image and a matching family branch (dnf or apt)
+# in shared/scripts/distro-lib.sh.
 # Consumed by: Makefile (DISTRO validation), bin/tart-new, bin/tart-up, CI matrix.
 fedora
 ubuntu

@@ -43,7 +43,7 @@ DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
 
 # is_base_image <bare-name> <stacks-dir> <distros-file> — 0 if the name is a
 # clone-source (the <distro>-base bootstrap intermediate, or a <distro>-<stack>
-# built image), not a dev VM. Anchored on the blessed distro set so hyphenated
+# built image), not a dev VM. Anchored on the supported distro set so hyphenated
 # dev-VM names (e.g. web-php) are NOT misread as base images.
 is_base_image() {
   local bare="$1" stacks_dir="$2" distros_file="$3" d rest
@@ -94,7 +94,7 @@ fi
 
 # Base images (the `<distro>-base` bootstrap intermediate + every <distro>-<stack>
 # built image) are clone-sources, not dev VMs — but the `tart-*` SSH wildcard
-# matches them too. Refuse. Anchored on the blessed distro set so a hyphenated
+# matches them too. Refuse. Anchored on the supported distro set so a hyphenated
 # dev-VM name (e.g. web-php) is NOT misread as a base image.
 if is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <distro>'." >&2

@@ -1,6 +1,6 @@
 # tart-stacks
 
-Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any blessed distro (Fedora, Ubuntu, Debian — see `shared/distros`), producing a `<distro>-<stack>` image. Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
+Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported distro (Fedora, Ubuntu, Debian — see `shared/distros`), producing a `<distro>-<stack>` image. Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
 
 ## Stacks
 
@@ -9,7 +9,7 @@ Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images fo
 | `php` | `<distro>-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/php/](./stacks/php/README.md) |
 | `jvm` | `<distro>-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/jvm/](./stacks/jvm/README.md) |
 
-`<distro>` is the distribution token (e.g. `fedora`). `shared/distros` lists the blessed values.
+`<distro>` is the distribution token (e.g. `fedora`). `shared/distros` lists the supported values.
 
 All stacks share a common base: mise + zellij + standard dev utilities, wired through a distro-abstraction layer (`shared/scripts/distro-lib.sh`) that handles dnf (Fedora/RHEL) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
@@ -40,7 +40,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   │   └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
 │   └── jvm/                          # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
 ├── stack.pkr.hcl                     # ONE parameterized Packer template (`-var stack=<name> -var distro=<distro>`)
-├── shared/distros                    # Blessed distro list (one token per line); consumed by Makefile, tart-new, CI
+├── shared/distros                    # Supported distro list (one token per line); consumed by Makefile, tart-new, CI
 ├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/
 ├── Makefile                          # Single top-level Makefile; commands take STACK=<name> DISTRO=<distro>
 └── .github/workflows/validate.yml    # packer validate + shellcheck; CI matrix is stack × distro cross-product
