@@ -36,7 +36,7 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 │   │   │   ├── 00-stack.sh             # Runs immediately after shared/00-base.sh; PHP build deps (root)
 │   │   │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
 │   │   ├── files/
-│   │   │   └── mise.toml               # In-VM global tool versions (php = "8.5", node = "lts")
+│   │   │   └── mise.toml               # In-VM global tool versions (pinned PHP patch + Node LTS)
 │   │   └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
 │   └── fedora-jvm/                     # JVM stack — same shape; Temurin 25 + Maven/Gradle/sbt/Kotlin/scala-cli + uv + Node
 └── .github/
@@ -49,6 +49,7 @@ Multi-stack collection of Packer templates that build Fedora-on-ARM64 Tart base 
 - **`AGENTS.md` is canonical.** `CLAUDE.md` is a one-line `@AGENTS.md` import. AGENTS.md is the standard recognized by Codex, Cursor, Cline, etc.
 - **Every shell script starts with `set -euo pipefail`.** No exceptions.
 - **Comments explain WHY, not WHAT.** Don't restate the code; explain hidden constraints, load-order requirements, or surprising behavior.
+- **Function naming: `tart_` prefix marks functions sourced from `bin/lib/`; script-local helpers stay bare.** A prefixed call (`tart_need_cmd`, `tart_config_path`) signals "defined in the lib, not this file"; a bare one (`dir_args`, `resolve_pattern`) is local. The prefix only carries that signal while it stays selective — don't add it to local helpers.
 - **Naming is `tart-stacks` everywhere** for the repo; each stack is `fedora-<lang>` (matching the Tart image `output_name`). Don't introduce alternative spellings within a stack's files.
 - **Host (macOS) and guest (Fedora VM) live in the same repo.** `bin/tart-up` and `bin/tart-ssh-sync` run on the host; `make`/`packer` run on the host; everything under `shared/scripts/`, `shared/files/`, and `stacks/*/scripts/`, `stacks/*/files/` runs inside the build VM.
 - **`script/` (singular) vs `scripts/` (plural) is deliberate, not a typo.** Three directories, three roles: `bin/` = user commands symlinked onto `$PATH` (`tart-up`, `tart-ssh-sync`, `tart-new`); `script/` = the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`, never on `$PATH` (`setup`, `test`); `scripts/` under `shared/` and `stacks/*/` = in-VM provisioner collections, each paired with a sibling `files/`.

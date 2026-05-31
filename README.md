@@ -106,7 +106,7 @@ What the script emits as universal defaults (apply to every Tart VM via `Host ta
 
 - **Common block**: user, identity (Secretive agent socket + the pinned `~/.ssh/tart-vm.pub`), host-key handling, and a `ProxyCommand` that resolves each VM's current IP at connect time (any SSH client reaches a *running* VM by name).
 - **Auto-start hook**: `Match host tart-* sessiontype shell exec "tart-up %n"` — an *interactive* `ssh tart-<name>` to a stopped VM starts it (and waits for SSH). The `sessiontype shell` gate means `git`/`rsync` (a remote command), `sftp` (a subsystem), and `ssh -N` (transport-only) **never** boot a VM — only an interactive login does.
-- **Agent forward**: each VM listed in `~/.config/tart-stacks/ssh-agents` forwards its host SSH agent via OpenSSH `ForwardAgent`, so sshd exports `SSH_AUTH_SOCK` in *every* in-VM session of that VM — interactive shells and non-interactive `ssh tart-<name> <cmd>` (git, rsync, provisioning) alike — and `git`/`ssh`/`composer` transparently use it. The file's grammar is `<vm> <agent> <host-socket>`: the first line for a VM is its primary `ForwardAgent`; any extra agents become `RemoteForward`s at `/run/tart/agent-<name>.sock` for per-host routing. Point a host-socket at 1Password's `~/.1password/agent.sock`, Secretive's container socket, or any relay.
+- **Agent forward**: each VM listed in `~/.config/tart-stacks/ssh-agents` forwards its host SSH agent via OpenSSH `ForwardAgent`, so sshd exports `SSH_AUTH_SOCK` in *every* in-VM session of that VM — interactive shells and non-interactive `ssh tart-<name> <cmd>` (git, rsync, provisioning) alike — and `git`/`ssh`/`composer` transparently use it. The file's grammar is `<vm> <agent> <host-socket>`: the first line for a VM is its primary `ForwardAgent`; any extra agents become `RemoteForward`s at `/run/tart/agent-<name>.sock` for per-host routing. Point a host-socket at 1Password's `~/.1password/agent.sock`, Secretive's container socket, or any relay. To *sign* commits in-VM, the agent signs but git also needs the pubkey *file* — mount a read-only pubkey dir and set `user.signingKey` to it (see [Per-VM directory mounts](#4-per-vm-directory-mounts)).
 
 What you opt into per-VM (your personal forwards, never committed): `~/.config/tart-stacks/forwards`. Each non-blank, non-comment line:
 
@@ -180,7 +180,7 @@ ssh tart-app-a              # auto-starts the stopped clone and connects
 
 **Per-clone tweaks** (no rebuild required):
 
-- Share a host directory into the VM: list it in `~/.config/tart-stacks/mounts` (see [Per-VM directory mounts](#4-per-vm-directory-mounts)) for a persistent opt-in, or append `--dir=project:~/code/myproject` to `tart run` for a one-off. Tart exposes the dir via virtiofs at `/mnt/shared/<name>`.
+- Share a host directory into the VM: list it in `~/.config/tart-stacks/mounts` (see [Per-VM directory mounts](#4-per-vm-directory-mounts)) for a persistent opt-in, or append `--dir=project:/Users/me/code/myproject` to `tart run` for a one-off. Tart exposes the dir via virtiofs at `/mnt/shared/<name>`.
 - Adjust resources: `tart set app-a --memory 16384 --cpu 8 --disk-size 100`. Takes effect on the next `tart run`.
 
 ### Persistent terminal sessions (zellij)
@@ -217,43 +217,6 @@ tart stop app-a && tart delete app-a
 tart-new app-a php
 # fresh, identical, ready in seconds (Tart uses copy-on-write).
 ```
-
-### On-demand credential loading
-
-For tokens you'd otherwise stash in `~/.zshrc` (GitHub, AWS, Stripe, etc.), define a `with-*` wrapper that pulls the secret from your host store and exports it for one command only — tokens never live in the shell env between calls. Drop this in `~/.zshrc` **inside a project VM** (not in `shared/files/zshrc`, which ships to every clone):
-
-```bash
-with-gh() {
-  local token
-  token=$(pass-cli read GITHUB_TOKEN/token 2>/dev/null) || {
-    echo "with-gh: failed to read GITHUB_TOKEN from secret store" >&2
-    return 1
-  }
-  GITHUB_TOKEN="$token" "$@"
-}
-```
-
-One function per credential (`with-aws`, `with-stripe`, etc.); adjust `pass-cli read` to whichever secret-store CLI you use.
-
-### In-VM git commit signing (SSH keys)
-
-SSH **commit signing** inside a VM needs two halves, and the [agent forward](#3-ssh-config-sync) already supplies one: the forwarded agent does the signing on the host, so the private key never enters the VM. The other half is the **public** key file — git reads `user.signingKey` (a `.pub`) to know which identity to sign as, and the agent protocol forwards signing, not key files.
-
-So mount the public key in (see [Per-VM directory mounts](#4-per-vm-directory-mounts)) and point git at it. Public keys aren't secret, so a read-only mount of a pubkey-**only** directory is safe — never mount `~/.ssh` itself, which holds private keys. Stage your `.pub`s into a clean directory, then:
-
-```
-# ~/.config/tart-stacks/mounts
-* host-pubkeys=/Users/me/.local/state/tart-pubkeys:ro   # pubkey-only dir -> /mnt/shared/host-pubkeys
-```
-
-```bash
-# inside the VM (e.g. via the VM's own ~/.zshrc, not shared/files/zshrc):
-git config --global gpg.format ssh
-git config --global user.signingKey /mnt/shared/host-pubkeys/id_ed25519.pub
-git config --global commit.gpgSign true
-```
-
-The mounted `.pub` only names the key; the forwarded agent signs. That agent can be Secretive, 1Password, or any relay you forward (set per-VM in `~/.config/tart-stacks/ssh-agents`) — including one that gates each use behind a prompt, so VM-initiated signing needs a present human while the key stays on the host.
 
 ## Adding a new stack
 

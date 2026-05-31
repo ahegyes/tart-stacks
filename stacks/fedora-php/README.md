@@ -26,7 +26,7 @@ PHP is compiled from source via mise+asdf-php. The `*-devel` packages installed 
 ## Customization
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
-- **Add or drop a PHP extension**: each PHP extension is gated by a corresponding `-devel` package in [`scripts/00-stack.sh`](./scripts/00-stack.sh) (e.g., `libpq-devel` → `pdo_pgsql`, `openldap-devel` → `ldap`). See the comment block above the dnf install in that script for the full mapping. Removing a `-devel` package drops its extension from the next build; adding one enables a new extension.
+- **Add or drop a PHP extension**: each PHP extension is gated by a corresponding `-devel` package in [`scripts/00-stack.sh`](./scripts/00-stack.sh) (e.g., `libpq-devel` → `pdo_pgsql`, `libzip-devel` → `zip`). See the comment block above the dnf install in that script for the full mapping. Removing a `-devel` package drops its extension from the next build; adding one enables a new extension.
 - **Per-project version pin**: drop a `.mise.toml` in the project repo root and commit it:
   ```toml
   [tools]
