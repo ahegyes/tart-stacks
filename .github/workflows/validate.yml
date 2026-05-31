@@ -14,21 +14,22 @@ jobs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
       - uses: actions/checkout@v6
-      - name: build the stack matrix from stacks/fedora-*/
+      - name: build the stack × distro matrix
         id: set
         shell: bash
-        # nullglob → [] on a zero-stack tree; select(length>0) drops the trailing
-        # newline split() leaves; jq -R -s -c → valid single-line JSON for fromJSON.
         run: |
           shopt -s nullglob
-          printf '%s\n' stacks/fedora-*/ \
-            | sed 's|^stacks/||; s|/$||' \
-            | sort \
-            | jq -R -s -c 'split("\n") | map(select(length > 0))' \
+          stacks=(); for d in stacks/*/; do stacks+=("$(basename "$d")"); done
+          distros=(); while IFS= read -r line; do distros+=("$line"); done \
+            < <(grep -vE '^[[:space:]]*(#|$)' shared/distros)
+          jq -nc \
+            --argjson s "$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)" \
+            --argjson d "$(printf '%s\n' "${distros[@]}" | jq -R . | jq -sc .)" \
+            '[$s[] as $stack | $d[] as $distro | {stack:$stack, distro:$distro}]' \
             | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
 
   packer:
-    name: packer validate (${{ matrix.stack }})
+    name: packer validate (${{ matrix.distro }}-${{ matrix.stack }})
     needs: discover
     if: needs.discover.outputs.matrix != '[]'
     # macOS runner: cirruslabs/tart Packer plugin ships macOS-only binaries.
@@ -36,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stack: ${{ fromJSON(needs.discover.outputs.matrix) }}
+        include: ${{ fromJSON(needs.discover.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
       # macos-latest preinstalls packer; no setup-packer action needed.
@@ -48,11 +49,8 @@ jobs:
       # packer validate stat()s file provisioner source paths; stub the pubkey so validate passes.
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub
-      # One parameterized template at the repo root; derive the short token from the fedora-* matrix value.
       - name: packer validate
-        env:
-          STACK: ${{ matrix.stack }}
-        run: packer validate -var stack="${STACK#fedora-}" stack.pkr.hcl
+        run: packer validate -var stack="${{ matrix.stack }}" -var distro="${{ matrix.distro }}" stack.pkr.hcl
 
   shellcheck:
     name: shellcheck
