@@ -43,8 +43,8 @@ chown -R "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.config"
 # under one device — com.apple.virtio-fs.automount — as /mnt/shared/<name>.
 # `nofail` makes a shareless boot a no-op (the device simply isn't attached),
 # so this is harmless on any VM started without --dir.
-# `exec` overrides the noexec that `user` implies, so the installer and `wb` can
-# run from the share directly. nosuid,nodev (also implied by `user`) intentionally
+# `exec` overrides the noexec that `user` implies, so an installer or other
+# tooling on the share can run directly. nosuid,nodev (also implied by `user`) intentionally
 # stay, and per-share read-only is enforced by Tart (--dir=<name>:<path>:ro).
 mkdir -p /mnt/shared
 if ! grep -qF 'com.apple.virtio-fs.automount' /etc/fstab 2>/dev/null; then

@@ -104,10 +104,10 @@ fi
 # ---- net-policy (opt-in; applies uniformly to every VM) --------------------
 # Whitespace-separated tart `--net-*` flags read from a single file; tokens
 # emitted as one CLI arg per line. Comment/blank tolerant (# and empty lines).
-# Empty/absent file = no args (default Tart NAT, unfiltered). Engine writes
-# this file (workbench: ~/.config/tart-stacks/netpolicy with softnet @host-only
-# confinement); tart-stacks just consumes it. Applies at `tart run` start —
-# running VMs need stop+start to pick up changes.
+# Empty/absent file = no args (default Tart NAT, unfiltered). An external
+# producer writes this file; tart-stacks only consumes it (e.g. a softnet
+# @host-only egress confinement). Applies at `tart run` start — running VMs
+# need stop+start to pick up changes.
 NETPOLICY_CONFIG=$(tart_config_path netpolicy)
 
 netpolicy_args() {
@@ -140,7 +140,7 @@ pattern_matches() {
 # line selecting this VM. Line format: `<vm-pattern> [<name>=]<host-path>[:ro]`;
 # the in-VM share name is <name> when given (mounts at /mnt/shared/<name>), else
 # the path's basename. Give an explicit name when two mounts would otherwise
-# collide on basename (e.g. ~/Source/.../workbench vs ~/.config/workbench).
+# collide on basename (e.g. ~/src/app vs ~/.config/app).
 dir_args() {
   local vm="$1"
   [ -f "$MOUNTS_CONFIG" ] || return 0
@@ -225,17 +225,17 @@ fi
 for _ in $(seq 1 30); do
   if nc -z "$IP" 22 >/dev/null 2>&1; then
     # Set the guest hostname to the VM name. Tart does NOT do this (VMs boot as
-    # the base-image default), yet consumers key on it: the per-VM MCP-broker
-    # token lookup (`hostname -s`) and the zsh "which-VM" prompt. Use the guest
+    # the base-image default), yet consumers key on it: a downstream `hostname -s`
+    # lookup and the zsh "which-VM" prompt. Use the guest
     # agent (`tart exec`, over vsock) — NOT ssh — so it never triggers Touch ID.
     # Idempotent + best-effort: an older guest agent / missing hostnamectl no-ops.
     if [ "$(tart exec "$VM" hostname -s 2>/dev/null)" != "$VM" ]; then
       tart exec "$VM" sudo hostnamectl set-hostname "$VM" >/dev/null 2>&1 || true
       # Re-check: a silent miss (old guest agent / no hostnamectl) leaves the base
-      # default, and hostname-keyed lookups (the per-VM MCP-broker token via
+      # default, and hostname-keyed lookups in downstream tooling (via
       # `hostname -s`) then resolve wrong — painful to trace back here. Warn if so.
       [ "$(tart exec "$VM" hostname -s 2>/dev/null)" = "$VM" ] || \
-        echo "$prog: warning: could not set guest hostname to '$VM' — hostname-keyed lookups (e.g. the MCP-broker token) may resolve wrong." >&2
+        echo "$prog: warning: could not set guest hostname to '$VM' — hostname-keyed lookups in downstream tooling may resolve wrong." >&2
     fi
     # Per-VM host keys: clones share the base's baked-in key, so regenerate once
     # (marker-gated, over vsock — no Touch ID). Stage to .new then swap so sshd is
