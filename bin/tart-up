@@ -222,8 +222,14 @@ fi
 # Wait for sshd to accept TCP on :22 — a port probe only, NO authentication.
 # (An authenticated `ssh ... true` here would be a second Touch-ID prompt; the
 # SSH client's own ProxyCommand does the authenticated connect right after.)
+# Re-resolve the IP each iteration and bound the probe (-G 3): the first
+# `tart ip` answer can be a stale lease (e.g. left from a prior softnet/bridged
+# config) that is unreachable — an unbounded `nc -z` would block on it forever,
+# wedging the interactive ssh that gates on this exec. A bounded probe plus
+# re-resolve lets the address self-correct once DHCP settles on the live one.
 for _ in $(seq 1 30); do
-  if nc -z "$IP" 22 >/dev/null 2>&1; then
+  cur=$(tart ip "$VM" 2>/dev/null) && [ -n "$cur" ] && IP="$cur"
+  if nc -z -G 3 "$IP" 22 >/dev/null 2>&1; then
     # Set the guest hostname to the VM name. Tart does NOT do this (VMs boot as
     # the base-image default), yet consumers key on it: a downstream `hostname -s`
     # lookup and the zsh "which-VM" prompt. Use the guest
@@ -247,5 +253,5 @@ for _ in $(seq 1 30); do
   fi
   sleep 1
 done
-echo "$prog: $VM ($IP) did not accept SSH on :22 within 30 s." >&2
+echo "$prog: $VM ($IP) did not accept SSH on :22 in time." >&2
 exit 1
