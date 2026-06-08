@@ -216,8 +216,12 @@ elif [ "$STATE" = "stopped" ]; then
   # the log always reflects the current instance (and after a crash names the
   # exact unhandled vsock case). Dir overridable via TART_LOG_DIR (tests sandbox it).
   run_log_dir="${TART_LOG_DIR:-$HOME/Library/Logs/tart-stacks}"
-  mkdir -p "$run_log_dir"
-  ( "${run_cmd[@]}" >/dev/null 2>"$run_log_dir/${VM}.run.log" & disown )
+  mkdir -p "$run_log_dir" 2>/dev/null
+  run_log="$run_log_dir/${VM}.run.log"
+  # Logging must never be why a VM fails to start (this is the only start path):
+  # if the dir isn't usable, drop stderr rather than fail the redirect.
+  { [ -d "$run_log_dir" ] && [ -w "$run_log_dir" ]; } || run_log="/dev/null"
+  ( "${run_cmd[@]}" >/dev/null 2>"$run_log" & disown )
   STARTED=1
 else
   # Any other state (e.g. another invocation already started it) — don't issue
