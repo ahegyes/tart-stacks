@@ -73,6 +73,8 @@ echo "bin/tart-ssh-sync — forwards parser:"
 out=$(run_sync "")
 assert_contains  "common block uses the tart-* wildcard"       "$out" "Host tart-*"
 assert_contains  "common block sets User admin"                "$out" "User admin"
+assert_contains  "common block sets SSH keepalive interval"    "$out" "ServerAliveInterval 15"
+assert_contains  "common block caps unanswered keepalives"     "$out" "ServerAliveCountMax 3"
 assert_contains  "ProxyCommand resolves the IP at connect time" "$out" "ProxyCommand /bin/sh -c"
 assert_contains  "auto-start Match gates on interactive shell" "$out" "Match host tart-* sessiontype shell exec"
 assert_contains  "auto-start Match invokes tart-up with %n"    "$out" "/tart-up %n"

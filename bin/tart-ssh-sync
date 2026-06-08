@@ -176,6 +176,14 @@ emit() {
   echo "  UserKnownHostsFile ~/.ssh/known_hosts.tart"
   echo "  StrictHostKeyChecking accept-new"
   echo "  LogLevel ERROR"
+  # Session liveness: the host->VM hop has no keepalive of its own, and a Tart
+  # crash (an Apple Virtualization.framework vsock trap) drops every VM session
+  # at once. Probing a quiet link makes a dead VM exit fast and clean (~45s =
+  # 3x15s) instead of lingering half-open and erroring only as "broken pipe" on
+  # the next write. The VM image sets no ClientAliveInterval, so the client owns
+  # this.
+  echo "  ServerAliveInterval 15"
+  echo "  ServerAliveCountMax 3"
   # Live IP resolution for every client. %n (the alias) not %h: a client that
   # sets `-o HostName=<ip>` would poison %h, but %n is always the typed alias.
   # Passed as $1 (not interpolated into the script body); a stopped VM yields no
