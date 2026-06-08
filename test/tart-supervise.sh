@@ -85,16 +85,22 @@ assert_absent "up → no tart-up"   "$calls" "tart-up"
 run_sup 0 --once tart-app-a >/dev/null 2>&1
 assert_contains "prefix form normalized to bare name" "$(cat "$CALLS")" "tart-up app-a"
 
-# liveness is flag-order independent: options-before-name (the form `tart run
-# --help` documents) still counts as up, so no needless restart.
+# canonical shape (vm right after run, then flags/mounts) counts as up — no restart.
 : > "$CALLS"
-PATH="$MOCKBIN:$PATH" MOCK_PS_LINE="/o/tart run --no-graphics app-a" \
+PATH="$MOCKBIN:$PATH" MOCK_PS_LINE="/o/MacOS/tart run app-a --no-graphics --dir=/x:ro" \
   TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" bash "$BIN/tart-supervise" --once app-a >/dev/null 2>&1
-assert_absent "liveness: option-before-name counts as up (no restart)" "$(cat "$CALLS")" "tart-up"
+assert_absent "liveness: canonical shape is up (no restart)" "$(cat "$CALLS")" "tart-up"
 
-# liveness is whole-argument: a different VM whose name extends ours is NOT us.
+# a token inside ANOTHER VM's spaced --dir path must NOT read as our VM being up
+# (anchoring <vm> to the post-run position prevents that false positive).
 : > "$CALLS"
-PATH="$MOCKBIN:$PATH" MOCK_PS_LINE="/o/tart run app-a-2 --no-graphics" \
+PATH="$MOCKBIN:$PATH" MOCK_PS_LINE="/o/MacOS/tart run appfoo --dir=/x/Project app-a Data:ro" \
+  TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" bash "$BIN/tart-supervise" --once app-a >/dev/null 2>&1
+assert_contains "liveness: app-a inside another VM's --dir is not up → restart" "$(cat "$CALLS")" "tart-up app-a"
+
+# a different VM whose name extends ours is not us (whole-argument match).
+: > "$CALLS"
+PATH="$MOCKBIN:$PATH" MOCK_PS_LINE="/o/MacOS/tart run app-a-2 --no-graphics" \
   TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" bash "$BIN/tart-supervise" --once app-a >/dev/null 2>&1
 assert_contains "liveness: app-a-2 is not app-a → restart fires" "$(cat "$CALLS")" "tart-up app-a"
 

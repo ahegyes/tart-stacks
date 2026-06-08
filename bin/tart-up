@@ -219,8 +219,9 @@ elif [ "$STATE" = "stopped" ]; then
   mkdir -p "$run_log_dir" 2>/dev/null
   run_log="$run_log_dir/${VM}.run.log"
   # Logging must never be why a VM fails to start (this is the only start path):
-  # if the dir isn't usable, drop stderr rather than fail the redirect.
-  { [ -d "$run_log_dir" ] && [ -w "$run_log_dir" ]; } || run_log="/dev/null"
+  # probe the actual target — if the dir or the file itself can't be opened for
+  # writing, drop stderr rather than let the redirect fail the launch.
+  : >>"$run_log" 2>/dev/null || run_log="/dev/null"
   ( "${run_cmd[@]}" >/dev/null 2>"$run_log" & disown )
   STARTED=1
 else

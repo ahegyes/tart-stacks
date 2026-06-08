@@ -61,15 +61,21 @@ EOF
 
 label_for() { printf 'com.tart-stacks.supervise.%s' "$1"; }
 
-# vm_alive <vm> — 0 if a `tart run` process for this VM exists. Inspects each
-# process's argument list for <vm> as a WHOLE argument, so it holds regardless of
-# flag order (`tart run <vm> --x` and the documented `tart run [<options>] <vm>`
-# both count) and never confuses <vm> with a <vm>-suffixed name. The process —
-# not `tart list` state — is the liveness signal: a crash removes the process but
-# can leave the listed state wedged at "running".
+# vm_alive <vm> — 0 if a `tart run <vm>` process exists. Matches <vm> as the
+# argument immediately after `tart run` — the shape tart-up always launches
+# (`tart run <vm> --no-graphics ...`). Anchoring to that position, rather than
+# scanning every argument, is what stops a token inside a LATER argument (e.g.
+# some other VM's `--dir=/path with <vm> in it`) from being mistaken for this VM
+# running. The process — not `tart list` state — is the signal: a crash removes
+# the process but can leave the listed state wedged at "running". (A manual
+# option-first `tart run --opt <vm>` reads as down and gets restarted into the
+# canonical shape — fine, since tart-up is the only launcher in play.)
 vm_alive() {
   ps -axo args= 2>/dev/null | awk -v vm="$1" '
-    /(^|\/)tart run( |$)/ { for (i = 1; i <= NF; i++) if ($i == vm) found = 1 }
+    {
+      for (i = 1; i < NF; i++)
+        if ($i ~ /(^|\/)tart$/ && $(i + 1) == "run" && $(i + 2) == vm) found = 1
+    }
     END { exit(found ? 0 : 1) }
   '
 }
