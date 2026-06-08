@@ -61,12 +61,18 @@ EOF
 
 label_for() { printf 'com.tart-stacks.supervise.%s' "$1"; }
 
-# vm_alive <vm> — 0 if a `tart run <vm>` process exists. The trailing space is
-# load-bearing: tart-up always runs `tart run <vm> --no-graphics ...`, so the
-# name is followed by a space, and matching it keeps a VM named `foo` from
-# matching a running `foo-bar`. Plain substring (no regex metacharacters) so it
-# behaves the same whichever regex flavor pgrep uses.
-vm_alive() { pgrep -f "tart run $1 " >/dev/null 2>&1; }
+# vm_alive <vm> — 0 if a `tart run` process for this VM exists. Inspects each
+# process's argument list for <vm> as a WHOLE argument, so it holds regardless of
+# flag order (`tart run <vm> --x` and the documented `tart run [<options>] <vm>`
+# both count) and never confuses <vm> with a <vm>-suffixed name. The process —
+# not `tart list` state — is the liveness signal: a crash removes the process but
+# can leave the listed state wedged at "running".
+vm_alive() {
+  ps -axo args= 2>/dev/null | awk -v vm="$1" '
+    /(^|\/)tart run( |$)/ { for (i = 1; i <= NF; i++) if ($i == vm) found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
 
 # ensure_up <vm> — if the VM's process is gone, clear any wedged state and start
 # it. tart-up owns start + provision + readiness; this adds only the crash-state
@@ -74,8 +80,12 @@ vm_alive() { pgrep -f "tart run $1 " >/dev/null 2>&1; }
 ensure_up() {
   local vm="$1"
   vm_alive "$vm" && return 0
-  log "'$vm' is down — clearing state and starting"
-  tart stop "$vm" >/dev/null 2>&1 || true   # no-op if already stopped; clears a wedged crash state
+  log "'$vm' appears down — restarting"
+  # Re-check liveness right before stopping: an interactive login may have raced
+  # to start the VM in the gap, and we must not tear that down. `tart stop` on a
+  # genuinely-dead VM only clears the wedged "running" state a crash leaves.
+  vm_alive "$vm" && return 0
+  tart stop "$vm" >/dev/null 2>&1 || true
   tart-up "$vm"
 }
 
@@ -86,14 +96,18 @@ supervise_loop() {
     up_start=$(date +%s)
     while vm_alive "$vm"; do sleep "$POLL"; done
     up=$(( $(date +%s) - up_start ))
-    if [ "$up" -ge "$HEALTHY" ]; then
-      backoff="$BACKOFF_BASE"
-    else
+    # A VM that stayed up past HEALTHY was stable — restart promptly (reset to
+    # base). A fast failure waits the current backoff now, then escalates it for
+    # next time, so a crash loop backs off instead of hammering. (Reset before
+    # the sleep / escalate after it, so the first fast restart waits BACKOFF_BASE,
+    # not double it.)
+    [ "$up" -ge "$HEALTHY" ] && backoff="$BACKOFF_BASE"
+    log "'$vm' exited after ${up}s — restarting in ${backoff}s"
+    sleep "$backoff"
+    if [ "$up" -lt "$HEALTHY" ]; then
       backoff=$(( backoff * 2 ))
       [ "$backoff" -gt "$BACKOFF_CAP" ] && backoff="$BACKOFF_CAP"
     fi
-    log "'$vm' exited after ${up}s — restarting in ${backoff}s"
-    sleep "$backoff"
   done
 }
 
@@ -192,10 +206,10 @@ case "${1:-}" in
   --uninstall) [ $# -eq 2 ] || { usage; exit 64; }; uninstall_agent "${2#tart-}" ;;
   --status)    [ $# -le 2 ] || { usage; exit 64; }; status_agents   "${2:-}" ;;
   --once)      [ $# -eq 2 ] || { usage; exit 64; }
-               tart_need_cmd tart; tart_need_cmd tart-up; tart_need_cmd pgrep
+               tart_need_cmd tart; tart_need_cmd tart-up
                ensure_up "${2#tart-}" ;;
   -*|'')       usage; exit 64 ;;
   *)           [ $# -eq 1 ] || { usage; exit 64; }
-               tart_need_cmd tart; tart_need_cmd tart-up; tart_need_cmd pgrep
+               tart_need_cmd tart; tart_need_cmd tart-up
                supervise_loop "${1#tart-}" ;;
 esac

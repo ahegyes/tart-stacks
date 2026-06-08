@@ -242,16 +242,16 @@ tart-new app-a php fedora
 
 ### Keep a VM alive across crashes
 
-A `tart run` process can die abruptly — most often when Apple's
-Virtualization.framework hits an internal trap on a guest-vsock connect and
-aborts the whole process. When it does, every SSH session to that VM drops at
+A `tart run` process can die abruptly — for example when Apple's
+Virtualization.framework traps on a guest-vsock connect and aborts the whole
+process (the failure observed on this host). When it does, every SSH session to that VM drops at
 once (surfacing as a "broken pipe" the next time you type), any host service the
 VM reached over a forwarded port goes with it, and Tart can leave the VM wedged
 in a "running" state that a plain restart refuses until `tart stop` clears it.
 This is an upstream bug, not something tart-stacks can fix — but the generated
 SSH config adds keepalives so a dead VM disconnects in ~45s instead of hanging,
 and `tart run`'s stderr is captured to `~/Library/Logs/tart-stacks/<name>.run.log`
-(the crash's `fixme:` line lands there; a full report lands in
+(a crash's `fixme:` line is captured there; a full report lands in
 `~/Library/Logs/DiagnosticReports/tart-*.ips`).
 
 To recover automatically, install a per-VM supervisor:
@@ -268,7 +268,9 @@ re-provisions, and waits for sshd). Restarts back off if a VM keeps dying
 quickly. A supervised VM is *kept* running — a manual `tart stop` is undone
 within a few seconds, so `--uninstall` is how you take one down. Its log is
 `~/Library/Logs/tart-stacks/supervise.<name>.log`. Run it in the foreground to
-watch it first: `tart-supervise <name>`.
+watch it first: `tart-supervise <name>`. The LaunchAgent runs with default
+config paths (`~/.config/tart-stacks`); if you relocate config via
+`TART_STACKS_CONFIG_DIR`, set it in the generated plist too.
 
 > **First time:** the LaunchAgent runs `tart run` in your GUI login session.
 > Smoke-test one VM — install it, kill that VM's `tart run`, and confirm the

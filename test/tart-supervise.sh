@@ -23,9 +23,10 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
 CALLS="$WORK/calls"; export CALLS
 
-# Mocks: every call is logged to $CALLS. `pgrep` reports liveness from $MOCK_ALIVE
-# (1 = alive). `tart-up`, `tart`, `launchctl` just record and succeed. Bodies are
-# quoted heredocs — their $* / $CALLS are literal, expanded when the mock runs.
+# Mocks: every call is logged to $CALLS. `ps` drives liveness — MOCK_PS_LINE sets
+# the `tart run` cmdline vm_alive's awk scans, else MOCK_ALIVE=1 emits a standard
+# one. `tart-up`, `tart`, `launchctl` just record and succeed. Bodies are quoted
+# heredocs — their $* / $CALLS are literal, expanded when the mock runs.
 cat > "$MOCKBIN/tart"      <<'M'
 #!/usr/bin/env bash
 echo "tart $*" >> "$CALLS"
@@ -41,11 +42,17 @@ cat > "$MOCKBIN/launchctl" <<'M'
 echo "launchctl $*" >> "$CALLS"
 exit 0
 M
-cat > "$MOCKBIN/pgrep"     <<'M'
+cat > "$MOCKBIN/ps"        <<'M'
 #!/usr/bin/env bash
-if [ "${MOCK_ALIVE:-0}" = "1" ]; then exit 0; else exit 1; fi
+# vm_alive runs `ps -axo args=`; emit a `tart run` cmdline for it to scan.
+if [ -n "${MOCK_PS_LINE:-}" ]; then
+  printf '%s\n' "$MOCK_PS_LINE"
+elif [ "${MOCK_ALIVE:-0}" = "1" ]; then
+  printf '%s\n' "/opt/tart.app/Contents/MacOS/tart run ${MOCK_VM:-app-a} --no-graphics"
+fi
+exit 0
 M
-chmod +x "$MOCKBIN"/tart "$MOCKBIN"/tart-up "$MOCKBIN"/launchctl "$MOCKBIN"/pgrep
+chmod +x "$MOCKBIN"/tart "$MOCKBIN"/tart-up "$MOCKBIN"/launchctl "$MOCKBIN"/ps
 
 LA="$WORK/la"; LOGS="$WORK/logs"
 run_sup() { # <MOCK_ALIVE> <args...>
@@ -77,6 +84,19 @@ assert_absent "up → no tart-up"   "$calls" "tart-up"
 # prefix form is accepted and normalized to the bare name
 run_sup 0 --once tart-app-a >/dev/null 2>&1
 assert_contains "prefix form normalized to bare name" "$(cat "$CALLS")" "tart-up app-a"
+
+# liveness is flag-order independent: options-before-name (the form `tart run
+# --help` documents) still counts as up, so no needless restart.
+: > "$CALLS"
+PATH="$MOCKBIN:$PATH" MOCK_PS_LINE="/o/tart run --no-graphics app-a" \
+  TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" bash "$BIN/tart-supervise" --once app-a >/dev/null 2>&1
+assert_absent "liveness: option-before-name counts as up (no restart)" "$(cat "$CALLS")" "tart-up"
+
+# liveness is whole-argument: a different VM whose name extends ours is NOT us.
+: > "$CALLS"
+PATH="$MOCKBIN:$PATH" MOCK_PS_LINE="/o/tart run app-a-2 --no-graphics" \
+  TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" bash "$BIN/tart-supervise" --once app-a >/dev/null 2>&1
+assert_contains "liveness: app-a-2 is not app-a → restart fires" "$(cat "$CALLS")" "tart-up app-a"
 
 # --install writes a LaunchAgent and loads it
 run_sup 0 --install app-a >/dev/null 2>&1

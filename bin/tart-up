@@ -189,7 +189,10 @@ done < <(dir_args "${VM#tart-}")
 # boot this script starts: it is once-per-boot work, and each `tart exec` opens
 # a guest-vsock connection, which can trip an Apple Virtualization.framework trap
 # that aborts the whole VM. An already-running VM was provisioned on the boot
-# that started it, so re-probing it every login is waste and risk.
+# that started it, so re-probing it every login is waste and risk. (A clone's
+# first boot goes through tart-up in the normal flow — tart-new leaves it
+# stopped; the first ssh/tart-up starts it. A clone first-started by a bare
+# `tart run` would miss host-key regen until its next tart-up-driven start.)
 STARTED=0
 
 if [ "$STATE" = "running" ]; then
