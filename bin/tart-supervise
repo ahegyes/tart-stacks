@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# tart-supervise — keep a Tart VM running across abrupt exits.
+#
+# A `tart run` process can die without warning — most visibly when Apple's
+# Virtualization.framework hits an internal trap on a guest-vsock connect and
+# aborts the whole process. The VM vanishes, every SSH session to it breaks at
+# once, and Tart can leave the VM wedged in a "running" state that a plain
+# `tart run` refuses to restart until `tart stop` clears it. This watches one VM
+# and, whenever its `tart run` process is gone, clears the wedged state and
+# brings it back via tart-up (which also re-provisions and waits for sshd).
+#
+# Liveness is the presence of the `tart run <vm>` process, NOT `tart list`
+# state: a crash can leave the listed state at "running" while the process is
+# dead, so polling the state alone would never notice.
+#
+# Run it in the foreground to supervise now:     tart-supervise <vm>
+# Or install a per-VM LaunchAgent that does it:  tart-supervise --install <vm>
+#
+# A supervised VM is kept up: a manual `tart stop` is undone within one poll.
+# To stop one for good, `--uninstall` it first.
+#
+# Restarts back off (BACKOFF_BASE, doubling to BACKOFF_CAP) while a VM keeps
+# dying quickly, and reset once it has stayed up past HEALTHY seconds.
+
+set -uo pipefail
+
+prog="${0##*/}"
+
+# Resolve this script's real dir (following the PATH symlink that setup installs)
+# so it can source bin/lib and bake its own real path into the LaunchAgent.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+SELF="$SCRIPT_DIR/$prog"
+# shellcheck source=bin/lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+
+# Tunables (env-overridable; defaults suit a desktop host).
+POLL="${TART_SUPERVISE_POLL:-5}"                 # liveness poll interval, seconds
+BACKOFF_BASE="${TART_SUPERVISE_BACKOFF_BASE:-5}"
+BACKOFF_CAP="${TART_SUPERVISE_BACKOFF_CAP:-60}"
+HEALTHY="${TART_SUPERVISE_HEALTHY:-60}"          # uptime past which a restart counts as recovered
+LAUNCHAGENTS_DIR="${TART_LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
+LOG_DIR="${TART_LOG_DIR:-$HOME/Library/Logs/tart-stacks}"
+
+log() { printf '%s %s: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$prog" "$*" >&2; }
+
+usage() {
+  cat >&2 <<EOF
+usage: $prog <vm>                supervise <vm> in the foreground (loops)
+       $prog --once <vm>         bring <vm> up once if it is down, then exit
+       $prog --install <vm>      install + load a LaunchAgent that supervises <vm>
+       $prog --uninstall <vm>    unload + remove <vm>'s LaunchAgent
+       $prog --status [<vm>]     show supervised VMs and their LaunchAgent state
+EOF
+}
+
+label_for() { printf 'com.tart-stacks.supervise.%s' "$1"; }
+
+# vm_alive <vm> — 0 if a `tart run <vm>` process exists. The trailing space is
+# load-bearing: tart-up always runs `tart run <vm> --no-graphics ...`, so the
+# name is followed by a space, and matching it keeps a VM named `foo` from
+# matching a running `foo-bar`. Plain substring (no regex metacharacters) so it
+# behaves the same whichever regex flavor pgrep uses.
+vm_alive() { pgrep -f "tart run $1 " >/dev/null 2>&1; }
+
+# ensure_up <vm> — if the VM's process is gone, clear any wedged state and start
+# it. tart-up owns start + provision + readiness; this adds only the crash-state
+# cleanup that restarting after an abnormal exit needs.
+ensure_up() {
+  local vm="$1"
+  vm_alive "$vm" && return 0
+  log "'$vm' is down — clearing state and starting"
+  tart stop "$vm" >/dev/null 2>&1 || true   # no-op if already stopped; clears a wedged crash state
+  tart-up "$vm"
+}
+
+supervise_loop() {
+  local vm="$1" backoff="$BACKOFF_BASE" up_start up
+  while :; do
+    ensure_up "$vm" || log "'$vm' did not come up; will retry"
+    up_start=$(date +%s)
+    while vm_alive "$vm"; do sleep "$POLL"; done
+    up=$(( $(date +%s) - up_start ))
+    if [ "$up" -ge "$HEALTHY" ]; then
+      backoff="$BACKOFF_BASE"
+    else
+      backoff=$(( backoff * 2 ))
+      [ "$backoff" -gt "$BACKOFF_CAP" ] && backoff="$BACKOFF_CAP"
+    fi
+    log "'$vm' exited after ${up}s — restarting in ${backoff}s"
+    sleep "$backoff"
+  done
+}
+
+render_plist() { # <vm> <self> <path-env> <logfile>
+  local vm="$1" self="$2" path_env="$3" logfile="$4"
+  # Aqua session: tart run needs the logged-in GUI context for vmnet + the
+  # Virtualization entitlement. KeepAlive restarts the supervisor itself if it
+  # ever dies; ThrottleInterval bounds a respawn storm if it dies on launch.
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$(label_for "$vm")</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$self</string>
+    <string>$vm</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>$path_env</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>StandardOutPath</key><string>$logfile</string>
+  <key>StandardErrorPath</key><string>$logfile</string>
+</dict>
+</plist>
+EOF
+}
+
+install_agent() {
+  local vm="$1"
+  tart_need_cmd launchctl
+  tart_need_cmd tart   "Install: brew install cirruslabs/cli/tart"
+  tart_need_cmd tart-up "tart-up must be on PATH (run script/setup)."
+  local label plist path_env logfile tart_dir tartup_dir
+  label=$(label_for "$vm")
+  plist="$LAUNCHAGENTS_DIR/$label.plist"
+  tart_dir=$(dirname "$(command -v tart)")
+  tartup_dir=$(dirname "$(command -v tart-up)")
+  path_env="$tart_dir:$tartup_dir:/usr/bin:/bin"
+  logfile="$LOG_DIR/supervise.$vm.log"
+  mkdir -p "$LAUNCHAGENTS_DIR" "$LOG_DIR"
+  render_plist "$vm" "$SELF" "$path_env" "$logfile" > "$plist"
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true   # drop any prior instance first
+  if launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null; then
+    log "installed and loaded $label"
+  else
+    log "wrote $plist but 'launchctl bootstrap' failed — load it with: launchctl bootstrap gui/$(id -u) \"$plist\""
+    return 1
+  fi
+}
+
+uninstall_agent() {
+  local vm="$1"
+  tart_need_cmd launchctl
+  local label plist
+  label=$(label_for "$vm")
+  plist="$LAUNCHAGENTS_DIR/$label.plist"
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  rm -f "$plist"
+  log "removed $label"
+}
+
+status_agents() {
+  local want="${1:-}"; want="${want#tart-}"
+  local found=0 plist label vm
+  for plist in "$LAUNCHAGENTS_DIR"/com.tart-stacks.supervise.*.plist; do
+    [ -e "$plist" ] || continue
+    label="${plist##*/}"; label="${label%.plist}"
+    vm="${label#com.tart-stacks.supervise.}"
+    [ -n "$want" ] && [ "$want" != "$vm" ] && continue
+    found=1
+    if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+      printf '%-24s loaded\n' "$vm"
+    else
+      printf '%-24s installed (not loaded)\n' "$vm"
+    fi
+  done
+  if [ "$found" -ne 1 ]; then
+    if [ -n "$want" ]; then
+      echo "no supervised VM matching '$want'"
+    else
+      echo "no supervised VMs"
+    fi
+  fi
+}
+
+case "${1:-}" in
+  -h|--help)   usage; exit 0 ;;
+  --install)   [ $# -eq 2 ] || { usage; exit 64; }; install_agent   "${2#tart-}" ;;
+  --uninstall) [ $# -eq 2 ] || { usage; exit 64; }; uninstall_agent "${2#tart-}" ;;
+  --status)    [ $# -le 2 ] || { usage; exit 64; }; status_agents   "${2:-}" ;;
+  --once)      [ $# -eq 2 ] || { usage; exit 64; }
+               tart_need_cmd tart; tart_need_cmd tart-up; tart_need_cmd pgrep
+               ensure_up "${2#tart-}" ;;
+  -*|'')       usage; exit 64 ;;
+  *)           [ $# -eq 1 ] || { usage; exit 64; }
+               tart_need_cmd tart; tart_need_cmd tart-up; tart_need_cmd pgrep
+               supervise_loop "${1#tart-}" ;;
+esac

@@ -11,7 +11,8 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 ├── bin/
 │   ├── tart-new                        # Creates a project VM by cloning a stack base image, with the validation `tart clone` lacks (stack exists, image built, no name collision) + `--cpu`/`--memory`/`--disk-size` pass-through
 │   ├── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms as a `tart-*` wildcard (per-connect IP resolution + interactive-login auto-start hook); aliases use the `tart-<name>` prefix
-│   └── tart-up                         # Starts a stopped VM (+ mounts) and waits for SSH on :22; the hook the auto-start Match line fires on an interactive `ssh tart-<name>` (also runnable directly to pre-warm). Accepts bare or `tart-`-prefixed name
+│   ├── tart-up                         # Starts a stopped VM (+ mounts) and waits for SSH on :22; the hook the auto-start Match line fires on an interactive `ssh tart-<name>` (also runnable directly to pre-warm). Accepts bare or `tart-`-prefixed name
+│   └── tart-supervise                  # Keeps a VM running across abrupt `tart run` exits (e.g. an Apple Virtualization.framework vsock trap): a per-VM LaunchAgent that clears the wedged state and restarts via tart-up. --install/--uninstall/--status/--once
 ├── script/
 │   ├── setup                           # Host install run by `make setup` (symlinks commands, zsh completion, idempotent SSH Include + catch-all check, forwards + mounts scaffold)
 │   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
@@ -20,6 +21,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 ├── test/
 │   ├── tart-new.sh                     # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
 │   ├── tart-up.sh                      # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc)
+│   ├── tart-supervise.sh               # Characterization tests for tart-supervise (--once restart cycle; install/uninstall/status LaunchAgent wiring; mocks tart/tart-up/pgrep/launchctl)
 │   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   └── distro-lib.sh                   # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt)
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build

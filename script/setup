@@ -62,10 +62,11 @@ echo "setup: installing host tools from $REPO_DIR"
 
 # 1. Symlink the commands onto PATH (replaces a prior copy, if any).
 mkdir -p "$LOCAL_BIN"
-ln -sf "$BIN_DIR/tart-up"       "$LOCAL_BIN/tart-up"
-ln -sf "$BIN_DIR/tart-ssh-sync" "$LOCAL_BIN/tart-ssh-sync"
-ln -sf "$BIN_DIR/tart-new"      "$LOCAL_BIN/tart-new"
-info "linked tart-up, tart-ssh-sync, tart-new -> $LOCAL_BIN"
+ln -sf "$BIN_DIR/tart-up"        "$LOCAL_BIN/tart-up"
+ln -sf "$BIN_DIR/tart-ssh-sync"  "$LOCAL_BIN/tart-ssh-sync"
+ln -sf "$BIN_DIR/tart-new"       "$LOCAL_BIN/tart-new"
+ln -sf "$BIN_DIR/tart-supervise" "$LOCAL_BIN/tart-supervise"
+info "linked tart-up, tart-ssh-sync, tart-new, tart-supervise -> $LOCAL_BIN"
 case ":$PATH:" in
   *":$LOCAL_BIN:"*) ;;
   *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;

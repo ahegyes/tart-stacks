@@ -240,6 +240,47 @@ tart-new app-a php fedora
 # fresh, identical, ready in seconds (Tart uses copy-on-write).
 ```
 
+### Keep a VM alive across crashes
+
+A `tart run` process can die abruptly — most often when Apple's
+Virtualization.framework hits an internal trap on a guest-vsock connect and
+aborts the whole process. When it does, every SSH session to that VM drops at
+once (surfacing as a "broken pipe" the next time you type), any host service the
+VM reached over a forwarded port goes with it, and Tart can leave the VM wedged
+in a "running" state that a plain restart refuses until `tart stop` clears it.
+This is an upstream bug, not something tart-stacks can fix — but the generated
+SSH config adds keepalives so a dead VM disconnects in ~45s instead of hanging,
+and `tart run`'s stderr is captured to `~/Library/Logs/tart-stacks/<name>.run.log`
+(the crash's `fixme:` line lands there; a full report lands in
+`~/Library/Logs/DiagnosticReports/tart-*.ips`).
+
+To recover automatically, install a per-VM supervisor:
+
+```sh
+tart-supervise --install <name>    # LaunchAgent: restart the VM whenever its process dies
+tart-supervise --status            # list supervised VMs and whether they're loaded
+tart-supervise --uninstall <name>  # stop supervising (also how you take a supervised VM down)
+```
+
+The supervisor watches for the `tart run <name>` process; when it is gone it runs
+`tart stop` (clearing a wedged crash state) then `tart-up` (which restarts,
+re-provisions, and waits for sshd). Restarts back off if a VM keeps dying
+quickly. A supervised VM is *kept* running — a manual `tart stop` is undone
+within a few seconds, so `--uninstall` is how you take one down. Its log is
+`~/Library/Logs/tart-stacks/supervise.<name>.log`. Run it in the foreground to
+watch it first: `tart-supervise <name>`.
+
+> **First time:** the LaunchAgent runs `tart run` in your GUI login session.
+> Smoke-test one VM — install it, kill that VM's `tart run`, and confirm the
+> supervisor log shows it come back — before relying on it. `--uninstall` rolls
+> it back cleanly.
+
+> **Fewer Touch ID prompts:** each new SSH login asks Secretive to sign with the
+> `tart-vm` key, so frequent restarts mean frequent prompts. If that is noise,
+> mark the `tart-vm` key in Secretive as not requiring authentication — it is a
+> low-value key that only logs into local VMs, and this does not change how your
+> real keys (forwarded into the VM by a separate agent) are gated.
+
 ## Adding a new stack
 
 1. `make scaffold STACK=<name>` — stamps `stacks/<name>/` from `templates/stack/`: a generic `00-stack.sh` (reads `packages.<family>` for the build distro), a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, `packages.dnf`, `packages.apt`, and a `README.md`. One parameterized root `stack.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
@@ -260,6 +301,7 @@ tart-new app-a php fedora
 - **`packer init` fails with "no plugins for github.com/cirruslabs/tart"** → upgrade Packer (`brew upgrade hashicorp/tap/packer`); the tart plugin requires Packer 1.7+.
 - **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip <distro>-base` (e.g. `tart ip fedora-base`). If blank, the VM didn't get DHCP — `tart stop <distro>-base; tart delete <distro>-base; make bootstrap DISTRO=<distro>` to start over.
 - **`ssh tart-<name>` triggers Touch ID more than once** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below a `Host *` catch-all), so ssh falls back to defaults and offers every key in Secretive's agent — one Touch ID prompt per key tried. The generated config pins just the Tart VM key (`IdentityFile` + `IdentitiesOnly yes`), so a match is what collapses it to a single prompt. Re-run `make setup` — it adds the `Include` line and warns if an existing one is misplaced. See [Setup §2](#2-install-the-host-tools).
+- **All SSH sessions to a VM drop at once / "broken pipe", and the VM loses forwarded host services** → the VM's `tart run` process crashed (often an Apple Virtualization.framework trap; check `~/Library/Logs/tart-stacks/<name>.run.log` and `~/Library/Logs/DiagnosticReports/tart-*.ips`). Bring it back with `tart stop <name>` then `ssh tart-<name>`, or have it restart itself — see [Keep a VM alive across crashes](#keep-a-vm-alive-across-crashes).
 
 Stack-specific troubleshooting lives in each stack's README.
 
