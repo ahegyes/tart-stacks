@@ -34,6 +34,7 @@ case "$1" in
   list) printf '[{"Name":"%s","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
   ip)   printf '%s\n' "${MOCK_IP:-10.0.0.9}" ;;
   exec) shift 2; [ "$*" = "hostname -s" ] && printf '%s\n' "${MOCK_HOSTNAME:-app-a}"; exit 0 ;;
+  run)  echo "MOCK_TART_RUN_STDERR_MARKER" >&2; exit 0 ;;  # stderr → tart-up's per-VM log
   *)    exit 0 ;;
 esac
 TART
@@ -44,7 +45,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCKBIN/nc"; chmod +x "$MOCKBIN/nc"  
 runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <vm-arg>
   : > "$CALLS"
   PATH="$MOCKBIN:$PATH" MOCK_VM=app-a MOCK_STATE="$1" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$2" \
-    TART_NETPOLICY="$3" TART_MOUNTS="$4" \
+    TART_NETPOLICY="$3" TART_MOUNTS="$4" TART_LOG_DIR="$WORK/logs" \
     bash "$BIN/tart-up" "$5" >/dev/null 2>&1
   # The stopped-VM `tart run` is backgrounded (& disown); give the mock up to ~2s to log it.
   local _; for _ in $(seq 1 20); do grep -q 'tart run' "$CALLS" 2>/dev/null && break; sleep 0.1; done
@@ -72,10 +73,22 @@ calls="$(cat "$CALLS")"
 assert_contains "stopped → tart run --no-graphics"      "$calls" "tart run app-a --no-graphics"
 assert_contains "stopped → run carries netpolicy flag"  "$calls" "--net-softnet=@host-only"
 assert_contains "stopped → run carries dir-mount flag"  "$calls" "--dir=data:/srv/data:ro"
+assert_contains "stopped → provisions over vsock (hostname probe)" "$calls" "hostname -s"
 
-# running → no `tart run` issued
+# tart's own stderr is captured to a per-VM log (truncate-on-start) so a crash's
+# `fixme:` line survives; the mock `tart run` emits a stderr marker.
+runlog="$WORK/logs/app-a.run.log"
+for _ in $(seq 1 20); do [ -s "$runlog" ] && break; sleep 0.1; done
+assert_contains "stopped → tart run stderr captured to per-VM log" "$(cat "$runlog" 2>/dev/null)" "MOCK_TART_RUN_STDERR_MARKER"
+
+# running → no `tart run` issued, AND no guest-agent provisioning: an already-up
+# VM was provisioned on the boot that started it, so re-probing its hostname /
+# host-keys every login is pure waste — and each `tart exec` is a guest-vsock
+# connect, the exact call that trips the Apple Virtualization.framework trap and
+# crashes the VM. Skipping it for already-running VMs removes the recurring hit.
 runup running app-a "$EMPTY" "$EMPTY" app-a
 assert_absent "running → no tart run issued" "$(cat "$CALLS")" "tart run"
+assert_absent "running → no provisioning vsock hit" "$(cat "$CALLS")" "hostname -s"
 
 # hostname branch (#6): mismatch sets it; an already-correct hostname leaves it
 runup stopped wrong-name "$EMPTY" "$EMPTY" app-a
