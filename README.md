@@ -66,7 +66,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 
 ### 1. Create a Secure Enclave SSH key for Mac → VM auth
 
-Every stack's Packer build authorizes a Secure-Enclave-backed SSH key for `admin@<vm>` and disables password auth — one Touch-ID-gated key serves every VM cloned from any stack, and the private key never leaves the Enclave.
+Every stack's Packer build authorizes a Secure-Enclave-backed SSH key for `admin@<vm>` and disables password auth — one key serves every VM cloned from any stack, and the private key never leaves the Enclave. Whether that key prompts for Touch ID on use is your call (see below).
 
 Use [Secretive](https://github.com/maxgoedjen/secretive) (macOS 13+):
 
@@ -74,7 +74,7 @@ Use [Secretive](https://github.com/maxgoedjen/secretive) (macOS 13+):
 brew install --cask secretive
 ```
 
-Open Secretive, create a key (**+**), name it `Tart VM`, and set it to require Touch ID. Then point `~/.ssh/tart-vm.pub` at it. Secretive files keys under opaque hash names, identified only by their comment — the name you gave, with spaces rendered as hyphens, so `Tart VM` becomes the `Tart-VM` the grep below matches. **Symlink** rather than copy, so Secretive stays the single source of truth and `~/.ssh` holds no duplicate. Confirm exactly one key matches, then link it:
+Open Secretive, create a key (**+**), and name it `Tart VM`. **Choose its authentication mode deliberately — that's a threat-model call, covered just below.** Then point `~/.ssh/tart-vm.pub` at it. Secretive files keys under opaque hash names, identified only by their comment — the name you gave, with spaces rendered as hyphens, so `Tart VM` becomes the `Tart-VM` the grep below matches. **Symlink** rather than copy, so Secretive stays the single source of truth and `~/.ssh` holds no duplicate. Confirm exactly one key matches, then link it:
 
 ```bash
 grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub   # expect ONE file
@@ -83,7 +83,19 @@ ln -sf "$(grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.Secret
 
 If the first command lists **more than one** file, you have duplicate-named keys — tell them apart with `ssh-keygen -lf <file>` and symlink the specific one by hand. (An extra key in Secretive is harmless: `IdentitiesOnly yes` in the generated config means SSH only ever offers the pinned `~/.ssh/tart-vm.pub`.)
 
-`tart-ssh-sync` wires every VM to authenticate through Secretive's agent socket (`IdentityAgent`) with `IdentityFile ~/.ssh/tart-vm.pub` pinned under `IdentitiesOnly yes` — so SSH offers exactly this one key, one Touch ID prompt per connection, even when Secretive holds other keys.
+**Touch ID, or not?** Secretive asks, at creation, whether the key requires authentication. Either way the private key stays non-extractable in the Secure Enclave — the modes differ only in whether *using* it prompts:
+
+- **Require authentication** — every VM login (and every `git` / `rsync` / Gateway / VS Code reconnect) prompts for Touch ID.
+- **No authentication while unlocked** — no prompt while the Mac is unlocked; the key still refuses to sign when the Mac is locked.
+
+This key only authenticates the **Mac → VM hop** to a local, disposable dev VM. Credentials that reach real infrastructure are *forwarded into* the VM by a separate agent and gated independently (see [SSH config sync](#3-ssh-config-sync)), so the login key's blast radius is small. Choose by usage and threat model:
+
+- **No-auth-while-unlocked** suits frequent interactive use on a Mac only you use: you accept that code already running as you on an *unlocked* Mac can reach the VM too (it largely can anyway), in exchange for zero prompts.
+- **Require Touch ID** suits a stricter posture — a shared or higher-risk Mac, or a VM that itself holds something sensitive — where asserting presence on each login is worth a prompt.
+
+Two caveats: **(1)** "no auth while unlocked" is *no prompt*, not *no protection* — the key is Enclave-bound and unusable while the Mac is locked, and it changes nothing about how your forwarded keys are gated. **(2)** Secretive fixes the mode **at key creation**; you can't toggle it later. Switching means creating a *new* key and re-authorizing it everywhere it's baked — rebuild the stack images (they bake `~/.ssh/tart-vm.pub`) and update `~/.ssh/authorized_keys` on any running VMs — so pick deliberately now.
+
+`tart-ssh-sync` wires every VM to authenticate through Secretive's agent socket (`IdentityAgent`) with `IdentityFile ~/.ssh/tart-vm.pub` pinned under `IdentitiesOnly yes` — so SSH offers exactly this one key (and, in require-authentication mode, one Touch ID prompt per connection), even when Secretive holds other keys.
 
 ### 2. Install the host tools
 
@@ -93,7 +105,7 @@ make setup
 
 Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, and `tart-new` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), and scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`. Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
 
-There's no SSH wrapper to remember — you connect with plain **`ssh tart-<name>`**. The generated config (next section) resolves the VM's current IP at connect time (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and, on an *interactive* login only, auto-starts the VM if it's stopped. So `ssh tart-app-a` to a powered-off VM just works: it boots, waits for SSH, and drops you in with one Touch ID prompt. To pre-warm a VM without opening a shell, run `tart-up <name>` directly.
+There's no SSH wrapper to remember — you connect with plain **`ssh tart-<name>`**. The generated config (next section) resolves the VM's current IP at connect time (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and, on an *interactive* login only, auto-starts the VM if it's stopped. So `ssh tart-app-a` to a powered-off VM just works: it boots, waits for SSH, and drops you in — with a Touch ID prompt only if the key is in require-authentication mode. To pre-warm a VM without opening a shell, run `tart-up <name>` directly.
 
 > Wiring it by hand instead? `make setup` is a thin wrapper over [`script/setup`](./script/setup) — read it for the exact steps.
 
@@ -277,11 +289,11 @@ config paths (`~/.config/tart-stacks`); if you relocate config via
 > supervisor log shows it come back — before relying on it. `--uninstall` rolls
 > it back cleanly.
 
-> **Fewer Touch ID prompts:** each new SSH login asks Secretive to sign with the
-> `tart-vm` key, so frequent restarts mean frequent prompts. If that is noise,
-> mark the `tart-vm` key in Secretive as not requiring authentication — it is a
-> low-value key that only logs into local VMs, and this does not change how your
-> real keys (forwarded into the VM by a separate agent) are gated.
+> **Fewer Touch ID prompts:** if you created the `tart-vm` key in
+> *require-authentication* mode, every login prompts — and frequent restarts mean
+> frequent prompts. To drop the friction, recreate it as *no-auth-while-unlocked*;
+> see the **Touch ID, or not?** trade-off in [Setup](#setup) step 1 (switching
+> modes means a new key, not a toggle).
 
 ## Adding a new stack
 
