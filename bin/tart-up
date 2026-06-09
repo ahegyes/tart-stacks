@@ -197,10 +197,10 @@ STARTED=0
 
 if [ "$STATE" = "running" ]; then
   if [ "${#DIR_ARGS[@]}" -gt 0 ]; then
-    echo "$prog: '$VM' already running — ${#DIR_ARGS[@]} configured mount(s) not attached (stop + start to apply)." >&2
+    echo "$prog: '$VM' already running — its ${#DIR_ARGS[@]} configured mount(s) attach at boot, so it has whatever it started with (stop + start to apply mount changes)." >&2
   fi
   if [ "${#NETPOLICY_ARGS[@]}" -gt 0 ]; then
-    echo "$prog: '$VM' already running — net-policy from $NETPOLICY_CONFIG not applied (stop + start to apply)." >&2
+    echo "$prog: '$VM' already running — net-policy (from $NETPOLICY_CONFIG) applies at boot, so it has whatever it started with (stop + start to apply net-policy changes)." >&2
   fi
 elif [ "$STATE" = "stopped" ]; then
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
