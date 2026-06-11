@@ -74,6 +74,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
 - [jq](https://jqlang.org/): `brew install jq` — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-supervise`) parse `tart list --format json` with it. macOS 15+ ships a system jq, but the floor here is macOS 13, so install it explicitly.
+- **OpenSSH 10.0 or later** (`ssh -V`) — the generated SSH config's auto-start hook uses `Match sessiontype`, which older ssh rejects as a fatal parse error. Current macOS updates ship 10.x; `tart-ssh-sync` checks and refuses to write the config rather than break your ssh.
 
 ## Setup
 

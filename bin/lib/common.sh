@@ -39,6 +39,14 @@ tart_valid_vm_name() {
   return 0
 }
 
+# tart_ssh_has_sessiontype — 0 iff the local ssh parses `Match sessiontype`
+# (OpenSSH ≥ 10.0). The generated config gates its auto-start hook on that
+# keyword, and older ssh treats it as a fatal Bad Match condition — activating
+# the file on such a host would break every ssh invocation at once.
+tart_ssh_has_sessiontype() {
+  printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/dev/null 2>&1
+}
+
 # tart_is_base_image <bare-name> <stacks-dir> <distros-file> — 0 if the name is a
 # clone-source (the <distro>-base bootstrap intermediate, or a <distro>-<stack>
 # built image), not a dev VM. Anchored on the supported distro set so hyphenated

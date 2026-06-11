@@ -321,6 +321,15 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
+# The emitted Match hook needs OpenSSH ≥ 10.0 (`Match sessiontype`); on older
+# ssh the keyword is a fatal parse error, so activating the file would take
+# down every ssh on this host at once. Refuse with the requirement named —
+# --dry-run above stays available for inspection on any version.
+if ! tart_ssh_has_sessiontype; then
+  echo "$prog: this ssh cannot parse 'Match sessiontype' (OpenSSH >= 10.0 required — check ssh -V; current macOS updates ship it). Refusing to write $OUTPUT." >&2
+  exit 1
+fi
+
 mkdir -p "$(dirname "$OUTPUT")"
 tmp=$(mktemp "${OUTPUT}.XXXXXX")
 trap 'rm -f "$tmp"' EXIT

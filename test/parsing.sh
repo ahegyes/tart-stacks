@@ -328,15 +328,28 @@ extract_fn config_valid "$BIN/tart-ssh-sync" > "$WORK/sync-fns.sh"
 # shellcheck source=/dev/null
 source "$WORK/sync-fns.sh"
 
+# The generated config's Match hook needs OpenSSH >= 10.0 (`Match
+# sessiontype`); on older ssh (e.g. the ubuntu CI runner) a known-good file
+# cannot pass `ssh -G` and the real script refuses to activate at all. The
+# pass-path sections below self-skip there — every --dry-run test above and
+# the reject paths (bad directives fail on any version) still run.
+SSH_HAS_SESSIONTYPE=0
+tart_ssh_has_sessiontype && SSH_HAS_SESSIONTYPE=1
+
 echo "bin/tart-ssh-sync — config_valid:"
-run_sync "app-a RemoteForward 8080 127.0.0.1:8080" > "$WORK/generated.cfg"
-check "known-good generated config passes" 0 config_valid "$WORK/generated.cfg"
+if [ "$SSH_HAS_SESSIONTYPE" -eq 1 ]; then
+  run_sync "app-a RemoteForward 8080 127.0.0.1:8080" > "$WORK/generated.cfg"
+  check "known-good generated config passes" 0 config_valid "$WORK/generated.cfg"
+else
+  ok "skipped: known-good pass needs OpenSSH >= 10 (Match sessiontype)"
+fi
 printf 'Host tart-x\n  RemoteForward\n' > "$WORK/broken.cfg"
 # ssh exits 255 on parse errors; normalize so the pin isn't OpenSSH-version-shaped.
 config_valid "$WORK/broken.cfg" && cv=0 || cv=1
 assert_eq "bare RemoteForward directive fails validation" 1 "$cv"
 
 echo "bin/tart-ssh-sync — non-dry-run activation:"
+if [ "$SSH_HAS_SESSIONTYPE" -eq 1 ]; then
 OUT_DIR="$WORK/outdir"
 printf '%s\n' 'app-a RemoteForward 8080 127.0.0.1:8080' > "$WORK/forwards"
 printf '%s\n' 'vm-a alpha /tmp/sock-alpha' > "$WORK/ssh-agents"
@@ -376,6 +389,9 @@ TART_SSH_CONFIG_D="$OUT_DIR/tart-vms" \
   bash "$BIN/tart-ssh-sync" >/dev/null 2>"$SYNC_ERR" || rc=$?
 assert_eq "recovery sync: exit 0" 0 "$rc"
 assert_eq "recovery sync clears the stale rejected candidate" no "$([ -f "$OUT_DIR/tart-vms.rejected" ] && echo yes || echo no)"
+else
+  ok "skipped: activation pass/reject/recovery need OpenSSH >= 10 (Match sessiontype)"
+fi
 
 echo
 echo "  $pass passed, $fail failed"

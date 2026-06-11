@@ -42,6 +42,16 @@ OUT="$WORK/out"; ERR="$WORK/err"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCKBIN/tart"
 chmod +x "$MOCKBIN/tart"
 
+# The closing tart-ssh-sync run refuses on ssh without `Match sessiontype`
+# (OpenSSH < 10, e.g. the ubuntu CI runner), which would abort setup under
+# set -e. Shim ssh to a parse-anything stub there so the install flow stays
+# testable; full-fidelity validation runs wherever ssh is current.
+if ! printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/dev/null 2>&1; then
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCKBIN/ssh"
+  chmod +x "$MOCKBIN/ssh"
+  ok "old ssh detected: sync's ssh shimmed (full validation needs OpenSSH >= 10)"
+fi
+
 INC='Include ~/.ssh/config.d/tart-vms'
 CMDS=(tart-up tart-ssh-sync tart-new tart-rm tart-supervise)
 
