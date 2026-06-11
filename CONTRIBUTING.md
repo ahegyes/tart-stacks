@@ -8,22 +8,28 @@ You'll need a macOS host (Apple Silicon, M1 or later, macOS 13+) and:
 
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
+- [jq](https://jqlang.org/): `brew install jq` — the host commands and the test suite parse JSON with it
+- [ShellCheck](https://www.shellcheck.net/): `brew install shellcheck` — to mirror the CI lint locally
 
 See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup (steps 1-3 of the Setup section). Each stack's Packer build authorizes whatever key you point `var.ssh_pubkey_path` at — without it the build won't run.
 
 ## Making changes
 
 1. Edit the relevant `shared/scripts/*.sh`, `stacks/<name>/scripts/*.sh`, or `*/files/*` file.
-2. Fast pre-checks — **syntax only, not proof of runtime behavior**: `packer validate -var stack=<name> -var distro=<distro> stack.pkr.hcl` (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed.
-3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name> DISTRO=<distro>` (15-20 min for PHP), then confirm a fresh clone works:
+2. Fast pre-checks — mirror the CI gates locally:
+   - `packer validate -var stack=<name> -var distro=<distro> stack.pkr.hcl` (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed — **syntax only, not proof of runtime behavior**.
+   - `make test` — the plain-bash test suite (`test/*.sh`), exactly what the CI tests job runs.
+   - `shellcheck` on any script you changed — the CI job fails on shellcheck **warnings**, not just errors, so locally-clean is the bar. (Scaffold templates get linted too, with `__STACK__` substituted; see `.github/workflows/validate.yml`.)
+3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name> DISTRO=<distro>` (15-20 min for PHP). Follow with `make smoke STACK=<name> DISTRO=<distro>` (~1 min; boots a real VM, so local-only). The manual equivalent, for poking around inside:
    ```bash
    tart clone <distro>-<name> test-vm
    ssh tart-test-vm            # auto-starts the stopped VM, then connects
    # inside VM (example for fedora-php):
    node --version && php --version && composer --version
+   tart-rm test-vm             # guarded teardown when done
    ```
 
-> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup` and `test`, run via `make`. `shared/scripts/` and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
+> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, and `test`, run via `make`. `shared/scripts/` and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
 
 ## PR conventions
 

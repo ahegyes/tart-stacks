@@ -39,6 +39,6 @@ None currently. All JVM runtimes ship as pre-built aarch64 binaries via mise; th
 
 ## Troubleshooting
 
-- **`java` resolves to system Java, not Temurin** → mise didn't activate. `which java` should resolve under `~/.local/share/mise/installs/`. If not, `eval "$(mise activate bash)"` then re-test; `shared/scripts/user-config.sh` adds this to `~/.bashrc` and `~/.zshrc` automatically, but a corrupted clone's shell rc may have lost it.
+- **`java` resolves to system Java, not Temurin** → mise didn't activate. `which java` should resolve under `~/.local/share/mise/installs/`. If not, `eval "$(mise activate bash)"` then re-test. The zsh activation ships in the uploaded [`shared/files/zshrc`](../../shared/files/zshrc) baseline (the VM's `~/.zshrc`); `shared/scripts/user-config.sh` adds the bash equivalent to `~/.bashrc` (and puts `~/.local/bin` on PATH via `~/.zshenv`). A corrupted clone's shell rc may have lost either.
 - **First `sbt` invocation in a project is slow** → expected. The mise-installed `sbt` is just the launcher; on first run it downloads the project's pinned sbt build + Scala compiler into `~/.sbt/` and `~/.cache/coursier/`. Subsequent invocations hit the cache.
 - **`mvn` can't resolve a private dependency** → `~/.m2/settings.xml` isn't baked into the base. Drop it into the clone (`~/.m2/settings.xml`) with the relevant `<servers>` and `<profiles>`.

@@ -22,17 +22,24 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 ├── README.md  AGENTS.md  CLAUDE.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── bin/
 │   ├── tart-new                      # Creates a project VM by cloning a stack base image, with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size` pass-through
-│   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start)
-│   ├── tart-up                       # Starts a stopped VM (+ mounts) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
-│   └── lib/                          # config.sh + common.sh — sourced helpers (config-path resolver, tart_need_cmd); never on PATH
+│   ├── tart-rm                       # Deletes a project VM with the teardown `tart delete` lacks (base-image refusal, supervision drop, stop, host-key-pin scrub)
+│   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start), `ssh -G`-validated before it goes live
+│   ├── tart-up                       # Starts a stopped VM (+ mounts + net-policy) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
+│   ├── tart-supervise                # Keeps a VM running across `tart run` crashes via a per-VM LaunchAgent (see "Keep a VM alive across crashes")
+│   └── lib/                          # config.sh + common.sh — sourced helpers (config paths, VM state/liveness, name-pattern matching); never on PATH
 ├── script/
-│   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards, mounts
+│   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards + mounts scaffold, closing tart-ssh-sync run; --uninstall (= `make uninstall`) is the inverse
+│   ├── smoke                         # End-to-end proof of a built image (run via `make smoke`): clone → boot → ssh → hostname assert → teardown
 │   └── test                          # Runs the test suite (test/*.sh) via `make test` / CI
 ├── completions/
 │   └── _tart-new                     # zsh completion for tart-new; installed by make setup
 ├── test/
 │   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
-│   ├── tart-up.sh                    # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc)
+│   ├── tart-rm.sh                    # Characterization tests for tart-rm (refusal gates, supervision-drop → stop → delete ordering, known-hosts scrub)
+│   ├── tart-up.sh                    # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc + ps)
+│   ├── tart-supervise.sh             # Characterization tests for tart-supervise (--once cycle, install gates, uninstall semantics, self-retirement, --status columns)
+│   ├── setup.sh                      # Characterization tests for script/setup — install + --uninstall, fully sandboxed
+│   ├── smoke.sh                      # Characterization tests for script/smoke (stage ordering, teardown trap; mocked — no real VM)
 │   ├── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   └── distro-lib.sh                 # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt)
 ├── shared/
@@ -45,13 +52,16 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   │   ├── scripts/                  # Stack-specific: 00-stack.sh (build deps), mise-install.sh (runtimes + smoke test)
 │   │   ├── files/
 │   │   │   └── mise.toml             # Stack-specific tool versions
+│   │   ├── packages.dnf              # Native build deps, dnf-family names; every entry pairs with a smoke-gate check
+│   │   ├── packages.apt              # Same capabilities, apt-family names
 │   │   └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
 │   └── jvm/                          # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
 ├── stack.pkr.hcl                     # ONE parameterized Packer template (`-var stack=<name> -var distro=<distro>`)
 ├── shared/distros                    # Supported distro list (one token per line); consumed by Makefile, tart-new, CI
 ├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/
 ├── Makefile                          # Single top-level Makefile; commands take STACK=<name> DISTRO=<distro>
-└── .github/workflows/validate.yml    # packer validate + shellcheck; CI matrix is stack × distro cross-product
+├── .shellcheckrc  .gitignore         # shellcheck follows sources into bin/lib; Packer artifacts stay uncommitted
+└── .github/                          # CI (workflows/validate.yml: packer validate + shellcheck + tests; matrix is stack × distro) + dependabot.yml
 ```
 
 `script/` (singular) is the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`; `scripts/` (plural, under `shared/` and `stacks/*/`) are in-VM provisioner collections. Different roles, hence the different names.
@@ -108,6 +118,8 @@ make setup
 
 Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm`, and `tart-supervise` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
 
+`make uninstall` is the inverse: it removes only what verifiably points into this repo (the command symlinks, the completion, the exact Include block setup wrote, the generated config), keeps every per-VM config file (`forwards`, `mounts`, `ssh-agents`, `netpolicy` — they carry your opt-ins), and refuses to run while any `tart-supervise` LaunchAgent exists, since those agents restart VMs through the very tools being removed.
+
 There's no SSH wrapper to remember — you connect with plain **`ssh tart-<name>`**. The generated config (next section) resolves the VM's current IP at connect time (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and, on an *interactive* login only, auto-starts the VM if it's stopped. So `ssh tart-app-a` to a powered-off VM just works: it boots, waits for SSH, and drops you in — with a Touch ID prompt only if the key is in require-authentication mode. To pre-warm a VM without opening a shell, run `tart-up <name>` directly.
 
 > Wiring it by hand instead? `make setup` is a thin wrapper over [`script/setup`](./script/setup) — read it for the exact steps.
@@ -118,7 +130,7 @@ There's no SSH wrapper to remember — you connect with plain **`ssh tart-<name>
 
 Because the connection settings live in the wildcard, **a freshly cloned VM connects immediately** — `ssh tart-<newname>` needs no per-VM registration. The first sync is `make setup`'s job; re-run `tart-ssh-sync` by hand only to:
 
-- pick up edits to `~/.config/tart-stacks/ssh-agents` (not created by `make setup` — the tooling that manages your VMs writes it, or you create it by hand) — per-VM agent forwarding (`<vm> <agent> <host-socket>`; a VM's first line becomes its primary `ForwardAgent`, any extra agents become `RemoteForward`s). A VM needs an entry here for in-VM git/ssh to use a forwarded agent;
+- pick up edits to `~/.config/tart-stacks/ssh-agents` (not created by `make setup` — the tooling that manages your VMs writes it, or you create it by hand) — per-VM agent forwarding (see the **Agent forward** grammar below). A VM needs an entry here for in-VM git/ssh to use a forwarded agent;
 - pick up edits to `~/.config/tart-stacks/forwards` (below).
 
 ```bash
@@ -126,11 +138,21 @@ tart-ssh-sync             # rewrite ~/.ssh/config.d/tart-vms
 tart-ssh-sync --dry-run   # print what would be written, without touching disk
 ```
 
+Activation is gated: the generated config must pass a full `ssh -G` parse before it replaces the live file — one malformed line in an Included file would break every `ssh`/`scp`/`git` on the host. A failing candidate is kept at `~/.ssh/config.d/tart-vms.rejected` for inspection; the live file stays untouched.
+
 What the script emits as universal defaults (apply to every Tart VM via `Host tart-*`):
 
 - **Common block**: user, identity (Secretive agent socket + the pinned `~/.ssh/tart-vm.pub`), host-key handling, and a `ProxyCommand` that resolves each VM's current IP at connect time (any SSH client reaches a *running* VM by name).
 - **Auto-start hook**: a `Match host tart-* sessiontype shell exec …` line that runs `tart-up` — an *interactive* `ssh tart-<name>` from a terminal to a stopped VM starts it (and waits for SSH). Two gates keep everything else out: `sessiontype shell` means `git`/`rsync` (a remote command), `sftp` (a subsystem), and `ssh -N` (transport-only) **never** boot a VM, and a controlling-terminal check means terminal-less contexts (IDE/GUI config scans, `ssh -G` probes from tooling, automation) don't either. Need a VM up from a context with no terminal? Pre-warm it with `tart-up <name>`.
-- **Agent forward**: each VM listed in `~/.config/tart-stacks/ssh-agents` forwards its host SSH agent via OpenSSH `ForwardAgent`, so sshd exports `SSH_AUTH_SOCK` in *every* in-VM session of that VM — interactive shells and non-interactive `ssh tart-<name> <cmd>` (git, rsync, provisioning) alike — and `git`/`ssh`/`composer` transparently use it. The file's grammar is `<vm> <agent> <host-socket>`: the first line for a VM is its primary `ForwardAgent`; any extra agents become `RemoteForward`s at `/run/tart/agent-<name>.sock` for per-host routing. Point a host-socket at 1Password's `~/.1password/agent.sock`, Secretive's container socket, or any relay. To *sign* commits in-VM, the agent signs but git also needs the pubkey *file* — mount a read-only pubkey dir and set `user.signingKey` to it (see [Per-VM directory mounts](#4-per-vm-directory-mounts)).
+- **Agent forward**: per-VM agent forwarding, declared in `~/.config/tart-stacks/ssh-agents`. Each non-blank, non-comment line is exactly three whitespace-separated tokens:
+
+  ```
+  <vm> <agent> <host-socket>
+  ```
+
+  `<vm>` and `<agent>` are bare names matching `[A-Za-z0-9][A-Za-z0-9_-]*` — bare names *only*, deliberately no `*` or comma-list patterns: agent forwarding is fail-closed per VM, and a pattern token would grant an agent to VMs never listed. A line that violates any of this is skipped with a warning, never half-emitted (any producer may write the file; the grammar above is the contract, and `tart-ssh-sync` enforces it).
+
+  Each VM listed forwards its host SSH agent via OpenSSH `ForwardAgent`, so sshd exports `SSH_AUTH_SOCK` in *every* in-VM session of that VM — interactive shells and non-interactive `ssh tart-<name> <cmd>` (git, rsync, provisioning) alike — and `git`/`ssh`/`composer` transparently use it. The first line for a VM is its primary `ForwardAgent`; any extra agents become `RemoteForward`s at `/run/tart/agent-<name>.sock` for per-host routing. Point a host-socket at 1Password's `~/.1password/agent.sock`, Secretive's container socket, or any relay. To *sign* commits in-VM, the agent signs but git also needs the pubkey *file* — mount a read-only pubkey dir and set `user.signingKey` to it (see [Per-VM directory mounts](#4-per-vm-directory-mounts)).
 
 What you opt into per-VM (your personal forwards, never committed): `~/.config/tart-stacks/forwards`. Each non-blank, non-comment line:
 
@@ -138,7 +160,7 @@ What you opt into per-VM (your personal forwards, never committed): `~/.config/t
 <vm-pattern> RemoteForward <args>
 ```
 
-`<vm-pattern>` is `*` (all dev VMs), a single bare name, or a comma-separated list. A forward for a VM that doesn't exist yet is harmless — it stays inert until that VM is cloned.
+`<vm-pattern>` is `*` (all dev VMs), a single bare name, or a comma-separated list. The directive must be literally `RemoteForward` and must carry at least one argument — any other directive, or a bare `RemoteForward` with nothing after it, is skipped with a warning (an argument-less one would be an OpenSSH fatal that takes the whole generated file down). A forward for a VM that doesn't exist yet is harmless — it stays inert until that VM is cloned.
 
 Example `~/.config/tart-stacks/forwards`:
 
@@ -181,14 +203,14 @@ sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/shared
 
 `~/.config/tart-stacks/netpolicy` confines every VM's outbound network. `tart-up` reads it and passes its contents as Tart `--net-*` flags when it **starts** a VM, so it applies at VM start (a running VM needs a stop + start to pick up changes). An absent or empty file means default Tart NAT — unfiltered.
 
-Each non-blank, non-comment line contributes whitespace-separated flags (`#` comments and blanks ignored). Example — softnet egress confined to the host gateway:
+Each non-blank, non-comment line contributes whitespace-separated tokens (`#` comments and blanks ignored), and **every token must be a `--net-*` flag** (any producer may write the file; that grammar is the contract, and `tart-up` enforces it). Any other token makes `tart-up` refuse to start the VM, naming the file, line, and token: this is security config, so it fails closed — starting under a partial policy would be worse than not starting at all. Example — softnet egress confined to the host gateway:
 
 ```
 --net-softnet
 --net-softnet-allow=@host
 ```
 
-See Tart's `--net-*` documentation for the flag vocabulary. This file is a consumed contract: `tart-stacks` only reads it — the tooling that manages your VMs writes it, or you hand-write it.
+See Tart's `--net-*` documentation for the flag vocabulary.
 
 ### 6. Build a stack image
 
@@ -250,10 +272,12 @@ New project VMs cloned after the rebuild get the updated base. Existing project 
 ### Destroy and recreate a project VM
 
 ```bash
-tart stop app-a && tart delete app-a
+tart-rm app-a
 tart-new app-a php fedora
 # fresh, identical, ready in seconds (Tart uses copy-on-write).
 ```
+
+`tart-rm <name>` is the teardown mirror of `tart-new`'s guarded create. Under the hood it's a `tart stop && tart delete` with the gates that command pair lacks: it accepts the bare or `tart-`-prefixed name, refuses stack base images (losing one costs a 15-20 min rebuild), drops any `tart-supervise` LaunchAgent *first* (a live supervisor would resurrect the VM mid-teardown), stops a running VM, deletes it, and scrubs the VM's host-key pin from `~/.ssh/known_hosts.tart` so a future VM reusing the name re-pins fresh instead of tripping `accept-new`.
 
 ### Keep a VM alive across crashes
 
@@ -273,24 +297,45 @@ To recover automatically, install a per-VM supervisor:
 
 ```sh
 tart-supervise --install <name>    # LaunchAgent: restart the VM whenever its process dies
-tart-supervise --status            # list supervised VMs and whether they're loaded
-tart-supervise --uninstall <name>  # stop supervising (also how you take a supervised VM down)
+tart-supervise --status            # one row per supervised VM: agent / vm / process columns
+tart-supervise --uninstall <name>  # stop supervising — a running VM stays up
 ```
 
 The supervisor watches for the `tart run <name>` process; when it is gone it runs
 `tart stop` (clearing a wedged crash state) then `tart-up` (which restarts,
 re-provisions, and waits for sshd). Restarts back off if a VM keeps dying
-quickly. A supervised VM is *kept* running — a manual `tart stop` is undone
-within a few seconds, so `--uninstall` is how you take one down. Its log is
-`~/Library/Logs/tart-stacks/supervise.<name>.log`. Run it in the foreground to
-watch it first: `tart-supervise <name>`. The LaunchAgent runs with default
-config paths (`~/.config/tart-stacks`); if you relocate config via
-`TART_STACKS_CONFIG_DIR`, set it in the generated plist too.
+quickly.
+
+A supervised VM is *kept* running — a manual `tart stop` is undone within a
+few seconds — so taking one down starts with `--uninstall`. That removes
+supervision *only*: the LaunchAgent is unloaded without touching the VM
+(launchd's `AbandonProcessGroup`, so the `tart run` the agent spawned isn't
+killed with it), and a running VM stays up. Then stop or delete the VM as
+usual — or skip the two-step with `tart-rm <name>`, which drops supervision
+itself before deleting.
+
+The reverse order is safe too — delete a VM out from under its supervisor and
+the agent retires itself: after a few consecutive `tart list` checks confirm
+the VM is gone, the supervisor removes its own LaunchAgent and exits.
+
+`--status` prints one row per supervised VM:
+
+- **agent state** — `loaded` / `installed (not loaded)`;
+- **VM presence** — the VM's `tart list` state (`vm:MISSING` marks a deleted
+  VM, `vm:?` an unreadable list);
+- **process liveness** — whether the `tart run` process is alive (`proc:alive`
+  / `proc:-`).
+
+Each supervisor's log is `~/Library/Logs/tart-stacks/supervise.<name>.log`.
+Run it in the foreground to watch it first: `tart-supervise <name>`. The
+LaunchAgent runs with default config paths (`~/.config/tart-stacks`); if you
+relocate config via `TART_STACKS_CONFIG_DIR`, set it in the generated plist
+too.
 
 > **First time:** the LaunchAgent runs `tart run` in your GUI login session.
 > Smoke-test one VM — install it, kill that VM's `tart run`, and confirm the
-> supervisor log shows it come back — before relying on it. `--uninstall` rolls
-> it back cleanly.
+> supervisor log shows it come back — before relying on it. `--uninstall`
+> removes the agent cleanly (the VM keeps running).
 
 > **Fewer Touch ID prompts:** if you created the `tart-vm` key in
 > *require-authentication* mode, every login prompts — and frequent restarts mean

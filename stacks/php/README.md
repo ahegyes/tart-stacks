@@ -17,7 +17,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 
 **Stack-specific build dependencies** (installed by [`scripts/00-stack.sh`](./scripts/00-stack.sh))
 
-PHP is compiled from source via mise+asdf-php. The packages in [`packages.dnf`](./packages.dnf) (Fedora/RHEL) and [`packages.apt`](./packages.apt) (Debian/Ubuntu) map to specific PHP extensions; removing a package silently drops its extension from the next build. The inline comments in those files list which extension each package enables.
+PHP is compiled from source via mise+asdf-php. The packages in [`packages.dnf`](./packages.dnf) (Fedora/RHEL) and [`packages.apt`](./packages.apt) (Debian/Ubuntu) map to specific PHP extensions; the inline comments list which extension each package enables. The install is deliberately tolerant (`pkg_install_optional` warns on an unavailable package rather than failing), so the smoke test at the end of [`scripts/mise-install.sh`](./scripts/mise-install.sh) is the enforcement point: an extension on its gate list that fails to load **fails the build loudly**. Only capabilities outside the gate — e.g. gd's WebP/AVIF/XPM format support, PHP-FPM's systemd notify — can vanish silently, which is why package-list changes must be paired with smoke-list changes.
 
 ## Known limitations
 
@@ -26,7 +26,7 @@ PHP is compiled from source via mise+asdf-php. The packages in [`packages.dnf`](
 ## Customization
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
-- **Add or drop a PHP extension**: each PHP extension is gated by a corresponding package in [`packages.dnf`](./packages.dnf) (Fedora/RHEL) or [`packages.apt`](./packages.apt) (Debian/Ubuntu) — the inline comments list the extension each entry enables (e.g., `libpq-devel` / `libpq-dev` → `pdo_pgsql`). Removing a package drops its extension from the next build for that distro family; adding one enables a new extension.
+- **Add or drop a PHP extension**: each PHP extension needs its build-dep package in [`packages.dnf`](./packages.dnf) (Fedora/RHEL) and [`packages.apt`](./packages.apt) (Debian/Ubuntu) — the inline comments list the extension each entry enables (e.g., `libpq-devel` / `libpq-dev` → `pdo_pgsql`). Pair every package change with the matching entry in the smoke-test list in [`scripts/mise-install.sh`](./scripts/mise-install.sh).
 - **Per-project version pin**: drop a `.mise.toml` in the project repo root and commit it:
   ```toml
   [tools]
@@ -39,5 +39,5 @@ PHP is compiled from source via mise+asdf-php. The packages in [`packages.dnf`](
 ## Troubleshooting
 
 - **PHP compile fails midway** → the smoke test at the end of `mise-install.sh` names the missing extension; `packages.dnf` / `packages.apt` (whichever family you're building) maps each extension to its required build-dep package via inline comments. Distro release bumps occasionally rename packages — pin a specific image tag (`IMAGE_TAG=<tag> make bootstrap DISTRO=<distro>`) to roll back while investigating.
-- **`composer` command not found inside a VM clone** → confirm mise activated: `which php` should resolve under `~/.local/share/mise/installs/`. If not, `eval "$(mise activate bash)"` then re-test; the `shared/scripts/user-config.sh` adds this to `~/.bashrc` and `~/.zshrc` automatically, but a corrupted clone's shell rc may have lost it.
+- **`composer` command not found inside a VM clone** → confirm mise activated: `which php` should resolve under `~/.local/share/mise/installs/`. If not, `eval "$(mise activate bash)"` then re-test. The zsh activation ships in the uploaded [`shared/files/zshrc`](../../shared/files/zshrc) baseline (the VM's `~/.zshrc`); `shared/scripts/user-config.sh` adds the bash equivalent to `~/.bashrc` (and puts `~/.local/bin` on PATH via `~/.zshenv`). A corrupted clone's shell rc may have lost either.
 - **`xdebug` doesn't attach** → it's in trigger mode; set `XDEBUG_TRIGGER=1` in env (or send the trigger cookie) before the request. The IDE side needs to listen on port 9003 inside the VM (forward it if the IDE is on the host).
