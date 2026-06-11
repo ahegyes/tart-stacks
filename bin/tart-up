@@ -4,9 +4,10 @@
 # answers on :22; does NOT open an SSH session.
 #
 # Invoked two ways:
-#   - by the `Match host tart-* sessiontype shell exec "tart-up %n"` line that
-#     tart-ssh-sync writes, so a plain `ssh tart-<name>` auto-starts the VM on
-#     an interactive login (and only then — git/rsync/`ssh -N`/IDEs don't);
+#   - by the `Match host tart-* sessiontype shell exec "/bin/sh -c '…' _ '<tart-up>' %n"`
+#     line that tart-ssh-sync writes (gated on a controlling terminal), so a
+#     plain `ssh tart-<name>` from a terminal auto-starts the VM on an
+#     interactive login (and only then — git/rsync/`ssh -N`/IDE scans don't);
 #   - directly, to pre-warm a VM:  tart-up <name>
 #
 # Readiness is a TCP probe (nc -z, via /usr/bin/nc — override $TART_NC_BIN),

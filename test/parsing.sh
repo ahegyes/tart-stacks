@@ -49,10 +49,13 @@ TART
 chmod +x "$WORK/bin/tart"
 
 SYNC_ERR="$WORK/sync.err"
+# TART_NC_BIN is cleared so the baked-nc assertion sees the script's own
+# /usr/bin/nc default even when the caller's environment overrides the seam.
 run_sync() { # forwards-file-content -> stdout of --dry-run (stderr -> $SYNC_ERR)
   printf '%s' "$1" > "$WORK/forwards"
   : > "$WORK/ssh-agents"   # empty by default; ssh-agents tests below pass their own
   PATH="$WORK/bin:$PATH" \
+  TART_NC_BIN='' \
   TART_FORWARDS="$WORK/forwards" \
   TART_SSH_AGENTS="$WORK/ssh-agents" \
   TART_SSH_CONFIG_D="$WORK/out" \
@@ -62,6 +65,7 @@ run_sync_with_agents() { # ssh-agents-content -> stdout of --dry-run with empty 
   printf '%s' "$1" > "$WORK/ssh-agents"
   : > "$WORK/forwards"
   PATH="$WORK/bin:$PATH" \
+  TART_NC_BIN='' \
   TART_FORWARDS="$WORK/forwards" \
   TART_SSH_AGENTS="$WORK/ssh-agents" \
   TART_SSH_CONFIG_D="$WORK/out" \
@@ -76,8 +80,11 @@ assert_contains  "common block sets User admin"                "$out" "User admi
 assert_contains  "common block sets SSH keepalive interval"    "$out" "ServerAliveInterval 15"
 assert_contains  "common block caps unanswered keepalives"     "$out" "ServerAliveCountMax 3"
 assert_contains  "ProxyCommand resolves the IP at connect time" "$out" "ProxyCommand /bin/sh -c"
+assert_contains  "ProxyCommand pins the system nc"             "$out" "/usr/bin/nc"
 assert_contains  "auto-start Match gates on interactive shell" "$out" "Match host tart-* sessiontype shell exec"
-assert_contains  "auto-start Match invokes tart-up with %n"    "$out" "/tart-up %n"
+assert_contains  "auto-start Match gates on a controlling terminal" "$out" "( : </dev/tty )"
+assert_contains  "auto-start Match passes tart-up + %n positionally" "$out" "/tart-up' %n\""
+assert_absent    "auto-start Match keeps tart-up + %n out of the sh -c body" "$out" "tart-up %n"
 assert_absent    "empty ssh-agents emits no per-VM ForwardAgent" "$out" "ForwardAgent"
 
 out=$(run_sync "* RemoteForward 27123 127.0.0.1:27123")
@@ -98,6 +105,14 @@ assert_absent    "trailing comment text not emitted"           "$out" "trailing 
 out=$(run_sync "app-a LocalForward 1 2")
 assert_contains  "unsupported directive warned to stderr" "$(<"$SYNC_ERR")" "skipping unsupported directive 'LocalForward'"
 assert_absent    "unsupported directive not emitted"      "$out" "LocalForward"
+
+# A RemoteForward with no arguments would emit a bare directive — an OpenSSH
+# fatal for the whole generated file — so it is skipped, not emitted.
+out=$(run_sync "app-a RemoteForward${nl}app-b RemoteForward 8080 127.0.0.1:8080")
+assert_contains  "no-args RemoteForward warned with file:line" "$(<"$SYNC_ERR")" "$WORK/forwards:1: skipping 'RemoteForward' with no arguments"
+assert_absent    "no-args RemoteForward emits no Host block"   "$out" "Host tart-app-a"
+assert_absent    "no bare RemoteForward directive emitted"     "$out" "RemoteForward${nl}"
+assert_contains  "well-formed sibling forward still emitted"   "$out" "RemoteForward 8080 127.0.0.1:8080"
 
 # A forward for a VM that doesn't exist yet is emitted verbatim (no `tart list`
 # check) — it stays inert in ssh_config until that VM is cloned.
@@ -145,6 +160,31 @@ out=$(run_sync_with_agents "lonely-vm${nl}vm-b beta /tmp/b")
 assert_absent    "malformed line not emitted as a Host block" "$out" "Host tart-lonely-vm"
 assert_contains  "malformed line warned to stderr"            "$(<"$SYNC_ERR")" "malformed line"
 assert_contains  "well-formed sibling still emitted"          "$out" "Host tart-vm-b"
+
+# A 4th+ token would otherwise glue into the socket and emit
+# `ForwardAgent <sock> <garbage>` — an OpenSSH fatal — so the line is skipped.
+out=$(run_sync_with_agents "vm-a alpha /tmp/sock-a stray-token${nl}vm-b beta /tmp/b")
+assert_contains  "extra-token line warned with file:line + token" "$(<"$SYNC_ERR")" "$WORK/ssh-agents:1: extra token(s) 'stray-token'"
+assert_absent    "extra-token line emits no Host block"           "$out" "Host tart-vm-a"
+assert_absent    "no glued socket emitted"                        "$out" "/tmp/sock-a stray-token"
+assert_contains  "three-token sibling unaffected"                 "$out" "ForwardAgent /tmp/b"
+
+# VM tokens are bare names by contract — agent forwarding is fail-closed by
+# absence, so a pattern token must never widen a grant. The critical proof:
+# `*` produces NO ForwardAgent anywhere (the common `Host tart-*` block at the
+# top would otherwise hand the agent to every VM).
+out=$(run_sync_with_agents "* alpha /tmp/sock")
+assert_contains  "wildcard VM token warned and named"        "$(<"$SYNC_ERR")" "VM token '*' is not a bare name"
+assert_absent    "wildcard VM token grants no agent anywhere" "$out" "ForwardAgent"
+out=$(run_sync_with_agents "vm-a,vm-b alpha /tmp/sock")
+assert_contains  "comma-list VM token warned and named"      "$(<"$SYNC_ERR")" "VM token 'vm-a,vm-b' is not a bare name"
+assert_absent    "comma-list VM token grants no agent"       "$out" "ForwardAgent"
+out=$(run_sync_with_agents "vm-a a/b /tmp/sock")
+assert_contains  "agent token with '/' warned and named"     "$(<"$SYNC_ERR")" "agent token 'a/b' is not a bare name"
+assert_absent    "bad agent token emits no ForwardAgent"     "$out" "ForwardAgent"
+out=$(run_sync_with_agents "* alpha /tmp/sock${nl}vm-b beta /tmp/b")
+assert_contains  "good sibling after a rejected wildcard still emitted" "$out" "Host tart-vm-b"
+assert_contains  "good sibling keeps its ForwardAgent"                  "$out" "ForwardAgent /tmp/b"
 
 # ── bin/tart-up mounts parser (dir_args) + bin/lib tart_pattern_matches ──────
 # tart-up has no dry-run and its main flow needs a live VM, so pull the pure
@@ -262,6 +302,65 @@ assert_eq "TART_STACKS_CONFIG_DIR relocates a concern" \
   "/tmp/cfg/mounts" "$(unset TART_MOUNTS; TART_STACKS_CONFIG_DIR=/tmp/cfg tart_config_path mounts)"
 assert_eq "per-concern TART_* wins over the dir" \
   "/custom/np" "$(TART_NETPOLICY=/custom/np TART_STACKS_CONFIG_DIR=/tmp/cfg tart_config_path netpolicy)"
+
+# ── bin/tart-ssh-sync: config_valid + non-dry-run activation gate ───────────
+# The generated file is Included by the global ssh config, so activation is
+# gated on a full `ssh -G` parse. config_valid is exercised directly (same
+# extract-from-source approach as the tart-up functions above), then the gate
+# is driven through the real non-dry-run surface with TART_SSH_CONFIG_D
+# sandboxed into $WORK.
+extract_fn config_valid "$BIN/tart-ssh-sync" > "$WORK/sync-fns.sh"
+# shellcheck source=/dev/null
+source "$WORK/sync-fns.sh"
+
+echo "bin/tart-ssh-sync — config_valid:"
+run_sync "app-a RemoteForward 8080 127.0.0.1:8080" > "$WORK/generated.cfg"
+check "known-good generated config passes" 0 config_valid "$WORK/generated.cfg"
+printf 'Host tart-x\n  RemoteForward\n' > "$WORK/broken.cfg"
+# ssh exits 255 on parse errors; normalize so the pin isn't OpenSSH-version-shaped.
+config_valid "$WORK/broken.cfg" && cv=0 || cv=1
+assert_eq "bare RemoteForward directive fails validation" 1 "$cv"
+
+echo "bin/tart-ssh-sync — non-dry-run activation:"
+OUT_DIR="$WORK/outdir"
+printf '%s\n' 'app-a RemoteForward 8080 127.0.0.1:8080' > "$WORK/forwards"
+printf '%s\n' 'vm-a alpha /tmp/sock-alpha' > "$WORK/ssh-agents"
+rc=0
+PATH="$WORK/bin:$PATH" TART_NC_BIN='' \
+TART_FORWARDS="$WORK/forwards" TART_SSH_AGENTS="$WORK/ssh-agents" \
+TART_SSH_CONFIG_D="$OUT_DIR/tart-vms" \
+  bash "$BIN/tart-ssh-sync" >/dev/null 2>"$SYNC_ERR" || rc=$?
+assert_eq       "valid inputs: exit 0"            0 "$rc"
+assert_eq       "output file written"             yes "$([ -f "$OUT_DIR/tart-vms" ] && echo yes || echo no)"
+assert_contains "output mode is 600"              "$(ls -l "$OUT_DIR/tart-vms")" "-rw-------"
+assert_contains "output carries the wildcard block"     "$(<"$OUT_DIR/tart-vms")" "Host tart-*"
+assert_contains "output carries the per-VM agent block" "$(<"$OUT_DIR/tart-vms")" "ForwardAgent /tmp/sock-alpha"
+assert_eq       "no rejected candidate on success" no "$([ -f "$OUT_DIR/tart-vms.rejected" ] && echo yes || echo no)"
+
+# Rejection through the public surface: junk RemoteForward args pass the
+# parser's has-arguments gate but fail ssh's own parse — the emission-bug
+# class the net exists to stop. The prior good live file must survive.
+printf '%s\n' 'app-a RemoteForward junk junk' > "$WORK/forwards"
+rc=0
+PATH="$WORK/bin:$PATH" TART_NC_BIN='' \
+TART_FORWARDS="$WORK/forwards" TART_SSH_AGENTS="$WORK/ssh-agents" \
+TART_SSH_CONFIG_D="$OUT_DIR/tart-vms" \
+  bash "$BIN/tart-ssh-sync" >/dev/null 2>"$SYNC_ERR" || rc=$?
+assert_eq       "invalid emission: nonzero exit"  1 "$rc"
+assert_contains "error names the rejected path"   "$(<"$SYNC_ERR")" "$OUT_DIR/tart-vms.rejected"
+assert_eq       "rejected candidate preserved"    yes "$([ -f "$OUT_DIR/tart-vms.rejected" ] && echo yes || echo no)"
+assert_contains "live file untouched (prior content intact)" "$(<"$OUT_DIR/tart-vms")" "RemoteForward 8080 127.0.0.1:8080"
+assert_absent   "live file free of the junk forward"         "$(<"$OUT_DIR/tart-vms")" "junk"
+
+# A later healthy sync supersedes the failure it documented: .rejected is gone.
+printf '%s\n' 'app-a RemoteForward 8080 127.0.0.1:8080' > "$WORK/forwards"
+rc=0
+PATH="$WORK/bin:$PATH" TART_NC_BIN='' \
+TART_FORWARDS="$WORK/forwards" TART_SSH_AGENTS="$WORK/ssh-agents" \
+TART_SSH_CONFIG_D="$OUT_DIR/tart-vms" \
+  bash "$BIN/tart-ssh-sync" >/dev/null 2>"$SYNC_ERR" || rc=$?
+assert_eq "recovery sync: exit 0" 0 "$rc"
+assert_eq "recovery sync clears the stale rejected candidate" no "$([ -f "$OUT_DIR/tart-vms.rejected" ] && echo yes || echo no)"
 
 echo
 echo "  $pass passed, $fail failed"

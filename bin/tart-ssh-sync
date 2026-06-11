@@ -38,6 +38,7 @@
 #   TART_FORWARDS        forwards config file.     Default: $HOME/.config/tart-stacks/forwards
 #   TART_SSH_CONFIG_D    output file.              Default: $HOME/.ssh/config.d/tart-vms
 #   TART_IDENTITY_AGENT  Secretive agent socket.   Default: $HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
+#   TART_NC_BIN          nc baked into the ProxyCommand. Default: /usr/bin/nc
 
 set -euo pipefail
 
@@ -83,9 +84,11 @@ TART_UP_BIN="$(command -v tart-up 2>/dev/null || true)"
 
 # Absolute paths baked into the generated ProxyCommand: GUI SSH clients
 # (JetBrains Gateway, VS Code) launch with a minimal PATH and can't resolve bare
-# `tart`/`nc`. Resolved here so the script itself stays host-portable.
+# `tart`/`nc`. tart is resolved here so the script itself stays host-portable.
 TART_BIN="$(command -v tart)"
-NC_BIN="$(command -v nc || echo /usr/bin/nc)"
+# BSD nc's -G is the baked connect bound; a PATH-shadowing GNU netcat parses
+# -G as a no-op, so pin the system binary (TART_NC_BIN is the test seam).
+NC_BIN="${TART_NC_BIN:-/usr/bin/nc}"
 
 # Parse the forwards config into parallel arrays preserving line order.
 # Skip blanks/comments; skip non-RemoteForward directives with a warning
@@ -104,11 +107,23 @@ if [ -f "$FORWARDS_CONFIG" ]; then
       echo "$prog: $FORWARDS_CONFIG:$lineno: skipping unsupported directive '$directive' (only RemoteForward today)" >&2
       continue
     fi
+    # A directive with nothing after it would emit a bare `RemoteForward` —
+    # an OpenSSH fatal that takes the whole generated file down with it.
+    if [ "$rest" = "$directive" ]; then
+      echo "$prog: $FORWARDS_CONFIG:$lineno: skipping 'RemoteForward' with no arguments" >&2
+      continue
+    fi
 
     patterns+=("$pattern")
     forwards_args+=("$rest")
   done < "$FORWARDS_CONFIG"
 fi
+
+# bare_name <token> — 0 iff the token is a bare name: alphanumeric head, then
+# alphanumerics/_/-. LC_ALL=C keeps the ranges byte-exact in any locale.
+bare_name() {
+  printf '%s' "$1" | LC_ALL=C grep -qE '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+}
 
 # Parse the ssh-agents config into parallel (vm, agent, socket) arrays
 # preserving line order. Each line is `<vm-name> <agent-name> <host-socket>`;
@@ -123,12 +138,33 @@ ssh_agents_vms=()
 ssh_agents_names=()
 ssh_agents_sockets=()
 if [ -f "$SSH_AGENTS_CONFIG" ]; then
+  lineno=0
   while IFS= read -r raw || [ -n "$raw" ]; do
+    lineno=$((lineno + 1))
     line="${raw%%#*}"
-    IFS=$' \t' read -r vm agent socket <<< "$line"
+    # The fourth field is a sink: anything landing in it means >3 tokens,
+    # which would otherwise glue into the socket and emit a malformed line.
+    IFS=$' \t' read -r vm agent socket extra <<< "$line"
     [ -z "$vm" ] && continue
     if [ -z "$agent" ] || [ -z "$socket" ]; then
-      echo "$prog: $SSH_AGENTS_CONFIG: malformed line (want '<vm> <agent> <host-socket>'), skipping: $raw" >&2
+      echo "$prog: $SSH_AGENTS_CONFIG:$lineno: malformed line (want '<vm> <agent> <host-socket>'), skipping: $raw" >&2
+      continue
+    fi
+    if [ -n "$extra" ]; then
+      echo "$prog: $SSH_AGENTS_CONFIG:$lineno: extra token(s) '$extra' after the host-socket (want '<vm> <agent> <host-socket>'), skipping: $raw" >&2
+      continue
+    fi
+    # Bare names only — this file has no pattern grammar, by contract: agent
+    # forwarding is fail-closed by absence, and the VM token lands verbatim in
+    # `Host tart-<vm>`, so a pattern token (`*`, a comma list) would grant an
+    # agent to VMs never listed here. The agent token gets the same gate — it
+    # names the in-VM socket path /run/tart/agent-<name>.sock.
+    if ! bare_name "$vm"; then
+      echo "$prog: $SSH_AGENTS_CONFIG:$lineno: VM token '$vm' is not a bare name, skipping: $raw" >&2
+      continue
+    fi
+    if ! bare_name "$agent"; then
+      echo "$prog: $SSH_AGENTS_CONFIG:$lineno: agent token '$agent' is not a bare name, skipping: $raw" >&2
       continue
     fi
     ssh_agents_vms+=("$vm")
@@ -173,10 +209,15 @@ emit() {
   # ("closed by remote host" / broken-pipe). SSH keepalives own session liveness.
   echo "  ProxyCommand /bin/sh -c 'n=\${1#tart-}; ip=\$(\"$TART_BIN\" ip \"\$n\" 2>/dev/null) && [ -n \"\$ip\" ] || { echo \"tart-vm: \$n is not running. Start it: tart-up \$n\" >&2; exit 1; }; exec $NC_BIN -G 5 \"\$ip\" 22' _ %n"
   echo
+  # ( : </dev/tty ), not [ -t 0 ]: ssh runs Match-exec commands with stdin
+  # already redirected to /dev/null, so a stdin test would never pass and
+  # auto-start would silently die everywhere.
   echo "# Auto-start a stopped VM on interactive login only. sessiontype short-"
   echo "# circuits the exec, so git/rsync (exec), sftp (subsystem) and \`ssh -N\`"
-  echo "# (none) never trigger it — only an interactive shell does."
-  echo "Match host tart-* sessiontype shell exec \"$TART_UP_BIN %n\""
+  echo "# (none) never trigger it. The /dev/tty gate skips contexts with no"
+  echo "# controlling terminal (IDE config scans, automation) — those pre-warm"
+  echo "# with tart-up instead."
+  echo "Match host tart-* sessiontype shell exec \"/bin/sh -c '( : </dev/tty ) 2>/dev/null && exec \\\"\$1\\\" \\\"\$2\\\"' _ '$TART_UP_BIN' %n\""
 
   # One Host block per VM declared in ssh-agents, preserving first-seen order.
   # PRIMARY agent (first listed for this VM) becomes ForwardAgent — sshd sets
@@ -256,6 +297,15 @@ emit() {
   fi
 }
 
+# config_valid <file> — 0 iff ssh parses <file> as a complete ssh_config.
+# `ssh -G` reads and validates the whole file without ever connecting; -F
+# keeps the user's real config out of the parse. The probe host must NOT
+# match tart-* — Match short-circuits on the host criterion, so the
+# auto-start exec hook cannot fire during validation.
+config_valid() {
+  ssh -G -F "$1" syntax-probe.invalid >/dev/null 2>&1
+}
+
 if [ "$DRY_RUN" -eq 1 ]; then
   emit
   exit 0
@@ -265,8 +315,20 @@ mkdir -p "$(dirname "$OUTPUT")"
 tmp=$(mktemp "${OUTPUT}.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
 emit > "$tmp"
+# The output is Included by the global ssh config, so one malformed line
+# breaks every ssh/scp/git on the host. Gate activation on a full ssh parse;
+# on failure keep the live file as-is and preserve the candidate for
+# inspection (the mv also takes it out of the EXIT trap's reach).
+if ! config_valid "$tmp"; then
+  mv "$tmp" "${OUTPUT}.rejected"
+  echo "$prog: generated config failed ssh -G validation — kept at ${OUTPUT}.rejected; $OUTPUT left untouched." >&2
+  exit 1
+fi
 mv "$tmp" "$OUTPUT"
 chmod 600 "$OUTPUT"
+# A healthy sync supersedes any earlier rejected candidate — drop it so a
+# stale .rejected can't outlive the failure it documented.
+rm -f "${OUTPUT}.rejected"
 trap - EXIT
 
 if [ "${#ssh_agents_vms[@]}" -gt 0 ]; then
