@@ -70,16 +70,6 @@ usage: $prog <vm>                supervise <vm> in the foreground (loops)
 EOF
 }
 
-label_for() { printf 'com.tart-stacks.supervise.%s' "$1"; }
-
-# Query Tart for one VM's state by exact name; empty output = no such VM. A
-# nonzero exit means tart itself failed — callers must keep "broken tool" and
-# "VM missing" distinct: --install refuses on either, but only a CONFIRMED
-# miss may advance the loop's gone-VM counter.
-resolve_state() {
-  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
-}
-
 # ensure_up <vm> — if the VM's process is gone, clear any wedged state and start
 # it. tart-up owns start + provision + readiness; this adds only the crash-state
 # cleanup that restarting after an abnormal exit needs.
@@ -97,7 +87,7 @@ ensure_up() {
 
 supervise_loop() {
   local vm="$1" backoff="$BACKOFF_BASE" up_start up state absent=0 label
-  label=$(label_for "$vm")
+  label=$(tart_supervise_label "$vm")
   while :; do
     ensure_up "$vm" || log "'$vm' did not come up; will retry"
     up_start=$(date +%s)
@@ -110,7 +100,7 @@ supervise_loop() {
     # left to restart and would otherwise retry forever, so it removes itself.
     # A FAILING `tart list` is "cannot tell", never "absent" — the counter
     # holds, or transient tart breakage would self-destruct supervision.
-    if state=$(resolve_state "$vm"); then
+    if state=$(tart_vm_state "$vm"); then
       if [ -n "$state" ]; then
         absent=0
       else
@@ -159,7 +149,7 @@ render_plist() { # <vm> <self> <path-env> <logfile>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>$(label_for "$vm")</string>
+  <key>Label</key><string>$(tart_supervise_label "$vm")</string>
   <key>ProgramArguments</key>
   <array>
     <string>$self</string>
@@ -192,7 +182,7 @@ install_agent() {
   # retries a hopeless tart-up forever; a base image would loop just as
   # endlessly on tart-up's clone-source refusal.
   local state
-  if ! state=$(resolve_state "$vm"); then
+  if ! state=$(tart_vm_state "$vm"); then
     echo "$prog: 'tart list' failed — cannot verify '$vm' exists; see the error above." >&2
     return 1
   fi
@@ -205,7 +195,7 @@ install_agent() {
     return 1
   fi
   local label plist path_env logfile tart_dir tartup_dir jq_dir
-  label=$(label_for "$vm")
+  label=$(tart_supervise_label "$vm")
   plist="$LAUNCHAGENTS_DIR/$label.plist"
   tart_dir=$(dirname "$(command -v tart)")
   tartup_dir=$(dirname "$(command -v tart-up)")
@@ -229,7 +219,7 @@ uninstall_agent() {
   local vm="$1"
   tart_need_cmd launchctl
   local label plist
-  label=$(label_for "$vm")
+  label=$(tart_supervise_label "$vm")
   plist="$LAUNCHAGENTS_DIR/$label.plist"
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   rm -f "$plist"

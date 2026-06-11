@@ -62,14 +62,7 @@ tart_need_cmd jq   "Install: brew install jq"
 # 30 silent probe failures and a misleading ":22 timeout" diagnosis.
 [ -x "$NC_BIN" ] || { echo "$prog: SSH probe binary '$NC_BIN' not found or not executable." >&2; exit 1; }
 
-# Query Tart for one VM's state by exact name; empty output = no such VM.
-# stderr stays attached, so when tart (or jq, fed garbage) fails, the real
-# error reaches the terminal — the lookup below adds context and stops.
-resolve_state() {
-  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
-}
-
-# A nonzero resolve_state means the tool is broken, not that the name missed —
+# A nonzero tart_vm_state means the tool is broken, not that the name missed —
 # bail instead of retrying the swapped prefix against the same broken tool.
 list_failed() {
   echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
@@ -79,13 +72,13 @@ list_failed() {
 # Two-way prefix lookup: the SSH alias is `tart-<name>` (so `%n` arrives
 # prefixed), but Tart stores VMs bare. Try the name as-given, then swap the
 # prefix on a miss so either form works. Empty after both = genuinely absent.
-STATE=$(resolve_state "$VM") || list_failed
+STATE=$(tart_vm_state "$VM") || list_failed
 if [ -z "$STATE" ]; then
   case "$VM" in
     tart-*) ALT="${VM#tart-}" ;;
     *)      ALT="tart-$VM" ;;
   esac
-  STATE=$(resolve_state "$ALT") || list_failed
+  STATE=$(tart_vm_state "$ALT") || list_failed
   if [ -z "$STATE" ]; then
     echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list' or 'tart-new $VM <stack> <distro>'." >&2
     exit 1

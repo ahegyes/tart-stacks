@@ -11,6 +11,19 @@
 # tart_need_cmd <tool> [install-hint] — preflight; exit 1 if the tool is missing.
 tart_need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "${prog:-${0##*/}}: '$1' not on PATH. ${2:-}" >&2; exit 1; }; }
 
+# tart_vm_state <name> — print the VM's `tart list` State by exact name; empty
+# output = no such VM. stderr stays attached so tart's (or jq's) real error
+# reaches the terminal. A nonzero exit means the tool itself failed — callers
+# must keep "broken tool" and "VM missing" distinct.
+tart_vm_state() {
+  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
+}
+
+# tart_supervise_label <vm> — the per-VM supervision LaunchAgent label.
+# tart-supervise owns the agent lifecycle; tart-rm probes the same label to
+# drop supervision before deleting a VM.
+tart_supervise_label() { printf 'com.tart-stacks.supervise.%s' "$1"; }
+
 # tart_is_base_image <bare-name> <stacks-dir> <distros-file> — 0 if the name is a
 # clone-source (the <distro>-base bootstrap intermediate, or a <distro>-<stack>
 # built image), not a dev VM. Anchored on the supported distro set so hyphenated

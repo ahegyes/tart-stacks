@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# tart-rm — delete a Tart project VM, with the teardown `tart delete` lacks:
+# resolves the bare or `tart-`-prefixed name, refuses stack base images, drops
+# any supervision LaunchAgent before touching the VM (a live supervisor would
+# resurrect it mid-teardown), stops a running VM before the delete, and scrubs
+# the VM's host-key pin from ~/.ssh/known_hosts.tart — the destroy-side mirror
+# of tart-new's guarded create.
+#
+# Usage:
+#   tart-rm <vm-name>
+#
+# No confirmation prompt: `tart delete` itself has none, and matching that
+# keeps the command scriptable — the guards above are the value added.
+set -euo pipefail
+
+prog="${0##*/}"
+
+# Resolve this script's real dir (following the ~/.local/bin symlink that
+# script/setup installs) to source the shared bin/lib helpers — and to invoke
+# the sibling tart-supervise below by real path rather than PATH lookup.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+# shellcheck source=bin/lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+
+tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
+tart_need_cmd jq   "Install: brew install jq"
+
+# Repo root + stacks dir (TART_STACKS_DIR / TART_DISTROS override for tests),
+# used by the base-image guard below to recognize any built stack image.
+REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
+DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+# Where tart-supervise keeps its per-VM LaunchAgent plists; the file's
+# presence is the signal that this VM is supervised.
+LAUNCHAGENTS_DIR="${TART_LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
+
+usage() {
+  echo "usage: $prog <vm-name>" >&2
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+[ $# -eq 1 ] || { usage; exit 64; }
+
+VM="$1"
+
+# A nonzero tart_vm_state means the tool is broken, not that the name missed —
+# bail instead of retrying the swapped prefix against the same broken tool.
+list_failed() {
+  echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
+  exit 1
+}
+
+# Two-way prefix lookup: the SSH alias is `tart-<name>`, but Tart stores VMs
+# bare. Try the name as-given, then swap the prefix on a miss so either form
+# works. Empty after both = genuinely absent.
+STATE=$(tart_vm_state "$VM") || list_failed
+if [ -z "$STATE" ]; then
+  case "$VM" in
+    tart-*) ALT="${VM#tart-}" ;;
+    *)      ALT="tart-$VM" ;;
+  esac
+  STATE=$(tart_vm_state "$ALT") || list_failed
+  if [ -z "$STATE" ]; then
+    echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list'." >&2
+    exit 1
+  fi
+  VM="$ALT"
+fi
+
+# Base images (the `<distro>-base` bootstrap intermediate + every <distro>-<stack>
+# built image) are clone-sources, not dev VMs — losing one costs a 15-20 min
+# rebuild, so removing one stays a deliberate raw-tart (or make) act. Refuse.
+if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE"; then
+  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to remove it. Delete a base deliberately with 'tart delete $VM', or rebuild it with 'make rebuild STACK=<stack> DISTRO=<distro>'." >&2
+  exit 1
+fi
+
+# Drop supervision FIRST: a live supervisor restarts its VM within one poll,
+# so left in place it would resurrect the VM between the stop and the delete
+# below. The sibling script owns all supervision logic — uninstall goes
+# through it, by real path so teardown works even where setup's PATH symlinks
+# don't. Its uninstall leaves a running VM running (the stop below handles
+# that), and a failed uninstall aborts the whole teardown (set -e): deleting
+# out from under a live supervisor is exactly the race this ordering prevents.
+SUPERVISED=0
+if [ -e "$LAUNCHAGENTS_DIR/$(tart_supervise_label "$VM").plist" ]; then
+  "$SCRIPT_DIR/tart-supervise" --uninstall "$VM"
+  SUPERVISED=1
+fi
+
+# Unmasked on purpose: a failed stop must abort before the delete. On a
+# crash-wedged VM (listed "running" with no live process) the same `tart stop`
+# clears the wedged state, so the one call is right for live and wedged alike.
+if [ "$STATE" = "running" ]; then
+  tart stop "$VM"
+fi
+
+tart delete "$VM"
+
+# The delete-side twin of tart-new's create-side scrub: with the pin gone, a
+# future VM reusing this name re-pins fresh instead of tripping accept-new.
+ssh-keygen -R "tart-$VM" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
+
+if [ "$SUPERVISED" -eq 1 ]; then
+  echo "$prog: removed '$VM' — supervision dropped, VM deleted, host-key pin cleared" >&2
+else
+  echo "$prog: removed '$VM' — VM deleted, host-key pin cleared" >&2
+fi
