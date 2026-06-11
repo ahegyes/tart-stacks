@@ -58,13 +58,15 @@ if stack_exists rust; then bad "stack_exists false for absent stack" "rc 1" "rc 
 
 # Mock `tart` so list output is deterministic and clone/set are recorded.
 # Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
-# real field tart-new's image_built keys on.
+# real field tart-new's image_built keys on. MOCK_TART_SET_RC makes `tart set`
+# fail with that status (the call is still recorded first).
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/tart" <<'TART'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TART_CALLS"
 case "$1" in
   list) cat "$TART_LIST_JSON" ;;
+  set)  exit "${MOCK_TART_SET_RC:-0}" ;;
   *)    : ;;
 esac
 exit 0
@@ -127,6 +129,15 @@ assert_eq       "collision exits 1" 1 "$rc"
 assert_contains "collision message names the VM" "$(<"$WORK/err")" "'app-a' already exists"
 assert_absent   "collision does not clone" "$(<"$TART_CALLS")" "clone"
 
+# Collision with an unbuilt image → the collision gate wins: no build hint, no
+# build offer for a name that can't be used anyway.
+: > "$TART_CALLS"
+run_new app-a jvm fedora
+assert_eq       "collision precedes the build gate" 1 "$rc"
+assert_contains "collision-vs-unbuilt reports the collision" "$(<"$WORK/err")" "'app-a' already exists"
+assert_absent   "collision-vs-unbuilt skips the build hint"  "$(<"$WORK/err")" "build it with:"
+assert_absent   "collision-vs-unbuilt does not clone" "$(<"$TART_CALLS")" "clone"
+
 # Seed known_hosts.tart with real-key pins: a recreated VM gets a fresh host
 # key, so tart-new drops the alias's stale pin while unrelated pins survive.
 # (Seeds must parse — ssh-keygen -R refuses to rewrite a file with invalid
@@ -157,9 +168,31 @@ run_new bare php fedora
 assert_eq     "no-resource path exits 0" 0 "$rc"
 assert_absent "no-resource path skips tart set" "$(<"$TART_CALLS")" "set bare"
 
+# `tart set` failure after a successful clone: the scrub precedes the clone, so
+# the aborted create leaves no stale alias pin behind; unrelated pins survive.
+printf 'tart-half %s\ntart-keep2 %s\n' "$seed_pub" "$seed_pub" > "$WORK/home/.ssh/known_hosts.tart"
+: > "$TART_CALLS"
+MOCK_TART_SET_RC=7 run_new half php fedora --cpu 2
+assert_eq       "failing tart set propagates its exit code" 7 "$rc"
+assert_contains "clone ran before the failing set" "$(<"$TART_CALLS")" "clone fedora-php half"
+assert_contains "set was attempted"                "$(<"$TART_CALLS")" "set half --cpu 2"
+assert_absent   "alias pin scrubbed despite the failed set" "$(<"$WORK/home/.ssh/known_hosts.tart")" "tart-half"
+assert_contains "unrelated pin survives the aborted create" "$(<"$WORK/home/.ssh/known_hosts.tart")" "tart-keep2"
+
 # Bad arity (only 2 positionals, missing distro) → usage, exit 64.
 run_new only-one two
 assert_eq "missing distro arg exits 64" 64 "$rc"
+
+# Space-form flag with no value → usage error (64), not a raw set -u death.
+run_new foo php fedora --cpu
+assert_eq       "valueless --cpu exits 64" 64 "$rc"
+assert_contains "valueless --cpu names the flag" "$(<"$WORK/err")" "option '--cpu' requires a value"
+assert_contains "valueless --cpu prints usage"   "$(<"$WORK/err")" "usage: tart-new"
+assert_absent   "valueless --cpu is a clean usage error" "$(<"$WORK/err")" "unbound variable"
+run_new foo php fedora --memory
+assert_eq "valueless --memory exits 64" 64 "$rc"
+run_new foo php fedora --disk-size
+assert_eq "valueless --disk-size exits 64" 64 "$rc"
 
 # ── tart_is_base_image unit tests ────────────────────────────────────────────
 # Source bin/lib/common.sh and exercise it directly.

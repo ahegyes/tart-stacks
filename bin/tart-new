@@ -69,6 +69,15 @@ usage() {
   echo "usage: $prog <name> <stack> <distro> [--cpu N] [--memory MB] [--disk-size GB]" >&2
 }
 
+# need_value <flag> <argc> — usage error (64) for a space-form flag with no
+# value; an unguarded "$2" read dies as an opaque set -u error instead.
+need_value() {
+  [ "$2" -ge 2 ] && return 0
+  echo "$prog: option '$1' requires a value" >&2
+  usage
+  exit 64
+}
+
 tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
 tart_need_cmd jq   "Install: brew install jq"
 
@@ -76,9 +85,9 @@ CPU="" MEM="" DISK=""
 positionals=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --cpu)         CPU="$2"; shift 2 ;;
-    --memory)      MEM="$2"; shift 2 ;;
-    --disk-size)   DISK="$2"; shift 2 ;;
+    --cpu)         need_value "$1" $#; CPU="$2"; shift 2 ;;
+    --memory)      need_value "$1" $#; MEM="$2"; shift 2 ;;
+    --disk-size)   need_value "$1" $#; DISK="$2"; shift 2 ;;
     --cpu=*)       CPU="${1#*=}"; shift ;;
     --memory=*)    MEM="${1#*=}"; shift ;;
     --disk-size=*) DISK="${1#*=}"; shift ;;
@@ -107,7 +116,14 @@ fi
 # Image name for this stack + distro — used by the not-built hint and the clone below.
 img="$(image_for_stack "$STACK" "$DISTRO")"
 
-# 3. Image must be built. Offer to build interactively; otherwise fail with the
+# 3. No clobbering an existing VM. Sits ahead of the build offer so a 15-20 min
+#    build can never end in "already exists".
+if vm_exists "$NAME"; then
+  echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
+  exit 1
+fi
+
+# 4. Image must be built. Offer to build interactively; otherwise fail with the
 #    exact command (no silent 15-20 min side-effect).
 if ! image_built "$STACK" "$DISTRO"; then
   echo "$prog: stack '$STACK' image '$img' is not built." >&2
@@ -124,11 +140,12 @@ if ! image_built "$STACK" "$DISTRO"; then
   fi
 fi
 
-# 4. No clobbering an existing VM.
-if vm_exists "$NAME"; then
-  echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
-  exit 1
-fi
+# Drop any stale known_hosts entry for this alias: a recreated VM gets a fresh
+# per-VM host key (tart-up regenerates it), which would otherwise trip accept-new.
+# The scrub precedes the clone — the collision gate has proven the name free, so
+# any surviving pin is stale by definition, and a failure between clone and set
+# can't strand it.
+ssh-keygen -R "tart-$NAME" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
 # 5. Clone, then fold in resources if any were given.
 tart clone "$img" "$NAME"
@@ -137,9 +154,5 @@ set_args=()
 [ -n "$MEM" ]  && set_args+=(--memory "$MEM")
 [ -n "$DISK" ] && set_args+=(--disk-size "$DISK")
 [ "${#set_args[@]}" -gt 0 ] && tart set "$NAME" "${set_args[@]}"
-
-# Drop any stale known_hosts entry for this alias: a recreated VM gets a fresh
-# per-VM host key (tart-up regenerates it), which would otherwise trip accept-new.
-ssh-keygen -R "tart-$NAME" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
 echo "$prog: created '$NAME' from $img — next: ssh tart-$NAME" >&2
