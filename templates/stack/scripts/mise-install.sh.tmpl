@@ -12,8 +12,9 @@ source /tmp/mise-lib.sh
 
 mise_runtime_setup
 
-# Smoke test (hard gate): one command per tool declared in files/mise.toml.
+# Smoke test (hard gate): one `--`-delimited command per tool declared in
+# files/mise.toml — argv tokens, not a quoted string.
 smoke_gate "__STACK__ runtimes" \
-  "node --version"
+  -- node --version
 
 echo "==> mise-install.sh (__STACK__) complete."

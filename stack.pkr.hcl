@@ -151,13 +151,15 @@ build {
     destination = "/tmp/xterm-ghostty.terminfo"
   }
 
-  # System-level config requiring root + the uploaded files: user shell/PATH, then
-  # compile the vendored terminfo (xterm-ghostty, which ncurses-term lacks).
+  # System-level config requiring root + the uploaded files: user shell/PATH,
+  # the vendored terminfo (xterm-ghostty, which ncurses-term lacks), and the
+  # first-boot host-key oneshot every clone triggers before its sshd starts.
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
       "shared/scripts/user-config.sh",
       "shared/scripts/terminfo.sh",
+      "shared/scripts/host-keys.sh",
     ]
   }
 
@@ -175,6 +177,9 @@ build {
   # disconnecting" constraint structural. Packer disconnects right after.
   provisioner "shell" {
     execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    # The provenance manifest names the cell it was built as; sudo -E carries
+    # these through to the script.
+    environment_vars  = ["STACK=${var.stack}", "DISTRO=${var.distro}"]
     expect_disconnect = true
     scripts           = ["shared/scripts/99-finalize.sh"]
   }

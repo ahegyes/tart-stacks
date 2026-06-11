@@ -57,7 +57,7 @@ node = "lts"
 # Set to true while debugging tool installs.
 verbose = false
 
-# Trust .mise.toml under $HOME without prompting. The Tart VM is a
-# single-user dev box; the user owns everything in $HOME, so prompting
-# per-project would be friction without security benefit.
-trusted_config_paths = ["~"]
+# Project-local .mise.toml files stay untrusted until an explicit `mise trust`:
+# a cloned repo's config is executable (tool installs, env hooks on activation),
+# and the per-project prompt is the supply-chain gate this VM exists to keep.
+# This global file lives in mise's own default-trusted location.

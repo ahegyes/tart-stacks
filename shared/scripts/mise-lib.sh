@@ -23,31 +23,48 @@ mise_runtime_setup() {
   mise list
   # Activate so mise-managed binaries are on PATH for the rest of the script.
   eval "$(mise activate bash)"
+  # Staged for /etc/tart-stacks-release — 99-finalize composes the manifest.
+  mise list > /tmp/tart-stacks-tools 2>/dev/null || true
   # Corepack: flip pnpm/yarn shims to each project's package.json "packageManager".
+  # Gated: corepack ships with Node, and a stack whose mise.toml omits Node must
+  # not fail in a shared-lib line its author never wrote.
   echo ""
-  echo "==> Enabling Corepack for per-project pnpm/yarn shimming..."
-  corepack enable
+  if command -v corepack >/dev/null 2>&1; then
+    echo "==> Enabling Corepack for per-project pnpm/yarn shimming..."
+    corepack enable
+  else
+    echo "==> corepack not present (no Node in this stack) — skipping Corepack."
+  fi
 }
 
-# smoke_gate <label> <cmd>... — HARD GATE: run each command, print its first
-# meaningful output line, and exit 1 if any errors, so the Packer build fails rather
-# than shipping a broken toolchain. For command-based stacks (jvm, python). Stacks
-# whose smoke is membership-based (php's `php -m`) keep their own loop.
+# smoke_gate <label> -- <cmd> [args…] [-- <cmd> [args…]]… — HARD GATE: run each
+# `--`-delimited argv group, print its first meaningful output line, and exit 1
+# if any fails, so the Packer build fails rather than shipping a broken
+# toolchain. Argv groups (never strings, never eval) keep arguments word-split-
+# safe for every future stack author. Empty groups (doubled or trailing `--`)
+# are ignored. For command-based stacks (jvm, python). Stacks whose smoke is
+# membership-based (php's `php -m`) keep their own loop.
 smoke_gate() {
   local label="$1"; shift
   echo ""
   echo "==> Smoke test (hard gate): $label"
-  local cmd output failed=0
-  for cmd in "$@"; do
-    printf "  %-26s " "$cmd"
+  local output failed=0 tok
+  local -a cmd=()
+  # A trailing sentinel so the loop flushes the final group uniformly.
+  set -- "$@" --
+  for tok in "$@"; do
+    if [ "$tok" != "--" ]; then cmd+=("$tok"); continue; fi
+    [ "${#cmd[@]}" -gt 0 ] || continue
+    printf "  %-26s " "${cmd[*]}"
     # First non-empty, non-separator line (e.g. `gradle --version` leads with a box border).
-    if output=$(eval "$cmd" 2>&1); then
+    if output=$("${cmd[@]}" 2>&1); then
       echo "$output" | awk '/^[^-]/ && NF { print; exit }'
     else
       echo "FAILED"
       echo "$output" >&2
       failed=$((failed + 1))
     fi
+    cmd=()
   done
   if [ "$failed" -gt 0 ]; then
     echo "" >&2

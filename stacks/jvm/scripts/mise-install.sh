@@ -19,14 +19,14 @@ source /tmp/mise-lib.sh
 mise_runtime_setup
 
 smoke_gate "tool version checks" \
-  "java --version" \
-  "mvn -v" \
-  "gradle --version" \
-  "sbt --script-version" \
-  "scala-cli version" \
-  "kotlinc -version" \
-  "uv --version" \
-  "node --version"
+  -- java --version \
+  -- mvn -v \
+  -- gradle --version \
+  -- sbt --script-version \
+  -- scala-cli version \
+  -- kotlinc -version \
+  -- uv --version \
+  -- node --version
 
 # Maven hello-world build — proves the toolchain actually wires up, not just that
 # the binaries are present. Catches the case where Java + Maven are individually

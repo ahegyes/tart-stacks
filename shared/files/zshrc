@@ -6,9 +6,18 @@ if command -v mise >/dev/null 2>&1; then
   eval "$(mise activate zsh)"
 fi
 
-# fzf: Ctrl-R fuzzy history search, ** tab completion for paths.
-[ -f /usr/share/fzf/shell/key-bindings.zsh ] && source /usr/share/fzf/shell/key-bindings.zsh
-[ -f /usr/share/fzf/shell/completion.zsh ]   && source /usr/share/fzf/shell/completion.zsh
+# Programmable completion (git, gh, ssh tab-completion): nothing else in the
+# image runs compinit, and fzf's completion.zsh needs compdef defined first.
+autoload -Uz compinit && compinit
+
+# fzf: Ctrl-R fuzzy history search, ** tab completion for paths. Fedora ships
+# the zsh hooks under /usr/share/fzf/shell/, Debian/Ubuntu under
+# /usr/share/doc/fzf/examples/ — probe both.
+for _fzf_dir in /usr/share/fzf/shell /usr/share/doc/fzf/examples; do
+  [ -f "$_fzf_dir/key-bindings.zsh" ] && source "$_fzf_dir/key-bindings.zsh"
+  [ -f "$_fzf_dir/completion.zsh" ]   && source "$_fzf_dir/completion.zsh"
+done
+unset _fzf_dir
 
 # Host SSH agent. tart-ssh-sync forwards it via OpenSSH ForwardAgent, so sshd
 # already exports SSH_AUTH_SOCK in every session — this block is just a fallback

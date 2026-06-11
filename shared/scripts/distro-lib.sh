@@ -42,13 +42,27 @@ pkg_install() {
 
 # pkg_install_optional <pkg…> — install what's available, warn on the rest
 # (dnf has --skip-unavailable; apt has no equivalent, so loop per package).
+# Skips are also appended to ${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped} so
+# 99-finalize can record them in /etc/tart-stacks-release. dnf's flag is silent
+# about WHICH packages it skipped, so that branch detects skips by post-checking
+# the rpm database; apt's per-package loop knows directly.
 pkg_install_optional() {
+  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p
   case "$_DISTRO_FAMILY" in
-    dnf) dnf install -y --skip-unavailable "$@" ;;
-    apt) export DEBIAN_FRONTEND=noninteractive; local p
+    dnf) dnf install -y --skip-unavailable "$@"
+         for p in "$@"; do
+           rpm -q "$p" >/dev/null 2>&1 || {
+             echo "distro-lib: optional package '$p' unavailable — skipped." >&2
+             echo "$p" >> "$skipfile"
+           }
+         done ;;
+    apt) export DEBIAN_FRONTEND=noninteractive
          for p in "$@"; do
            apt-get install -y --no-install-recommends "$p" \
-             || echo "distro-lib: optional package '$p' unavailable — skipped." >&2
+             || {
+               echo "distro-lib: optional package '$p' unavailable — skipped." >&2
+               echo "$p" >> "$skipfile"
+             }
          done ;;
   esac
 }

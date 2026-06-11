@@ -16,7 +16,7 @@ echo "==> Installing core development packages (fail-loud)..."
 repo_add_github_cli
 case "$_DISTRO_FAMILY" in
   dnf) core="curl wget ca-certificates git gh zsh nano unzip tar ncurses ncurses-term gcc gcc-c++ make" ;;
-  apt) core="curl wget ca-certificates git gh zsh nano unzip tar ncurses-base ncurses-bin g++ gcc make gnupg" ;;
+  apt) core="curl wget ca-certificates git gh zsh nano unzip tar ncurses-base ncurses-bin ncurses-term g++ gcc make gnupg" ;;
 esac
 # shellcheck disable=SC2086  # intentional word-split of the package list
 pkg_install $core

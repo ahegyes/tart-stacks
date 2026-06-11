@@ -45,6 +45,35 @@ assert_mac_enforcing || exit 1
 echo "==> Cleaning package cache..."
 pkg_clean
 
+# Provenance manifest: the build floats its inputs (latest base image, lts/
+# latest tools), so record what they RESOLVED to — "what is this image
+# carrying?" must be answerable from a clone without booting and inspecting
+# tool-by-tool. Staged fragments: /tmp/tart-stacks-tools (mise-install) and
+# /tmp/tart-stacks-skipped (distro-lib's optional-install skips). STACK/DISTRO
+# arrive as environment_vars from the Packer template.
+echo "==> Writing /etc/tart-stacks-release..."
+{
+  echo "built: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "stack: ${STACK:-unknown}"
+  echo "distro: ${DISTRO:-unknown}"
+  # shellcheck disable=SC1091  # guest-only file, absent at lint time
+  ( . /etc/os-release 2>/dev/null || true; echo "os: ${PRETTY_NAME:-unknown} (${VERSION_ID:-?})" )
+  echo ""
+  if [ -f /tmp/tart-stacks-tools ]; then
+    echo "tools:"
+    cat /tmp/tart-stacks-tools
+    echo ""
+  fi
+  if [ -s /tmp/tart-stacks-skipped ]; then
+    echo "skipped-optional-packages:"
+    sort -u /tmp/tart-stacks-skipped
+  else
+    echo "skipped-optional-packages: none recorded"
+  fi
+} > /etc/tart-stacks-release
+chmod 644 /etc/tart-stacks-release
+rm -f /tmp/tart-stacks-tools /tmp/tart-stacks-skipped
+
 # Authorize the user's SSH key.
 if [ ! -f /tmp/authorized_key.pub ]; then
   echo "ERROR: /tmp/authorized_key.pub not found. Did the Packer file provisioner run?" >&2
