@@ -176,9 +176,11 @@ build {
   # makes the "no provisioner between disabling password auth and Packer
   # disconnecting" constraint structural. Packer disconnects right after.
   provisioner "shell" {
-    execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
-    # The provenance manifest names the cell it was built as; sudo -E carries
-    # these through to the script.
+    # {{ .Vars }} is where Packer renders environment_vars as KEY='v' shell
+    # prefixes — a custom execute_command that omits it gets NO env vars at
+    # all. They prefix sudo, and -E carries them into the script.
+    execute_command   = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
+    # The provenance manifest names the cell it was built as.
     environment_vars  = ["STACK=${var.stack}", "DISTRO=${var.distro}"]
     expect_disconnect = true
     scripts           = ["shared/scripts/99-finalize.sh"]
