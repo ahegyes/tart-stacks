@@ -113,6 +113,22 @@ if [ -f "$FORWARDS_CONFIG" ]; then
       echo "$prog: $FORWARDS_CONFIG:$lineno: skipping 'RemoteForward' with no arguments" >&2
       continue
     fi
+    # The pattern grammar is exactly `*` | <name> | <a>,<b>,… — a partial glob
+    # like `app-*` would land verbatim in the emitted Host line, where OpenSSH
+    # treats it as a live wildcard and silently widens the forward to every
+    # matching VM. Enforce the documented grammar instead.
+    if [ "$pattern" != "*" ]; then
+      pattern_ok=1
+      IFS=',' read -r -a pat_names <<< "$pattern"
+      [ "${#pat_names[@]}" -gt 0 ] || pattern_ok=0
+      for pat_n in "${pat_names[@]}"; do
+        tart_valid_vm_name "$pat_n" || { pattern_ok=0; break; }
+      done
+      if [ "$pattern_ok" -ne 1 ]; then
+        echo "$prog: $FORWARDS_CONFIG:$lineno: pattern '$pattern' is not '*', a bare VM name, or a comma list of them — skipping: $raw" >&2
+        continue
+      fi
+    fi
 
     patterns+=("$pattern")
     forwards_args+=("$rest")

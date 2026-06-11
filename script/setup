@@ -212,12 +212,26 @@ fi
 
 echo "setup: installing host tools from $REPO_DIR"
 
-# 1. Symlink the commands onto PATH (replaces a prior copy, if any).
+# 1. Symlink the commands onto PATH. Ownership-checked like the uninstall:
+#    our own links (and prior copies of them) are replaced, but a foreign
+#    file or symlink squatting on a command name is warned about and left —
+#    an installer must not silently destroy something it didn't create.
 mkdir -p "$LOCAL_BIN"
+linked=()
 for name in "${COMMANDS[@]}"; do
-  ln -sf "$BIN_DIR/$name" "$LOCAL_BIN/$name"
+  target="$LOCAL_BIN/$name"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    if [ ! -L "$target" ] || [ "$(readlink "$target")" != "$BIN_DIR/$name" ]; then
+      warn "left $target — it is not this repo's symlink; remove it yourself and re-run setup."
+      continue
+    fi
+  fi
+  ln -sf "$BIN_DIR/$name" "$target"
+  linked+=("$name")
 done
-info "linked ${COMMANDS[*]} -> $LOCAL_BIN"
+if [ "${#linked[@]}" -gt 0 ]; then
+  info "linked ${linked[*]} -> $LOCAL_BIN"
+fi
 case ":$PATH:" in
   *":$LOCAL_BIN:"*) ;;
   *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;

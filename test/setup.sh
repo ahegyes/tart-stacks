@@ -133,6 +133,17 @@ assert_rc "catch-all install → exit 0" 0
 assert_contains "catch-all → ordering warning fires" "$(cat "$ERR")" "catch-all"
 assert_eq "catch-all → no second Include added" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 
+# install: a foreign file squatting on a command name is warned and left —
+# the installer must not destroy what it didn't create
+sandbox s4a
+mkdir -p "$LB"
+printf 'not ours\n' > "$LB/tart-up"
+run_setup
+assert_rc "foreign file at install → setup still exits 0" 0
+assert_eq "foreign file left untouched" "not ours" "$(cat "$LB/tart-up")"
+assert_contains "foreign file at install → warned about" "$(cat "$ERR")" "not this repo's symlink"
+assert_link "other commands still linked around it" "$LB/tart-new" "$REPO/bin/tart-new"
+
 # uninstall: a foreign same-named symlink is warned and left
 sandbox s4
 run_setup

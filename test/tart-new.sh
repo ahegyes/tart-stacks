@@ -194,6 +194,9 @@ run_new a,b php fedora
 assert_eq "comma name refused at create" 1 "$rc"
 run_new _lead php fedora
 assert_eq "leading-underscore name refused at create" 1 "$rc"
+run_new tart-foo php fedora
+assert_eq       "tart- prefixed name refused at create" 1 "$rc"
+assert_contains "refusal names the reserved prefix" "$(<"$WORK/err")" "reserved"
 
 # Space-form flag with no value → usage error (64), not a raw set -u death.
 run_new foo php fedora --cpu
@@ -220,6 +223,7 @@ check "star invalid"                 1 tart_valid_vm_name '*'
 check "leading dash invalid"         1 tart_valid_vm_name -x
 check "leading underscore invalid"   1 tart_valid_vm_name _x
 check "empty invalid"                1 tart_valid_vm_name ''
+check "reserved tart- prefix invalid" 1 tart_valid_vm_name tart-x
 
 echo "bin/lib/common.sh — tart_is_base_image:"
 check "<distro>-base is a base"        0 tart_is_base_image fedora-base "$WORK/stacks" "$WORK/distros2"

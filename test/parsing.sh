@@ -119,6 +119,15 @@ assert_contains  "well-formed sibling forward still emitted"   "$out" "RemoteFor
 out=$(run_sync "ghost RemoteForward 1 2")
 assert_contains  "forward for a not-yet-cloned VM is emitted verbatim" "$out" "Host tart-ghost"
 
+# The pattern grammar is exactly `*` | name | comma-list: a partial glob would
+# land in the Host line as a live OpenSSH wildcard and silently widen the
+# forward to every matching VM. Reserved-prefix elements fail the same gate.
+out=$(run_sync "app-* RemoteForward 1 2")
+assert_absent    "partial-glob pattern is not emitted"   "$out" "Host tart-app-*"
+assert_contains  "partial-glob pattern warned + skipped" "$(<"$SYNC_ERR")" "pattern 'app-*'"
+out=$(run_sync "tart-x RemoteForward 1 2")
+assert_absent    "reserved-prefix pattern is not emitted" "$out" "Host tart-tart-x"
+
 echo "bin/tart-ssh-sync — ssh-agents parser:"
 
 # The ssh-agents file is 3-column: `<vm> <agent> <host-socket>`. The host-socket

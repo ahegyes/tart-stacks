@@ -107,7 +107,7 @@ DISTRO="${positionals[2]}"
 #    Gating at create time makes every downstream assumption hold by
 #    construction; raw `tart clone` stays the escape hatch for exotic names.
 if ! tart_valid_vm_name "$NAME"; then
-  echo "$prog: invalid VM name '$NAME' — use letters, digits, '_' or '-', starting with a letter or digit (the name becomes the ssh alias and the guest hostname)." >&2
+  echo "$prog: invalid VM name '$NAME' — use letters, digits, '_' or '-', starting with a letter or digit; the 'tart-' prefix is reserved for ssh aliases. (The name becomes the ssh alias tart-$NAME and the guest hostname.)" >&2
   exit 1
 fi
 
