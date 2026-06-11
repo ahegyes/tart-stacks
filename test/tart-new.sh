@@ -32,7 +32,7 @@ mkdir -p "$WORK/stacks/php/scripts" "$WORK/stacks/jvm/scripts"
 
 # Supported-distros fixture used by the pure-helper and main-flow sections.
 printf 'fedora\n' > "$WORK/distros"
-# A two-distro variant for is_base_image tests that need ubuntu too.
+# A two-distro variant for tart_is_base_image tests that need ubuntu too.
 printf 'fedora\nubuntu\n' > "$WORK/distros2"
 
 # Extract the pure helpers from the source and exercise them directly (same
@@ -161,20 +161,19 @@ assert_absent "no-resource path skips tart set" "$(<"$TART_CALLS")" "set bare"
 run_new only-one two
 assert_eq "missing distro arg exits 64" 64 "$rc"
 
-# ── is_base_image unit tests ─────────────────────────────────────────────────
-# Extract from tart-up and exercise directly.
-extract_fn is_base_image "$BIN/tart-up" > "$WORK/base-fn.sh"
-# shellcheck source=/dev/null
-source "$WORK/base-fn.sh"
+# ── tart_is_base_image unit tests ────────────────────────────────────────────
+# Source bin/lib/common.sh and exercise it directly.
+# shellcheck source=bin/lib/common.sh
+. "$BIN/lib/common.sh"
 
-echo "bin/tart-up — is_base_image:"
-check "<distro>-base is a base"        0 is_base_image fedora-base "$WORK/stacks" "$WORK/distros2"
-check "ubuntu-base is a base"          0 is_base_image ubuntu-base "$WORK/stacks" "$WORK/distros2"
-check "<distro>-<stack> is a base"     0 is_base_image fedora-php  "$WORK/stacks" "$WORK/distros2"
-check "ubuntu-jvm is a base"           0 is_base_image ubuntu-jvm  "$WORK/stacks" "$WORK/distros2"
-check "plain dev VM not a base"        1 is_base_image app-a       "$WORK/stacks" "$WORK/distros2"
-check "hyphenated dev VM not a base"   1 is_base_image web-php     "$WORK/stacks" "$WORK/distros2"
-check "unsupported-prefix not a base"    1 is_base_image arch-php    "$WORK/stacks" "$WORK/distros2"
+echo "bin/lib/common.sh — tart_is_base_image:"
+check "<distro>-base is a base"        0 tart_is_base_image fedora-base "$WORK/stacks" "$WORK/distros2"
+check "ubuntu-base is a base"          0 tart_is_base_image ubuntu-base "$WORK/stacks" "$WORK/distros2"
+check "<distro>-<stack> is a base"     0 tart_is_base_image fedora-php  "$WORK/stacks" "$WORK/distros2"
+check "ubuntu-jvm is a base"           0 tart_is_base_image ubuntu-jvm  "$WORK/stacks" "$WORK/distros2"
+check "plain dev VM not a base"        1 tart_is_base_image app-a       "$WORK/stacks" "$WORK/distros2"
+check "hyphenated dev VM not a base"   1 tart_is_base_image web-php     "$WORK/stacks" "$WORK/distros2"
+check "unsupported-prefix not a base"    1 tart_is_base_image arch-php    "$WORK/stacks" "$WORK/distros2"
 
 echo
 echo "  $pass passed, $fail failed"

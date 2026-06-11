@@ -41,21 +41,6 @@ REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
 
-# is_base_image <bare-name> <stacks-dir> <distros-file> — 0 if the name is a
-# clone-source (the <distro>-base bootstrap intermediate, or a <distro>-<stack>
-# built image), not a dev VM. Anchored on the supported distro set so hyphenated
-# dev-VM names (e.g. web-php) are NOT misread as base images.
-is_base_image() {
-  local bare="$1" stacks_dir="$2" distros_file="$3" d rest
-  case "$bare" in *-base) return 0 ;; esac
-  while IFS= read -r d; do
-    case "$bare" in
-      "$d"-*) rest="${bare#"$d"-}"; [ -d "$stacks_dir/$rest" ] && return 0 ;;
-    esac
-  done < <(grep -vE '^[[:space:]]*(#|$)' "$distros_file" 2>/dev/null)
-  return 1
-}
-
 usage() {
   echo "usage: $prog <vm-name>" >&2
 }
@@ -94,9 +79,8 @@ fi
 
 # Base images (the `<distro>-base` bootstrap intermediate + every <distro>-<stack>
 # built image) are clone-sources, not dev VMs — but the `tart-*` SSH wildcard
-# matches them too. Refuse. Anchored on the supported distro set so a hyphenated
-# dev-VM name (e.g. web-php) is NOT misread as a base image.
-if is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE"; then
+# matches them too. Refuse.
+if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <distro>'." >&2
   exit 1
 fi
@@ -122,20 +106,6 @@ netpolicy_args() {
 # ---- per-VM directory mounts (opt-in) --------------------------------------
 MOUNTS_CONFIG=$(tart_config_path mounts)
 
-# pattern_matches <pattern> <bare-vm> — 0 if the vm-pattern selects this VM.
-#   pattern: `*` (any) | <vm> | <a>,<b>,... (comma list, no spaces).
-pattern_matches() {
-  local pattern="$1" vm="$2"
-  [ "$pattern" = "*" ] && return 0
-  local -a names=()
-  IFS=',' read -r -a names <<< "$pattern"
-  local n
-  for n in "${names[@]}"; do
-    [ "$n" = "$vm" ] && return 0
-  done
-  return 1
-}
-
 # dir_args <bare-vm> — print one `--dir=<name>:<path>[:ro]` per mounts
 # line selecting this VM. Line format: `<vm-pattern> [<name>=]<host-path>[:ro]`;
 # the in-VM share name is <name> when given (mounts at /mnt/shared/<name>), else
@@ -153,7 +123,7 @@ dir_args() {
       echo "${prog:-tart-up}: $MOUNTS_CONFIG: no path on line, skipping: $raw" >&2
       continue
     fi
-    pattern_matches "$pattern" "$vm" || continue
+    tart_pattern_matches "$pattern" "$vm" || continue
     case "$rest" in
       *:ro) ro=":ro"; path="${rest%:ro}" ;;
       *)    ro="";    path="$rest" ;;

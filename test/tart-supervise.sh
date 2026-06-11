@@ -24,7 +24,7 @@ MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
 CALLS="$WORK/calls"; export CALLS
 
 # Mocks: every call is logged to $CALLS. `ps` drives liveness — MOCK_PS_LINE sets
-# the `tart run` cmdline vm_alive's awk scans, else MOCK_ALIVE=1 emits a standard
+# the `tart run` cmdline tart_vm_alive's awk scans, else MOCK_ALIVE=1 emits a standard
 # one. `tart-up`, `tart`, `launchctl` just record and succeed. Bodies are quoted
 # heredocs — their $* / $CALLS are literal, expanded when the mock runs.
 cat > "$MOCKBIN/tart"      <<'M'
@@ -44,7 +44,7 @@ exit 0
 M
 cat > "$MOCKBIN/ps"        <<'M'
 #!/usr/bin/env bash
-# vm_alive runs `ps -axo args=`; emit a `tart run` cmdline for it to scan.
+# tart_vm_alive runs `ps -axo args=`; emit a `tart run` cmdline for it to scan.
 if [ -n "${MOCK_PS_LINE:-}" ]; then
   printf '%s\n' "$MOCK_PS_LINE"
 elif [ "${MOCK_ALIVE:-0}" = "1" ]; then

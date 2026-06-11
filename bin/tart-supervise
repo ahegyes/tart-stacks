@@ -61,36 +61,17 @@ EOF
 
 label_for() { printf 'com.tart-stacks.supervise.%s' "$1"; }
 
-# vm_alive <vm> — 0 if a `tart run <vm>` process exists. Matches <vm> as the
-# argument immediately after `tart run` — the shape tart-up always launches
-# (`tart run <vm> --no-graphics ...`). Anchoring to that position, rather than
-# scanning every argument, is what stops a token inside a LATER argument (e.g.
-# some other VM's `--dir=/path with <vm> in it`) from being mistaken for this VM
-# running. The process — not `tart list` state — is the signal: a crash removes
-# the process but can leave the listed state wedged at "running". (A manual
-# option-first `tart run --opt <vm>` reads as down and gets restarted into the
-# canonical shape — fine, since tart-up is the only launcher in play.)
-vm_alive() {
-  ps -axo args= 2>/dev/null | awk -v vm="$1" '
-    {
-      for (i = 1; i < NF; i++)
-        if ($i ~ /(^|\/)tart$/ && $(i + 1) == "run" && $(i + 2) == vm) found = 1
-    }
-    END { exit(found ? 0 : 1) }
-  '
-}
-
 # ensure_up <vm> — if the VM's process is gone, clear any wedged state and start
 # it. tart-up owns start + provision + readiness; this adds only the crash-state
 # cleanup that restarting after an abnormal exit needs.
 ensure_up() {
   local vm="$1"
-  vm_alive "$vm" && return 0
+  tart_vm_alive "$vm" && return 0
   log "'$vm' appears down — restarting"
   # Re-check liveness right before stopping: an interactive login may have raced
   # to start the VM in the gap, and we must not tear that down. `tart stop` on a
   # genuinely-dead VM only clears the wedged "running" state a crash leaves.
-  vm_alive "$vm" && return 0
+  tart_vm_alive "$vm" && return 0
   tart stop "$vm" >/dev/null 2>&1 || true
   tart-up "$vm"
 }
@@ -100,7 +81,7 @@ supervise_loop() {
   while :; do
     ensure_up "$vm" || log "'$vm' did not come up; will retry"
     up_start=$(date +%s)
-    while vm_alive "$vm"; do sleep "$POLL"; done
+    while tart_vm_alive "$vm"; do sleep "$POLL"; done
     up=$(( $(date +%s) - up_start ))
     # A VM that stayed up past HEALTHY was stable — restart promptly (reset to
     # base). A fast failure waits the current backoff now, then escalates it for
