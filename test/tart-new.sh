@@ -23,6 +23,9 @@ check() { # label expected-rc cmd...
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+# HOME sandbox for run_new: tart-new scrubs $HOME/.ssh/known_hosts.tart after a
+# clone, which must land here, never in the developer's real ~/.ssh.
+mkdir -p "$WORK/home/.ssh"
 
 # Fixture stacks/ tree: two stacks present (dirs no longer carry distro prefix).
 mkdir -p "$WORK/stacks/php/scripts" "$WORK/stacks/jvm/scripts"
@@ -53,7 +56,7 @@ assert_eq "list_stacks lists short tokens sorted" "jvm php" "$(list_stacks | sor
 if stack_exists php; then ok "stack_exists true for present stack"; else bad "stack_exists true for present stack" "rc 0" "rc 1"; fi
 if stack_exists rust; then bad "stack_exists false for absent stack" "rc 1" "rc 0"; else ok "stack_exists false for absent stack"; fi
 
-# Mock `tart` so list/get output is deterministic and clone/set are recorded.
+# Mock `tart` so list output is deterministic and clone/set are recorded.
 # Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
 # real field tart-new's image_built keys on.
 mkdir -p "$WORK/bin"
@@ -62,7 +65,6 @@ cat > "$WORK/bin/tart" <<'TART'
 printf '%s\n' "$*" >> "$TART_CALLS"
 case "$1" in
   list) cat "$TART_LIST_JSON" ;;
-  get)  cat "$TART_GET_JSON" 2>/dev/null || echo '{}' ;;
   *)    : ;;
 esac
 exit 0
@@ -94,7 +96,7 @@ if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent V
 # exit code, stderr message, and the recorded tart calls.
 run_new() { # args... -> stdout; stderr to $WORK/err; exit code in $rc
   rc=0
-  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" \
+  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" HOME="$WORK/home" \
     bash "$BIN/tart-new" "$@" >"$WORK/out" 2>"$WORK/err" </dev/null || rc=$?
 }
 
@@ -125,6 +127,14 @@ assert_eq       "collision exits 1" 1 "$rc"
 assert_contains "collision message names the VM" "$(<"$WORK/err")" "'app-a' already exists"
 assert_absent   "collision does not clone" "$(<"$TART_CALLS")" "clone"
 
+# Seed known_hosts.tart with real-key pins: a recreated VM gets a fresh host
+# key, so tart-new drops the alias's stale pin while unrelated pins survive.
+# (Seeds must parse — ssh-keygen -R refuses to rewrite a file with invalid
+# lines — and the fixed -C keeps hostnames out of the key comment.)
+ssh-keygen -q -t ed25519 -N '' -C seed -f "$WORK/seed-key"
+seed_pub=$(<"$WORK/seed-key.pub")
+printf 'tart-web %s\ntart-keep %s\n' "$seed_pub" "$seed_pub" > "$WORK/home/.ssh/known_hosts.tart"
+
 # Happy path with resources → clones from fedora-php, then tart set.
 : > "$TART_CALLS"
 run_new web php fedora --cpu 4 --memory 8192 --disk-size 60
@@ -132,6 +142,8 @@ assert_eq       "happy path exits 0" 0 "$rc"
 assert_contains "clones from the stack image" "$(<"$TART_CALLS")" "clone fedora-php web"
 assert_contains "sets resources"              "$(<"$TART_CALLS")" "set web --cpu 4 --memory 8192 --disk-size 60"
 assert_contains "prints next-step hint"       "$(<"$WORK/err")"   "next: ssh tart-web"
+assert_absent   "scrubs the alias's stale known_hosts pin" "$(<"$WORK/home/.ssh/known_hosts.tart")" "tart-web"
+assert_contains "unrelated known_hosts pins survive"       "$(<"$WORK/home/.ssh/known_hosts.tart")" "tart-keep"
 
 # --opt=value parses identically to --opt value (same recorded tart set).
 : > "$TART_CALLS"
