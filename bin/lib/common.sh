@@ -14,12 +14,12 @@ tart_need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "${prog:-${0##*/}}: 
 # tart_is_base_image <bare-name> <stacks-dir> <distros-file> — 0 if the name is a
 # clone-source (the <distro>-base bootstrap intermediate, or a <distro>-<stack>
 # built image), not a dev VM. Anchored on the supported distro set so hyphenated
-# dev-VM names (e.g. web-php) are NOT misread as base images.
+# dev-VM names (e.g. web-php, app-base) are NOT misread as base images.
 tart_is_base_image() {
   local bare="$1" stacks_dir="$2" distros_file="$3" d rest
-  case "$bare" in *-base) return 0 ;; esac
   while IFS= read -r d; do
     case "$bare" in
+      "$d"-base) return 0 ;;
       "$d"-*) rest="${bare#"$d"-}"; [ -d "$stacks_dir/$rest" ] && return 0 ;;
     esac
   done < <(grep -vE '^[[:space:]]*(#|$)' "$distros_file" 2>/dev/null)

@@ -174,6 +174,7 @@ check "ubuntu-jvm is a base"           0 tart_is_base_image ubuntu-jvm  "$WORK/s
 check "plain dev VM not a base"        1 tart_is_base_image app-a       "$WORK/stacks" "$WORK/distros2"
 check "hyphenated dev VM not a base"   1 tart_is_base_image web-php     "$WORK/stacks" "$WORK/distros2"
 check "unsupported-prefix not a base"    1 tart_is_base_image arch-php    "$WORK/stacks" "$WORK/distros2"
+check "-base without a distro not a base" 1 tart_is_base_image app-base    "$WORK/stacks" "$WORK/distros2"
 
 echo
 echo "  $pass passed, $fail failed"

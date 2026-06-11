@@ -210,11 +210,15 @@ check "comma-list rejects a non-member" 1 tart_pattern_matches 'a,b,c' z
 # ── bin/tart-up: netpolicy parser (netpolicy_args) ──────────
 # netpolicy is VM-agnostic — one flag-list file applies uniformly to every VM.
 # Tokens are whitespace-separated, # comments stripped, blank lines tolerated.
-netpolicy() { # netpolicy-file-content -> stdout of netpolicy_args
+# Every token must be a tart --net-* flag: anything else fails the whole parse
+# (fail-closed — a partial net-policy must never reach `tart run`), and glob
+# characters in tokens stay literal.
+NETP_ERR="$WORK/netpolicy.err"
+netpolicy() { # netpolicy-file-content -> stdout of netpolicy_args (stderr -> $NETP_ERR)
   printf '%s' "$1" > "$WORK/netpolicy"
   # shellcheck disable=SC2034  # netpolicy_args reads this as a global
   NETPOLICY_CONFIG="$WORK/netpolicy"
-  netpolicy_args
+  netpolicy_args 2>"$NETP_ERR"
 }
 
 echo "bin/tart-up — netpolicy parser:"
@@ -234,6 +238,18 @@ assert_eq "comment-only line skipped, trailing comment stripped" \
   "$(netpolicy "# explainer${nl}--net-softnet-allow=@host  # @host = bridge gateway")"
 assert_eq "blank lines tolerated" "--net-softnet" \
   "$(netpolicy "${nl}${nl}--net-softnet${nl}${nl}")"
+
+# fail-closed gate: one non-`--net-*` token rejects the whole policy.
+netpolicy "--net-softnet${nl}--dir=/x" >/dev/null; nrc=$?
+assert_eq       "non --net-* token → rc 1"            1 "$nrc"
+assert_contains "rejection names the offending token" "$(<"$NETP_ERR")" "--dir=/x"
+assert_contains "rejection names the netpolicy file"  "$(<"$NETP_ERR")" "$WORK/netpolicy"
+
+# tokenization must not pathname-expand: a glob char stays literal even when
+# the cwd holds a matching file.
+: > "$WORK/--net-softnet-allow=evil"
+out=$(cd "$WORK" && netpolicy '--net-softnet-allow=*')
+assert_eq "glob char in a token stays literal" "--net-softnet-allow=*" "$out"
 
 # ── bin/lib/config.sh: config-path resolver ─────────────────────────────────
 # Precedence: per-concern TART_<CONCERN> > TART_STACKS_CONFIG_DIR > ~/.config/tart-stacks.

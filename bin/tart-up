@@ -9,8 +9,9 @@
 #     an interactive login (and only then — git/rsync/`ssh -N`/IDEs don't);
 #   - directly, to pre-warm a VM:  tart-up <name>
 #
-# Readiness is a TCP probe (nc -z), never an authenticated ssh — so the SSH
-# client that connects right after is the only thing that prompts for Touch ID.
+# Readiness is a TCP probe (nc -z, via /usr/bin/nc — override $TART_NC_BIN),
+# never an authenticated ssh — so the SSH client that connects right after is
+# the only thing that prompts for Touch ID.
 # Accepts the name bare (`app-a`) or `tart-`-prefixed (`tart-app-a`), since the
 # SSH alias arrives prefixed (`%n`) but Tart stores VMs bare.
 #
@@ -41,6 +42,10 @@ REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
 
+# BSD nc's -G is the probe's connect bound; a PATH-shadowing GNU netcat parses
+# -G as a no-op, so pin the system binary (TART_NC_BIN is the test seam).
+NC_BIN="${TART_NC_BIN:-/usr/bin/nc}"
+
 usage() {
   echo "usage: $prog <vm-name>" >&2
 }
@@ -52,26 +57,36 @@ VM="$1"
 
 tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
 tart_need_cmd jq   "Install: brew install jq"
-tart_need_cmd nc   "Install netcat, or use the macOS built-in at /usr/bin/nc."
+# Preflight the pinned probe binary: a missing one would otherwise surface as
+# 30 silent probe failures and a misleading ":22 timeout" diagnosis.
+[ -x "$NC_BIN" ] || { echo "$prog: SSH probe binary '$NC_BIN' not found or not executable." >&2; exit 1; }
 
 # Query Tart for one VM's state by exact name; empty output = no such VM.
+# stderr stays attached, so when tart (or jq, fed garbage) fails, the real
+# error reaches the terminal — the lookup below adds context and stops.
 resolve_state() {
-  tart list --format json 2>/dev/null \
-    | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
+  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
+}
+
+# A nonzero resolve_state means the tool is broken, not that the name missed —
+# bail instead of retrying the swapped prefix against the same broken tool.
+list_failed() {
+  echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
+  exit 1
 }
 
 # Two-way prefix lookup: the SSH alias is `tart-<name>` (so `%n` arrives
 # prefixed), but Tart stores VMs bare. Try the name as-given, then swap the
 # prefix on a miss so either form works. Empty after both = genuinely absent.
-STATE=$(resolve_state "$VM")
+STATE=$(resolve_state "$VM") || list_failed
 if [ -z "$STATE" ]; then
   case "$VM" in
     tart-*) ALT="${VM#tart-}" ;;
     *)      ALT="tart-$VM" ;;
   esac
-  STATE=$(resolve_state "$ALT")
+  STATE=$(resolve_state "$ALT") || list_failed
   if [ -z "$STATE" ]; then
-    echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list' or 'tart-new $VM <stack>'." >&2
+    echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list' or 'tart-new $VM <stack> <distro>'." >&2
     exit 1
   fi
   VM="$ALT"
@@ -94,12 +109,29 @@ fi
 # need stop+start to pick up changes.
 NETPOLICY_CONFIG=$(tart_config_path netpolicy)
 
+# Emit policy tokens one per line; nonzero on any token that is not a --net-*
+# flag. This is security config, so it fails closed: a stray token means a
+# corrupt (or tampered-with) file, and starting the VM with only PART of the
+# policy applied is worse than not starting it at all.
 netpolicy_args() {
   [ -f "$NETPOLICY_CONFIG" ] || return 0
-  local raw line tok
+  local raw line lineno=0 tok
+  local -a toks=()
   while IFS= read -r raw || [ -n "$raw" ]; do
+    lineno=$((lineno + 1))
     line="${raw%%#*}"
-    for tok in $line; do printf '%s\n' "$tok"; done
+    # read -ra splits on whitespace without pathname expansion — an unquoted
+    # `for tok in $line` would glob each token against the current directory.
+    IFS=$' \t' read -ra toks <<< "$line"
+    [ "${#toks[@]}" -gt 0 ] || continue
+    for tok in "${toks[@]}"; do
+      case "$tok" in
+        --net-*) printf '%s\n' "$tok" ;;
+        *)
+          echo "${prog:-tart-up}: $NETPOLICY_CONFIG line $lineno: '$tok' is not a --net-* flag — refusing to start with a partial net-policy." >&2
+          return 1 ;;
+      esac
+    done
   done < "$NETPOLICY_CONFIG"
 }
 
@@ -145,10 +177,19 @@ dir_args() {
 
 # Resolve this VM's net-policy + mounts once (bare name for mounts; netpolicy
 # is VM-agnostic). Both reused by the start + warning paths.
+# Net-policy is captured via command substitution so a bad token aborts right
+# here (set -e on the assignment, after netpolicy_args printed its error) —
+# read from a process substitution, the function's failure would be swallowed
+# and the VM would start under a partial policy.
 NETPOLICY_ARGS=()
-while IFS= read -r n; do
-  [ -n "$n" ] && NETPOLICY_ARGS+=("$n")
-done < <(netpolicy_args)
+np_tokens=$(netpolicy_args)
+# <<< on an empty string still supplies one line — without the -n guard an
+# empty "" arg would land in the tart run argv.
+if [ -n "$np_tokens" ]; then
+  while IFS= read -r n; do
+    NETPOLICY_ARGS+=("$n")
+  done <<< "$np_tokens"
+fi
 
 DIR_ARGS=()
 while IFS= read -r d; do
@@ -166,6 +207,16 @@ done < <(dir_args "${VM#tart-}")
 STARTED=0
 
 if [ "$STATE" = "running" ]; then
+  # A Tart crash can leave the listed state wedged at "running" with no live
+  # `tart run` process — polling :22 against that ghost burns the full timeout
+  # and ends in a misleading SSH-timeout error. Fail fast with the remedy
+  # instead. No auto-stop here: the process scan can misread a VM launched by
+  # a nonstandard `tart run` invocation, so stopping is the operator's call.
+  if ! tart_vm_alive "$VM"; then
+    echo "$prog: '$VM' is listed as running, but no 'tart run $VM' process exists — likely crashed or wedged (or started by a nonstandard 'tart run' invocation)." >&2
+    echo "$prog: run 'tart stop $VM' then retry ssh, or 'tart-supervise --install $VM' to auto-recover crashes." >&2
+    exit 1
+  fi
   if [ "${#DIR_ARGS[@]}" -gt 0 ]; then
     echo "$prog: '$VM' already running — its ${#DIR_ARGS[@]} configured mount(s) attach at boot, so it has whatever it started with (stop + start to apply mount changes)." >&2
   fi
@@ -186,7 +237,7 @@ elif [ "$STATE" = "stopped" ]; then
   # the log always reflects the current instance (and after a crash names the
   # exact unhandled vsock case). Dir overridable via TART_LOG_DIR (tests sandbox it).
   run_log_dir="${TART_LOG_DIR:-$HOME/Library/Logs/tart-stacks}"
-  mkdir -p "$run_log_dir" 2>/dev/null
+  mkdir -p "$run_log_dir" 2>/dev/null || true
   run_log="$run_log_dir/${VM}.run.log"
   # Logging must never be why a VM fails to start (this is the only start path):
   # probe the actual target — if the dir or the file itself can't be opened for
@@ -222,7 +273,7 @@ fi
 # re-resolve lets the address self-correct once DHCP settles on the live one.
 for _ in $(seq 1 30); do
   cur=$(tart ip "$VM" 2>/dev/null) && [ -n "$cur" ] && IP="$cur"
-  if nc -z -G 3 "$IP" 22 >/dev/null 2>&1; then
+  if "$NC_BIN" -z -G 3 "$IP" 22 >/dev/null 2>&1; then
     if [ "$STARTED" -ne 1 ]; then
       exit 0  # already-running VM: provisioned on its own boot; skip vsock calls
     fi
@@ -242,8 +293,12 @@ for _ in $(seq 1 30); do
     # Per-VM host keys: clones share the base's baked-in key, so regenerate once
     # (marker-gated, over vsock — no Touch ID). Stage to .new then swap so sshd is
     # never keyless; restart is synchronous, so :22 is back when tart exec returns.
+    # The unit is `sshd` on dnf-family guests and `ssh` on apt-family — try both.
+    # The marker lands only after a successful restart: sshd serves the old key
+    # until restarted, so marking earlier would pin a stale key on the host and
+    # never retry the restart.
     # shellcheck disable=SC2016  # $t/${t} are for the GUEST shell — keep single-quoted
-    regen='test -e /etc/ssh/.tart-keys && exit 0; cd /etc/ssh || exit 1; for t in rsa ecdsa ed25519; do ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new" || exit 1; done; for t in rsa ecdsa ed25519; do mv -f "ssh_host_${t}_key.new" "ssh_host_${t}_key"; mv -f "ssh_host_${t}_key.new.pub" "ssh_host_${t}_key.pub"; done; touch .tart-keys && systemctl restart sshd'
+    regen='test -e /etc/ssh/.tart-keys && exit 0; cd /etc/ssh || exit 1; for t in rsa ecdsa ed25519; do ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new" || exit 1; done; for t in rsa ecdsa ed25519; do mv -f "ssh_host_${t}_key.new" "ssh_host_${t}_key"; mv -f "ssh_host_${t}_key.new.pub" "ssh_host_${t}_key.pub"; done; { systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; } && touch .tart-keys'
     tart exec "$VM" sudo sh -c "$regen" >/dev/null 2>&1 || true
     exit 0
   fi
