@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
 # setup — one-time host install for tart-stacks. Run via `make setup`
 # (or directly: script/setup). Symlinks the commands onto PATH, installs
-# zsh completion, wires the SSH Include line, and scaffolds the per-VM
-# forwards and mounts files.
+# zsh completion, wires the SSH Include line, scaffolds the per-VM
+# forwards and mounts files, and finishes by generating the included SSH
+# config via tart-ssh-sync (when Tart is installed — without it the skip
+# is warned loudly, since `ssh tart-<name>` cannot resolve until a sync).
 #
 # Idempotent: safe to re-run. It only creates what's missing and never
 # overwrites your edits. Where it can't safely fix something (an Include
 # placed below a catch-all `Host *`, which SSH's first-match-wins renders
 # dead), it WARNS and leaves the file untouched rather than rewriting it.
 #
+# `--uninstall` (also: `make uninstall`) is the inverse. It removes only
+# what verifiably points into this repo, strips only the exact Include
+# block setup writes, keeps every per-VM config file (forwards, mounts,
+# ssh-agents, netpolicy — they carry your opt-ins), and refuses outright
+# while any tart-supervise LaunchAgent exists, because those agents
+# restart VMs through the very tools being removed.
+#
 # Override targets via env (non-default host layouts, or to sandbox a run):
-#   TART_LOCAL_BIN   command symlink dir       (default ~/.local/bin)
-#   TART_COMPDIR     zsh completion dir        (default: brew site-functions, else ~/.local/share/zsh/site-functions)
-#   TART_SSH_CONFIG  ssh config to wire        (default ~/.ssh/config)
-#   TART_FORWARDS    per-VM forwards to scaffold (default ~/.config/tart-stacks/forwards)
-#   TART_MOUNTS      per-VM dir mounts to scaffold (default ~/.config/tart-stacks/mounts)
+#   TART_LOCAL_BIN         command symlink dir       (default ~/.local/bin)
+#   TART_COMPDIR           zsh completion dir        (default: brew site-functions, else ~/.local/share/zsh/site-functions)
+#   TART_SSH_CONFIG        ssh config to wire        (default ~/.ssh/config)
+#   TART_FORWARDS          per-VM forwards to scaffold (default ~/.config/tart-stacks/forwards)
+#   TART_MOUNTS            per-VM dir mounts to scaffold (default ~/.config/tart-stacks/mounts)
+#   TART_SSH_CONFIG_D      generated ssh config        (default ~/.ssh/config.d/tart-vms)
+#   TART_LAUNCHAGENTS_DIR  LaunchAgent dir the uninstall gate scans (default ~/Library/LaunchAgents)
 
 set -euo pipefail
 
@@ -40,10 +51,30 @@ LOCAL_BIN="${TART_LOCAL_BIN:-$HOME/.local/bin}"
 SSH_CONFIG="${TART_SSH_CONFIG:-$HOME/.ssh/config}"
 FORWARDS=$(tart_config_path forwards)
 MOUNTS=$(tart_config_path mounts)
+# tart-ssh-sync's output path (same default and env seam as that script): the
+# install's closing sync writes it, the uninstall removes it.
+GENERATED="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
+LAUNCHAGENTS_DIR="${TART_LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
+
+# The Include block, line by line. Install writes exactly these three lines
+# plus a blank separator; uninstall removes exactly that four-line shape and
+# nothing else. Shared constants keep the two directions from drifting.
 INCLUDE_LINE='Include ~/.ssh/config.d/tart-vms'
+MARKER_LINE="# Added by tart-stacks. Run 'make setup' to restore this line if removed."
+KEEP_ABOVE_LINE='# Keep it above any Host block so per-VM settings beat a catch-all Host *.'
+
+# Commands symlinked onto PATH — install and uninstall iterate the same list.
+COMMANDS=(tart-up tart-ssh-sync tart-new tart-rm tart-supervise)
 
 info() { printf '  %s\n' "$*"; }
 warn() { printf '  WARNING: %s\n' "$*" >&2; }
+
+usage() {
+  cat >&2 <<EOF
+usage: script/setup              install the host tools (default; idempotent)
+       script/setup --uninstall  remove them (per-VM config files are kept)
+EOF
+}
 
 # Create a per-VM config file from this function's stdin, idempotently — only
 # writes when the file is missing, so re-runs never clobber your edits.
@@ -58,23 +89,17 @@ scaffold() {
   info "scaffolded $path."
 }
 
-echo "setup: installing host tools from $REPO_DIR"
-
-# 1. Symlink the commands onto PATH (replaces a prior copy, if any).
-mkdir -p "$LOCAL_BIN"
-ln -sf "$BIN_DIR/tart-up"        "$LOCAL_BIN/tart-up"
-ln -sf "$BIN_DIR/tart-ssh-sync"  "$LOCAL_BIN/tart-ssh-sync"
-ln -sf "$BIN_DIR/tart-new"       "$LOCAL_BIN/tart-new"
-ln -sf "$BIN_DIR/tart-rm"        "$LOCAL_BIN/tart-rm"
-ln -sf "$BIN_DIR/tart-supervise" "$LOCAL_BIN/tart-supervise"
-info "linked tart-up, tart-ssh-sync, tart-new, tart-rm, tart-supervise -> $LOCAL_BIN"
-case ":$PATH:" in
-  *":$LOCAL_BIN:"*) ;;
-  *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;
+MODE=install
+case "${1:-}" in
+  '') ;;
+  --uninstall) MODE=uninstall ;;
+  -h|--help)   usage; exit 0 ;;
+  *) echo "setup: unknown arg '$1'" >&2; usage; exit 64 ;;
 esac
 
-# 2. zsh completion. Homebrew's site-functions is already on fpath; the
-#    home-dir fallback is not, so tell the user to wire it.
+# zsh completion dir, resolved up front because both directions need it.
+# Homebrew's site-functions is already on fpath; the home-dir fallback is not,
+# so the install tells the user to wire it.
 compdir="${TART_COMPDIR:-}"
 if [ -z "$compdir" ]; then
   if command -v brew >/dev/null 2>&1; then
@@ -83,6 +108,122 @@ if [ -z "$compdir" ]; then
     compdir="$HOME/.local/share/zsh/site-functions"
   fi
 fi
+
+# ---- uninstall ---------------------------------------------------------------
+
+if [ "$MODE" = "uninstall" ]; then
+  echo "setup: uninstalling host tools (repo at $REPO_DIR)"
+  summary=""
+  add_summary() { summary="${summary:+$summary, }$1"; }
+
+  # Gate before removing ANYTHING: a tart-supervise LaunchAgent restarts its
+  # VM through tart-up/tart-supervise, so pulling the tools out from under a
+  # live agent breaks it mid-flight.
+  supervised=()
+  for plist in "$LAUNCHAGENTS_DIR"/com.tart-stacks.supervise.*.plist; do
+    [ -e "$plist" ] || continue
+    label="${plist##*/}"; label="${label%.plist}"
+    supervised+=("${label#com.tart-stacks.supervise.}")
+  done
+  if [ "${#supervised[@]}" -gt 0 ]; then
+    warn "supervised VM LaunchAgent(s) found in $LAUNCHAGENTS_DIR — they restart VMs through the tools this would remove."
+    for vm in "${supervised[@]}"; do
+      warn "  drop supervision first:  tart-supervise --uninstall $vm"
+    done
+    warn "nothing was removed."
+    exit 1
+  fi
+
+  # 1. Command symlinks — removed only when one still resolves into this
+  #    repo's bin/; a same-named file from anywhere else is not ours to touch.
+  unlinked=()
+  for name in "${COMMANDS[@]}"; do
+    link="$LOCAL_BIN/$name"
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$BIN_DIR/$name" ]; then
+      rm -f "$link"
+      unlinked+=("$name")
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+      warn "left $link — it does not point into $BIN_DIR."
+    fi
+  done
+  if [ "${#unlinked[@]}" -gt 0 ]; then
+    info "unlinked ${unlinked[*]} from $LOCAL_BIN."
+    add_summary "${#unlinked[@]} command symlink(s)"
+  fi
+
+  # 2. Completion symlink, same ownership test.
+  comp_link="$compdir/_tart-new"
+  if [ -L "$comp_link" ] && [ "$(readlink "$comp_link")" = "$REPO_DIR/completions/_tart-new" ]; then
+    rm -f "$comp_link"
+    info "unlinked completion (_tart-new) from $compdir."
+    add_summary "completion"
+  elif [ -e "$comp_link" ] || [ -L "$comp_link" ]; then
+    warn "left $comp_link — it does not point into $REPO_DIR."
+  fi
+
+  # 3. The Include block — only when the marker comment vouches it's ours, and
+  #    only the exact four-line shape the install writes; every other line of
+  #    the file is preserved (a missing EOF newline is normalized — awk prints
+  #    whole lines). An unmarked Include is hand-written: warn, leave.
+  if [ -f "$SSH_CONFIG" ] && grep -qxF "$MARKER_LINE" "$SSH_CONFIG"; then
+    tmp=$(mktemp "${SSH_CONFIG}.XXXXXX")
+    if awk -v m="$MARKER_LINE" -v k="$KEEP_ABOVE_LINE" -v inc="$INCLUDE_LINE" '
+      { l[NR] = $0 }
+      END {
+        at = 0
+        for (i = 1; i + 3 <= NR; i++)
+          if (l[i] == m && l[i+1] == k && l[i+2] == inc && l[i+3] == "") { at = i; break }
+        if (!at) exit 3   # 3: clear of awk(1) own 1/2 exit codes
+        for (i = 1; i <= NR; i++)
+          if (i < at || i > at + 3) print l[i]
+      }
+    ' "$SSH_CONFIG" > "$tmp"; then
+      mv "$tmp" "$SSH_CONFIG"
+      chmod 600 "$SSH_CONFIG"
+      info "removed the tart-stacks Include block from $SSH_CONFIG."
+      add_summary "SSH Include block"
+    else
+      rm -f "$tmp"
+      warn "marker comment found in $SSH_CONFIG but the block shape has drifted from what setup writes — left unchanged; remove the Include by hand."
+    fi
+  elif [ -f "$SSH_CONFIG" ] && grep -q 'config\.d/tart-vms' "$SSH_CONFIG"; then
+    warn "the Include in $SSH_CONFIG carries no tart-stacks marker comment — it looks hand-written, so it was left in place."
+  fi
+
+  # 4. tart-ssh-sync output (plus a failed candidate, if one survived) — pure
+  #    generated state, recreated by the next sync.
+  for f in "$GENERATED" "${GENERATED}.rejected"; do
+    if [ -e "$f" ]; then
+      rm -f "$f"
+      info "removed $f."
+      add_summary "${f##*/}"
+    fi
+  done
+
+  # 5. forwards/mounts/ssh-agents/netpolicy stay: they carry your opt-ins
+  #    (ssh-agents and netpolicy may even be written by external tooling).
+  info "kept the per-VM config files in $(tart_config_dir) (forwards, mounts, ssh-agents, netpolicy)."
+
+  echo "setup: uninstall done — removed ${summary:-nothing (nothing of ours was present)}. Reinstall anytime with:  make setup"
+  exit 0
+fi
+
+# ---- install -----------------------------------------------------------------
+
+echo "setup: installing host tools from $REPO_DIR"
+
+# 1. Symlink the commands onto PATH (replaces a prior copy, if any).
+mkdir -p "$LOCAL_BIN"
+for name in "${COMMANDS[@]}"; do
+  ln -sf "$BIN_DIR/$name" "$LOCAL_BIN/$name"
+done
+info "linked ${COMMANDS[*]} -> $LOCAL_BIN"
+case ":$PATH:" in
+  *":$LOCAL_BIN:"*) ;;
+  *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;
+esac
+
+# 2. zsh completion.
 mkdir -p "$compdir"
 ln -sf "$REPO_DIR/completions/_tart-new" "$compdir/_tart-new"
 info "linked completion (_tart-new) -> $compdir  (run: rm -f ~/.zcompdump* && exec zsh)"
@@ -115,8 +256,8 @@ else
   tmp=$(mktemp "${SSH_CONFIG}.XXXXXX")
   {
     printf '%s\n' \
-      "# Added by tart-stacks. Run 'make setup' to restore this line if removed." \
-      '# Keep it above any Host block so per-VM settings beat a catch-all Host *.' \
+      "$MARKER_LINE" \
+      "$KEEP_ABOVE_LINE" \
       "$INCLUDE_LINE" \
       ''
     cat "$SSH_CONFIG"
@@ -152,4 +293,25 @@ scaffold "$MOUNTS" "mounts file" <<'EOF'
 #   * cfg=/Users/me/.config/app    # rename the share -> /mnt/shared/cfg
 EOF
 
-echo "setup: done. Build a stack with:  make build STACK=php"
+# 6. Preflight — warn-only: pieces the commands depend on that this script
+#    can't install for you. The install above stands either way, so neither
+#    check changes the exit code.
+if [ ! -e "$HOME/.ssh/tart-vm.pub" ]; then
+  warn "no ~/.ssh/tart-vm.pub — every stack build bakes that key in and the generated SSH config pins it. Create + link it first: README, Setup step 1."
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  warn "jq not found — tart-new, tart-up, tart-rm and tart-supervise all require it. Install: brew install jq"
+fi
+
+# 7. Generate the SSH config the Include points at. OpenSSH silently ignores
+#    a missing Include target and tart-ssh-sync is its only writer, so without
+#    this first sync a fresh install dead-ends at "Could not resolve hostname".
+if command -v tart >/dev/null 2>&1; then
+  "$BIN_DIR/tart-ssh-sync"
+  info "generated $GENERATED (tart-ssh-sync)."
+else
+  warn "Tart is not installed, so the SSH config the Include points at was NOT generated — ssh tart-<name> cannot resolve yet."
+  warn "Install Tart (brew install cirruslabs/cli/tart), then run:  tart-ssh-sync"
+fi
+
+echo "setup: done. Build a stack with:  make build STACK=php DISTRO=fedora"

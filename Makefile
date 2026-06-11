@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help setup test init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro
+.PHONY: help setup uninstall test init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php DISTRO=fedora`.
 STACK ?=
@@ -21,6 +21,7 @@ help:
 	@echo ""
 	@echo "  make setup                                Install host tools onto your Mac (run once): symlinks all commands + completions,"
 	@echo "                                            adds the SSH Include and scaffolds the forwards + mounts config"
+	@echo "  make uninstall                            Remove the host tools from your Mac (inverse of setup); per-VM config files are kept"
 	@echo "  make test                                 Run the test suite (test/*.sh)"
 	@echo "  make list-stacks                          List available stacks"
 	@echo "  make scaffold STACK=<name>                Create a new stack from templates/stack/"
@@ -39,6 +40,11 @@ list-stacks:
 # script/setup so the SSH-config validation stays testable.
 setup:
 	@"$(CURDIR)/script/setup"
+
+# Inverse of setup — same script, so the supervised-VM gate and the
+# ownership/marker checks stay testable. Per-VM config files are kept.
+uninstall:
+	@"$(CURDIR)/script/setup" --uninstall
 
 # Run the plain-bash test suite (test/*.sh). No framework; needs only bash + jq.
 test:
