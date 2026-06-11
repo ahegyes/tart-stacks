@@ -18,6 +18,10 @@ packer {
 variable "stack" {
   type        = string
   description = "Short stack token (php, jvm, …). The built image is <distro>-<stack>, cloned from stacks/<stack>/."
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.stack))
+    error_message = "Stack must be a lowercase alphanumeric token such as php or jvm."
+  }
 }
 
 variable "distro" {

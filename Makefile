@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help setup uninstall test init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro
+.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php DISTRO=fedora`.
 STACK ?=
@@ -28,6 +28,7 @@ help:
 	@echo "  make init                                 Install the Packer plugin (run once)"
 	@echo "  make build STACK=<name> DISTRO=<distro>   Bootstrap + build the stack image"
 	@echo "  make rebuild STACK=<name> DISTRO=<distro> Force-rebuild — overwrites existing image"
+	@echo "  make smoke STACK=<name> DISTRO=<distro>   Smoke-test a BUILT image end-to-end: clone, boot a real VM (~1 min), ssh, assert, destroy. Local-only — never run in CI"
 	@echo "  make clean                                Remove Packer build artifacts"
 	@echo ""
 	@echo "  DISTRO — required distro token (e.g. fedora). Must be listed in shared/distros."
@@ -64,10 +65,19 @@ check-stack:
 		exit 1; \
 	fi
 
-# Like check-stack but for a NEW stack: STACK must be set; the dir must NOT exist.
+# Like check-stack but for a NEW stack: STACK must be set and a bare
+# lowercase-alphanumeric token; the dir must NOT exist. The token gate is
+# load-bearing: scaffold interpolates STACK into mkdir paths and a sed
+# replacement, so a '/' or '&' would mkdir a nested tree or corrupt every
+# stamped file — and the half-scaffolded dir then blocks reruns and gets
+# discovered by CI as a stack.
 check-stack-name:
 	@if [ -z "$(STACK)" ]; then \
 		echo "ERROR: STACK is required (e.g., make scaffold STACK=python)." >&2; \
+		exit 1; \
+	fi
+	@if ! printf '%s\n' "$(STACK)" | grep -qE '^[a-z0-9]+$$'; then \
+		echo "ERROR: STACK must be a lowercase alphanumeric token, got '$(STACK)' (e.g., make scaffold STACK=python)." >&2; \
 		exit 1; \
 	fi
 
@@ -103,6 +113,12 @@ build: check-stack check-distro bootstrap
 
 rebuild: check-stack check-distro bootstrap
 	packer build -force -var stack=$(STACK) -var distro=$(DISTRO) stack.pkr.hcl
+
+# End-to-end proof of a BUILT image (clone → boot → ssh → assert → destroy).
+# Boots a real VM, so it stays a local dev-task — GitHub runners can't run
+# Tart VMs (no nested virtualization), hence deliberately absent from CI.
+smoke: check-stack check-distro
+	@"$(CURDIR)/script/smoke" "$(STACK)" "$(DISTRO)"
 
 # Scaffold a new stack from templates/stack/ (substitutes __STACK__). Refuses to
 # clobber an existing dir; the root template + dynamic CI then cover it with no

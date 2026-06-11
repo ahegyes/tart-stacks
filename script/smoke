@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# smoke — end-to-end proof of a BUILT stack image: clone a throwaway VM, boot
+# it, ssh in, assert the guest hostname, destroy it. One passing run exercises
+# the whole chain — tart-new's gates, clone, boot, DHCP, sshd, key auth, and
+# tart-up's hostname provisioning — which `packer validate` and the mocked
+# tests cannot. Needs the <distro>-<stack> image already built and the host
+# tools wired (`make setup`); boots a real VM (~1 min). Run via
+# `make smoke STACK=<stack> DISTRO=<distro>` — local-only, never in CI.
+#
+# SMOKE_KEEP=1 skips the teardown, leaving the VM up for debugging.
+set -euo pipefail
+
+prog="${0##*/}"
+
+REPO=$(cd -P "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)
+
+# Helper-resolution seam: test/smoke.sh points TART_SMOKE_BIN at a directory
+# of mocks; real runs resolve the repo's bin/. ssh stays a plain PATH lookup
+# (PATH-shimmable the same way) — the tart-<vm> alias it dials only exists in
+# the user's generated SSH config anyway.
+SMOKE_BIN="${TART_SMOKE_BIN:-$REPO/bin}"
+
+usage() {
+  echo "usage: $prog <stack> <distro>" >&2
+  echo "  SMOKE_KEEP=1  keep the VM on exit (debugging — also survives a Ctrl-C)" >&2
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+[ $# -eq 2 ] || { usage; exit 64; }
+STACK="$1"
+DISTRO="$2"
+
+# Fixed name, short and obviously disposable; the SSH alias is tart-smoke-vm.
+VM="smoke-vm"
+
+# stdin from /dev/null keeps tart-new's interactive build offer out of play: a
+# smoke test asserts the image is ALREADY built — it must never side-effect a
+# 15-20 min `make build`. Runs before the trap below is armed: on a name
+# collision the existing VM is not ours, so teardown must not touch it.
+"$SMOKE_BIN/tart-new" "$VM" "$STACK" "$DISTRO" < /dev/null
+
+# From here the VM is ours — tear it down on ANY exit, so a failed boot or
+# assert can't strand it. SMOKE_KEEP=1 keeps it for debugging instead. The
+# trap re-exits with the script's own status so a teardown hiccup can't mask
+# (or fabricate) a verdict.
+cleanup() {
+  rc=$?
+  if [ "${SMOKE_KEEP:-}" = "1" ]; then
+    echo "$prog: SMOKE_KEEP=1 — keeping '$VM' (remove later with: tart-rm $VM)" >&2
+  else
+    "$SMOKE_BIN/tart-rm" "$VM" || echo "$prog: warning: teardown failed — remove '$VM' by hand: tart-rm $VM" >&2
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
+"$SMOKE_BIN/tart-up" "$VM"
+
+# BatchMode so a broken auth chain fails fast instead of hanging on a prompt.
+got=$(ssh -o BatchMode=yes "tart-$VM" hostname -s) || {
+  rc=$?
+  # A Secure-Enclave key in require-authentication mode can't sign under
+  # BatchMode — that auth failure is the key-mode trade-off of README Setup
+  # §1 surfacing, not necessarily a broken image.
+  echo "$prog: FAIL — ssh to 'tart-$VM' failed (rc=$rc). If your VM key requires Touch ID, see README Setup step 1; re-run with SMOKE_KEEP=1 to keep the VM for inspection." >&2
+  exit "$rc"
+}
+
+# tart-up sets the guest hostname to the VM name on the boot it starts, so a
+# match proves clone → boot → DHCP → sshd → auth → provisioning end-to-end —
+# strictly more than "sshd answered".
+if [ "$got" != "$VM" ]; then
+  echo "$prog: FAIL — guest hostname: expected '$VM', got '$got' (re-run with SMOKE_KEEP=1 to keep the VM for debugging)." >&2
+  exit 1
+fi
+
+echo "$prog: OK — $DISTRO-$STACK smoke passed: clone, boot, ssh, hostname." >&2

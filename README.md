@@ -1,5 +1,7 @@
 # tart-stacks
 
+[![validate](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml/badge.svg)](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml)
+
 Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported distro (Fedora, Ubuntu, Debian — see `shared/distros`), producing a `<distro>-<stack>` image. Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
 
 ## Stacks
