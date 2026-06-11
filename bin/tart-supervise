@@ -21,6 +21,10 @@
 #
 # Restarts back off (BACKOFF_BASE, doubling to BACKOFF_CAP) while a VM keeps
 # dying quickly, and reset once it has stayed up past HEALTHY seconds.
+#
+# A VM that disappears from `tart list` entirely (deleted, not crashed) ends
+# supervision: after ABSENT_LIMIT consecutive confirmed-absent checks the
+# supervisor removes its own LaunchAgent and exits clean.
 
 set -uo pipefail
 
@@ -39,11 +43,18 @@ SELF="$SCRIPT_DIR/$prog"
 # shellcheck source=bin/lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
+# Repo root + stacks dir (TART_STACKS_DIR / TART_DISTROS override for tests),
+# used by the --install base-image guard to recognize any built stack image.
+REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
+DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+
 # Tunables (env-overridable; defaults suit a desktop host).
 POLL="${TART_SUPERVISE_POLL:-5}"                 # liveness poll interval, seconds
 BACKOFF_BASE="${TART_SUPERVISE_BACKOFF_BASE:-5}"
 BACKOFF_CAP="${TART_SUPERVISE_BACKOFF_CAP:-60}"
 HEALTHY="${TART_SUPERVISE_HEALTHY:-60}"          # uptime past which a restart counts as recovered
+ABSENT_LIMIT="${TART_SUPERVISE_ABSENT_LIMIT:-3}" # confirmed-absent checks before self-removal
 LAUNCHAGENTS_DIR="${TART_LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
 LOG_DIR="${TART_LOG_DIR:-$HOME/Library/Logs/tart-stacks}"
 
@@ -61,6 +72,14 @@ EOF
 
 label_for() { printf 'com.tart-stacks.supervise.%s' "$1"; }
 
+# Query Tart for one VM's state by exact name; empty output = no such VM. A
+# nonzero exit means tart itself failed — callers must keep "broken tool" and
+# "VM missing" distinct: --install refuses on either, but only a CONFIRMED
+# miss may advance the loop's gone-VM counter.
+resolve_state() {
+  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
+}
+
 # ensure_up <vm> — if the VM's process is gone, clear any wedged state and start
 # it. tart-up owns start + provision + readiness; this adds only the crash-state
 # cleanup that restarting after an abnormal exit needs.
@@ -77,12 +96,39 @@ ensure_up() {
 }
 
 supervise_loop() {
-  local vm="$1" backoff="$BACKOFF_BASE" up_start up
+  local vm="$1" backoff="$BACKOFF_BASE" up_start up state absent=0 label
+  label=$(label_for "$vm")
   while :; do
     ensure_up "$vm" || log "'$vm' did not come up; will retry"
     up_start=$(date +%s)
     while tart_vm_alive "$vm"; do sleep "$POLL"; done
     up=$(( $(date +%s) - up_start ))
+    # Every wake funnels through here — an ensure_up failure drops out of the
+    # poll above at once, a crash breaks it — so this is the one spot to ask
+    # whether the VM still EXISTS, at no extra poll cost. Enough consecutive
+    # confirmed-absent checks mean it was deleted: supervision has nothing
+    # left to restart and would otherwise retry forever, so it removes itself.
+    # A FAILING `tart list` is "cannot tell", never "absent" — the counter
+    # holds, or transient tart breakage would self-destruct supervision.
+    if state=$(resolve_state "$vm"); then
+      if [ -n "$state" ]; then
+        absent=0
+      else
+        absent=$((absent + 1))
+        if [ "$absent" -ge "$ABSENT_LIMIT" ]; then
+          log "'$vm' is gone from 'tart list' ($absent consecutive checks) — removing supervision and exiting"
+          # Plist first: when running as the LaunchAgent, bootout can kill
+          # this process on the spot, and the file must not outlive it. A
+          # foreground run has no agent — both steps no-op harmlessly.
+          rm -f "$LAUNCHAGENTS_DIR/$label.plist"
+          launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+          # If bootout does not kill this process (foreground mode), the
+          # clean exit plus the plist's SuccessfulExit=false keeps launchd
+          # from resurrecting the agent.
+          exit 0
+        fi
+      fi
+    fi
     # A VM that stayed up past HEALTHY was stable — restart promptly (reset to
     # base). A fast failure waits the current backoff now, then escalates it for
     # next time, so a crash loop backs off instead of hammering. (Reset before
@@ -101,8 +147,13 @@ supervise_loop() {
 render_plist() { # <vm> <self> <path-env> <logfile>
   local vm="$1" self="$2" path_env="$3" logfile="$4"
   # Aqua session: tart run needs the logged-in GUI context for vmnet + the
-  # Virtualization entitlement. KeepAlive restarts the supervisor itself if it
-  # ever dies; ThrottleInterval bounds a respawn storm if it dies on launch.
+  # Virtualization entitlement. KeepAlive=SuccessfulExit=false restarts the
+  # supervisor whenever it dies, yet honors its one deliberate clean exit (the
+  # gone-VM terminal path) instead of resurrecting it; ThrottleInterval bounds
+  # a respawn storm if it dies on launch. AbandonProcessGroup: launchd's
+  # default on bootout is to SIGKILL the job's whole process group, which
+  # includes the supervised `tart run` — uninstall means "stop supervising",
+  # not "power off the VM".
   cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -119,7 +170,9 @@ render_plist() { # <vm> <self> <path-env> <logfile>
     <key>PATH</key><string>$path_env</string>
   </dict>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>KeepAlive</key>
+  <dict><key>SuccessfulExit</key><false/></dict>
+  <key>AbandonProcessGroup</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>LimitLoadToSessionType</key><string>Aqua</string>
   <key>StandardOutPath</key><string>$logfile</string>
@@ -134,12 +187,32 @@ install_agent() {
   tart_need_cmd launchctl
   tart_need_cmd tart   "Install: brew install cirruslabs/cli/tart"
   tart_need_cmd tart-up "tart-up must be on PATH (run script/setup)."
-  local label plist path_env logfile tart_dir tartup_dir
+  tart_need_cmd jq     "Install: brew install jq"
+  # Gate before any side effect. A missing VM would install an agent that
+  # retries a hopeless tart-up forever; a base image would loop just as
+  # endlessly on tart-up's clone-source refusal.
+  local state
+  if ! state=$(resolve_state "$vm"); then
+    echo "$prog: 'tart list' failed — cannot verify '$vm' exists; see the error above." >&2
+    return 1
+  fi
+  if [ -z "$state" ]; then
+    echo "$prog: VM '$vm' not found — nothing to supervise. Try 'tart list' or 'tart-new $vm <stack> <distro>'." >&2
+    return 1
+  fi
+  if tart_is_base_image "$vm" "$STACKS_DIR" "$DISTROS_FILE"; then
+    echo "$prog: '$vm' is a stack base image, not a dev VM — refusing to supervise it. Clone one with 'tart-new <name> <stack> <distro>'." >&2
+    return 1
+  fi
+  local label plist path_env logfile tart_dir tartup_dir jq_dir
   label=$(label_for "$vm")
   plist="$LAUNCHAGENTS_DIR/$label.plist"
   tart_dir=$(dirname "$(command -v tart)")
   tartup_dir=$(dirname "$(command -v tart-up)")
-  path_env="$tart_dir:$tartup_dir:/usr/bin:/bin"
+  # jq rides along for the loop's gone-VM `tart list` checks — launchd's
+  # default PATH has no Homebrew dir.
+  jq_dir=$(dirname "$(command -v jq)")
+  path_env="$tart_dir:$tartup_dir:$jq_dir:/usr/bin:/bin"
   logfile="$LOG_DIR/supervise.$vm.log"
   mkdir -p "$LAUNCHAGENTS_DIR" "$LOG_DIR"
   render_plist "$vm" "$SELF" "$path_env" "$logfile" > "$plist"
@@ -160,12 +233,20 @@ uninstall_agent() {
   plist="$LAUNCHAGENTS_DIR/$label.plist"
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   rm -f "$plist"
-  log "removed $label"
+  log "removed $label — supervision only: '$vm' (if running) stays up; stop it with 'tart stop $vm', delete it with 'tart-rm $vm'"
 }
 
 status_agents() {
   local want="${1:-}"; want="${want#tart-}"
-  local found=0 plist label vm
+  local found=0 plist label vm agent state proc
+  # One `tart list` serves every row. If it fails, the vm column degrades to
+  # `?` behind one stderr note — a broken tart must not hide which agents
+  # exist or whether their processes are alive.
+  local list_json="" list_ok=1
+  if ! list_json=$(tart list --format json 2>/dev/null); then
+    list_ok=0
+    echo "$prog: 'tart list' failed — VM presence unknown, shown as vm:?." >&2
+  fi
   for plist in "$LAUNCHAGENTS_DIR"/com.tart-stacks.supervise.*.plist; do
     [ -e "$plist" ] || continue
     label="${plist##*/}"; label="${label%.plist}"
@@ -173,10 +254,20 @@ status_agents() {
     [ -n "$want" ] && [ "$want" != "$vm" ] && continue
     found=1
     if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
-      printf '%-24s loaded\n' "$vm"
+      agent="loaded"
     else
-      printf '%-24s installed (not loaded)\n' "$vm"
+      agent="installed (not loaded)"
     fi
+    # vm:MISSING (list succeeded, name absent) is the deleted-VM tell — the
+    # agent on that row is supervising nothing. Distinct from vm:? (the list
+    # itself failed, presence unknowable).
+    state="?"
+    if [ "$list_ok" -eq 1 ]; then
+      state=$(jq -r --arg name "$vm" '.[] | select(.Name==$name) | .State' <<<"$list_json" 2>/dev/null) || state="?"
+      [ -n "$state" ] || state="MISSING"
+    fi
+    if tart_vm_alive "$vm"; then proc="alive"; else proc="-"; fi
+    printf '%-24s %-23s vm:%-8s proc:%s\n' "$vm" "$agent" "$state" "$proc"
   done
   if [ "$found" -ne 1 ]; then
     if [ -n "$want" ]; then
