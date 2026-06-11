@@ -24,18 +24,34 @@ tart_vm_state() {
 # drop supervision before deleting a VM.
 tart_supervise_label() { printf 'com.tart-stacks.supervise.%s' "$1"; }
 
+# tart_valid_vm_name <name> — 0 iff the name is a token every consumer can
+# carry: the ssh alias (tart-<name>), the guest hostname (`hostname -s` must
+# equal the name, so no dots), and the vm-pattern grammar (commas are list
+# separators, `*` is the wildcard). Letters/digits/_/-, alphanumeric head.
+# Pure-bash glob classes: byte-exact in any locale, no subprocess per check.
+tart_valid_vm_name() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_-]*|[_-]*) return 1 ;;
+  esac
+  return 0
+}
+
 # tart_is_base_image <bare-name> <stacks-dir> <distros-file> — 0 if the name is a
 # clone-source (the <distro>-base bootstrap intermediate, or a <distro>-<stack>
 # built image), not a dev VM. Anchored on the supported distro set so hyphenated
 # dev-VM names (e.g. web-php, app-base) are NOT misread as base images.
 tart_is_base_image() {
   local bare="$1" stacks_dir="$2" distros_file="$3" d rest
+  # The classification gates destructive paths (tart-rm's delete) — refusing
+  # to answer beats silently failing open when the data is unreadable.
+  [ -r "$distros_file" ] || { echo "${prog:-${0##*/}}: cannot read distros file '$distros_file' — cannot tell dev VMs from base images." >&2; exit 1; }
+  [ -d "$stacks_dir" ]   || { echo "${prog:-${0##*/}}: stacks dir '$stacks_dir' not found — cannot tell dev VMs from base images." >&2; exit 1; }
   while IFS= read -r d; do
     case "$bare" in
       "$d"-base) return 0 ;;
       "$d"-*) rest="${bare#"$d"-}"; [ -d "$stacks_dir/$rest" ] && return 0 ;;
     esac
-  done < <(grep -vE '^[[:space:]]*(#|$)' "$distros_file" 2>/dev/null)
+  done < <(grep -vE '^[[:space:]]*(#|$)' "$distros_file")
   return 1
 }
 

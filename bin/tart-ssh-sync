@@ -119,12 +119,6 @@ if [ -f "$FORWARDS_CONFIG" ]; then
   done < "$FORWARDS_CONFIG"
 fi
 
-# bare_name <token> — 0 iff the token is a bare name: alphanumeric head, then
-# alphanumerics/_/-. LC_ALL=C keeps the ranges byte-exact in any locale.
-bare_name() {
-  printf '%s' "$1" | LC_ALL=C grep -qE '^[A-Za-z0-9][A-Za-z0-9_-]*$'
-}
-
 # Parse the ssh-agents config into parallel (vm, agent, socket) arrays
 # preserving line order. Each line is `<vm-name> <agent-name> <host-socket>`;
 # a VM with N agents has N lines (the first one is the primary — ForwardAgent
@@ -159,11 +153,11 @@ if [ -f "$SSH_AGENTS_CONFIG" ]; then
     # `Host tart-<vm>`, so a pattern token (`*`, a comma list) would grant an
     # agent to VMs never listed here. The agent token gets the same gate — it
     # names the in-VM socket path /run/tart/agent-<name>.sock.
-    if ! bare_name "$vm"; then
+    if ! tart_valid_vm_name "$vm"; then
       echo "$prog: $SSH_AGENTS_CONFIG:$lineno: VM token '$vm' is not a bare name, skipping: $raw" >&2
       continue
     fi
-    if ! bare_name "$agent"; then
+    if ! tart_valid_vm_name "$agent"; then
       echo "$prog: $SSH_AGENTS_CONFIG:$lineno: agent token '$agent' is not a bare name, skipping: $raw" >&2
       continue
     fi

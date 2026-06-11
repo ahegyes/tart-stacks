@@ -49,15 +49,25 @@ mkdir -p "$WORK/stacks/php"
 printf 'fedora\n' > "$WORK/distros"
 
 # Mocks: every call lands in $CALLS. `tart list` answers from the JSON fixture
-# file, or fails with $MOCK_TART_LIST_RC after a stderr marker (mirroring
-# test/tart-up.sh); `stop` exits $MOCK_TART_STOP_RC; everything else records
-# and succeeds. `launchctl` records and succeeds — the real tart-supervise's
-# bootout goes through it.
+# file — or one line per call from $MOCK_TART_LIST_SEQ (last line repeats) for
+# tests where the answer must CHANGE across lookups — or fails with
+# $MOCK_TART_LIST_RC after a stderr marker (mirroring test/tart-up.sh); `stop`
+# exits $MOCK_TART_STOP_RC; everything else records and succeeds. `launchctl`
+# records and succeeds — the real tart-supervise's bootout goes through it.
+# `ps` drives tart_vm_alive: MOCK_ALIVE=1 emits the canonical `tart run` line.
 cat > "$MOCKBIN/tart" <<'M'
 #!/usr/bin/env bash
 echo "tart $*" >> "$CALLS"
 case "${1:-}" in
   list)
+    if [ -n "${MOCK_TART_LIST_SEQ:-}" ] && [ -f "$MOCK_TART_LIST_SEQ" ]; then
+      n=$(cat "${MOCK_TART_LIST_SEQ}.idx" 2>/dev/null || echo 1)
+      line=$(sed -n "${n}p" "$MOCK_TART_LIST_SEQ")
+      [ -n "$line" ] || line=$(tail -n 1 "$MOCK_TART_LIST_SEQ")
+      echo $((n + 1)) > "${MOCK_TART_LIST_SEQ}.idx"
+      printf '%s\n' "$line"
+      exit 0
+    fi
     if [ "${MOCK_TART_LIST_RC:-0}" -ne 0 ]; then
       echo "MOCK_TART_LIST_STDERR_MARKER" >&2
       exit "${MOCK_TART_LIST_RC}"
@@ -72,7 +82,15 @@ cat > "$MOCKBIN/launchctl" <<'M'
 echo "launchctl $*" >> "$CALLS"
 exit 0
 M
-chmod +x "$MOCKBIN/tart" "$MOCKBIN/launchctl"
+cat > "$MOCKBIN/ps" <<'M'
+#!/usr/bin/env bash
+# tart_vm_alive runs `ps -axo args=`; emit a `tart run` cmdline for it to scan.
+if [ "${MOCK_ALIVE:-0}" = "1" ]; then
+  printf '/opt/tart.app/Contents/MacOS/tart run %s --no-graphics\n' "${MOCK_VM:-app-a}"
+fi
+exit 0
+M
+chmod +x "$MOCKBIN/tart" "$MOCKBIN/launchctl" "$MOCKBIN/ps"
 
 # Fixture list: one base image, one running dev VM, one stopped dev VM.
 export TART_LIST_JSON="$WORK/list.json"
@@ -86,6 +104,8 @@ run_rm() { # args... — exit code in $rc, stderr in $ERR, recorded calls in $CA
   : > "$CALLS"; rc=0
   PATH="$MOCKBIN:$PATH" HOME="$WORK/home" \
     MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_TART_STOP_RC="${MOCK_TART_STOP_RC-0}" \
+    MOCK_TART_LIST_SEQ="${MOCK_TART_LIST_SEQ-}" \
+    MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_VM=app-a \
     TART_LAUNCHAGENTS_DIR="$LA" \
     TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" \
     bash "$BIN/tart-rm" "$@" >"$WORK/out" 2>"$ERR" || rc=$?
@@ -166,12 +186,35 @@ assert_order    "supervised VM → bootout precedes stop" "launchctl bootout" "t
 assert_order    "supervised VM → stop precedes delete"  "tart stop app-a$"  "tart delete app-a$"
 assert_contains "supervised VM → final line notes supervision" "$(cat "$ERR")" "supervision dropped"
 
-# failing `tart stop` aborts the teardown: nothing is deleted, the pin survives
+# failing `tart stop` on a LIVE VM aborts the teardown: nothing is deleted,
+# the pin survives
 seed_pins
 MOCK_TART_STOP_RC=7 run_rm app-a
 assert_rc       "failing stop propagates its exit code" 7
 assert_absent   "failing stop → no tart delete" "$(cat "$CALLS")" "tart delete"
 assert_contains "failing stop → pin survives the aborted teardown" "$(cat "$KNOWN")" "tart-app-a"
+
+# crash-wedged VM (listed running, no live process): the stop only clears
+# tart's stored state, so even a failing one must not block the delete
+seed_pins
+MOCK_ALIVE=0 MOCK_TART_STOP_RC=7 run_rm app-a
+assert_rc       "wedged VM → failing stop does not abort the teardown" 0
+assert_contains "wedged VM → state-clearing stop attempted" "$(cat "$CALLS")" "tart stop app-a"
+assert_contains "wedged VM → delete proceeds" "$(cat "$CALLS")" "tart delete app-a"
+assert_absent   "wedged VM → alias pin scrubbed" "$(cat "$KNOWN")" "tart-app-a"
+
+# the supervision drop races the supervisor's restart cycle: the state is
+# re-resolved after the drop, so a VM captured "stopped" at lookup but running
+# by then still gets stopped before the delete
+SEQ="$WORK/rm-list.seq"
+printf '%s\n' \
+  '[{"Name":"app-a","Source":"local","State":"stopped"}]' \
+  '[{"Name":"app-a","Source":"local","State":"running"}]' > "$SEQ"
+rm -f "${SEQ}.idx"
+printf 'seed\n' > "$plist"
+MOCK_TART_LIST_SEQ="$SEQ" run_rm app-a
+assert_rc       "post-drop re-resolve → exit 0" 0
+assert_order    "post-drop re-resolve → stop still precedes delete" "tart stop app-a$" "tart delete app-a$"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

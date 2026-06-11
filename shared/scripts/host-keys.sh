@@ -23,6 +23,9 @@ cat > /usr/local/sbin/tart-stacks-host-keys <<'EOF'
 # boot). Stage to .new then swap, so /etc/ssh never holds a half-written set.
 set -e
 cd /etc/ssh
+# Staging left by an interrupted run would make ssh-keygen prompt to
+# overwrite — and die on the unit's /dev/null stdin — so clear it first.
+rm -f ssh_host_*_key.new ssh_host_*_key.new.pub
 for t in rsa ecdsa ed25519; do
   ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new"
 done

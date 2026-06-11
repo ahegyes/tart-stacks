@@ -22,8 +22,8 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « i
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
 assert_rc() { # label want — checks $rc from the last run_setup
   if [ "$rc" -eq "$2" ]; then ok "$1"; else bad "$1" "want rc=$2 got rc=$rc (stderr: $(cat "$ERR"))"; fi; }
-assert_eq() { # label got want
-  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want '$3' got '$2'"; fi; }
+assert_eq() { # label want got
+  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want '$2' got '$3'"; fi; }
 assert_path()    { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
 assert_no_path() { if [ -e "$2" ] || [ -L "$2" ]; then bad "$1" "should not exist: $2"; else ok "$1"; fi; }
 assert_link() { # label link expected-target
@@ -78,13 +78,13 @@ for c in "${CMDS[@]}"; do
 done
 assert_link "install → completion linked" "$COMP/_tart-new" "$REPO/completions/_tart-new"
 assert_contains "install → Include block lands at the TOP" "$(head -n 1 "$SSHCFG")" "Added by tart-stacks"
-assert_eq "install → exactly one Include line" "$(grep -cxF "$INC" "$SSHCFG")" "1"
+assert_eq "install → exactly one Include line" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 assert_contains "install → user config intact below the block" "$(cat "$SSHCFG")" "Host github.com"
 assert_path "install → forwards scaffolded" "$CFG/forwards"
 assert_path "install → mounts scaffolded"   "$CFG/mounts"
 assert_path "install → tart-vms generated (setup ran the first sync)" "$GEN"
 # shellcheck disable=SC2012  # ls renders the mode portably (BSD stat and GNU stat disagree on flags); $GEN is a fixed sandbox path
-assert_eq "install → tart-vms mode 600" "$(ls -l "$GEN" | cut -c1-10)" "-rw-------"
+assert_eq "install → tart-vms mode 600" "-rw-------" "$(ls -l "$GEN" | cut -c1-10)"
 assert_contains "install → sync reported its write" "$(cat "$ERR")" "wrote $GEN"
 assert_contains "install → pubkey preflight warns while ~/.ssh/tart-vm.pub is absent" "$(cat "$ERR")" "tart-vm.pub"
 
@@ -93,7 +93,7 @@ touch "$H/.ssh/tart-vm.pub"
 printf '# sentinel-edit\n' >> "$CFG/forwards"
 run_setup
 assert_rc "re-run → exit 0" 0
-assert_eq "re-run → still exactly one Include line" "$(grep -cxF "$INC" "$SSHCFG")" "1"
+assert_eq "re-run → still exactly one Include line" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 assert_contains "re-run → forwards sentinel survives" "$(cat "$CFG/forwards")" "sentinel-edit"
 assert_absent "re-run → pubkey warning gone once the key exists" "$(cat "$ERR")" "tart-vm.pub"
 
@@ -131,7 +131,7 @@ printf 'Host *\n  User nobody\n%s\n' "$INC" > "$SSHCFG"
 run_setup
 assert_rc "catch-all install → exit 0" 0
 assert_contains "catch-all → ordering warning fires" "$(cat "$ERR")" "catch-all"
-assert_eq "catch-all → no second Include added" "$(grep -cxF "$INC" "$SSHCFG")" "1"
+assert_eq "catch-all → no second Include added" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 
 # uninstall: a foreign same-named symlink is warned and left
 sandbox s4
@@ -176,7 +176,7 @@ assert_contains "supervised gate → states nothing was removed" "$(cat "$ERR")"
 assert_link "supervised gate → symlinks untouched" "$LB/tart-up" "$REPO/bin/tart-up"
 assert_link "supervised gate → completion untouched" "$COMP/_tart-new" "$REPO/completions/_tart-new"
 assert_path "supervised gate → generated config untouched" "$GEN"
-assert_eq "supervised gate → Include block untouched" "$(grep -cxF "$INC" "$SSHCFG")" "1"
+assert_eq "supervised gate → Include block untouched" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 
 # argument handling
 run_setup --help

@@ -27,7 +27,7 @@ PHP is compiled from source via mise+asdf-php. The packages in [`packages.dnf`](
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
 - **Add or drop a PHP extension**: each PHP extension needs its build-dep package in [`packages.dnf`](./packages.dnf) (Fedora/RHEL) and [`packages.apt`](./packages.apt) (Debian/Ubuntu) — the inline comments list the extension each entry enables (e.g., `libpq-devel` / `libpq-dev` → `pdo_pgsql`). Pair every package change with the matching entry in the smoke-test list in [`scripts/mise-install.sh`](./scripts/mise-install.sh).
-- **Per-project version pin**: drop a `.mise.toml` in the project repo root and commit it:
+- **Per-project version pin**: drop a `.mise.toml` in the project repo root and commit it, then run `mise trust` once inside the repo — project configs are deliberately untrusted until you do (that prompt is the supply-chain gate; a non-interactive agent runs `mise trust` as an explicit step):
   ```toml
   [tools]
   node = "<major>"

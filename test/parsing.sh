@@ -285,6 +285,12 @@ assert_eq       "non --net-* token → rc 1"            1 "$nrc"
 assert_contains "rejection names the offending token" "$(<"$NETP_ERR")" "--dir=/x"
 assert_contains "rejection names the netpolicy file"  "$(<"$NETP_ERR")" "$WORK/netpolicy"
 
+# tart's CLI accepts `--net-bridged en0`, but this contract is =-form only:
+# the bare value token is refused, and the message teaches the rewrite.
+netpolicy "--net-bridged en0" >/dev/null; nrc=$?
+assert_eq       "space-form flag value → rc 1"            1 "$nrc"
+assert_contains "space-form refusal teaches the = form"   "$(<"$NETP_ERR")" "--net-bridged=en0"
+
 # tokenization must not pathname-expand: a glob char stays literal even when
 # the cwd holds a matching file.
 : > "$WORK/--net-softnet-allow=evil"

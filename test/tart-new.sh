@@ -183,6 +183,18 @@ assert_contains "unrelated pin survives the aborted create" "$(<"$WORK/home/.ssh
 run_new only-one two
 assert_eq "missing distro arg exits 64" 64 "$rc"
 
+# Invalid names refused at create time — the name becomes the ssh alias, the
+# guest hostname (hostname -s must equal it), and a vm-pattern token.
+: > "$TART_CALLS"
+run_new app.v2 php fedora
+assert_eq       "dotted name refused at create" 1 "$rc"
+assert_contains "name refusal explains itself" "$(<"$WORK/err")" "invalid VM name"
+assert_absent   "dotted name → no clone" "$(<"$TART_CALLS")" "clone"
+run_new a,b php fedora
+assert_eq "comma name refused at create" 1 "$rc"
+run_new _lead php fedora
+assert_eq "leading-underscore name refused at create" 1 "$rc"
+
 # Space-form flag with no value → usage error (64), not a raw set -u death.
 run_new foo php fedora --cpu
 assert_eq       "valueless --cpu exits 64" 64 "$rc"
@@ -199,6 +211,16 @@ assert_eq "valueless --disk-size exits 64" 64 "$rc"
 # shellcheck source=bin/lib/common.sh
 . "$BIN/lib/common.sh"
 
+echo "bin/lib/common.sh — tart_valid_vm_name:"
+check "plain name valid"             0 tart_valid_vm_name app-a
+check "digits and underscore valid"  0 tart_valid_vm_name a1_b2
+check "dotted name invalid"          1 tart_valid_vm_name app.v2
+check "comma name invalid"           1 tart_valid_vm_name a,b
+check "star invalid"                 1 tart_valid_vm_name '*'
+check "leading dash invalid"         1 tart_valid_vm_name -x
+check "leading underscore invalid"   1 tart_valid_vm_name _x
+check "empty invalid"                1 tart_valid_vm_name ''
+
 echo "bin/lib/common.sh — tart_is_base_image:"
 check "<distro>-base is a base"        0 tart_is_base_image fedora-base "$WORK/stacks" "$WORK/distros2"
 check "ubuntu-base is a base"          0 tart_is_base_image ubuntu-base "$WORK/stacks" "$WORK/distros2"
@@ -208,6 +230,12 @@ check "plain dev VM not a base"        1 tart_is_base_image app-a       "$WORK/s
 check "hyphenated dev VM not a base"   1 tart_is_base_image web-php     "$WORK/stacks" "$WORK/distros2"
 check "unsupported-prefix not a base"    1 tart_is_base_image arch-php    "$WORK/stacks" "$WORK/distros2"
 check "-base without a distro not a base" 1 tart_is_base_image app-base    "$WORK/stacks" "$WORK/distros2"
+
+# Unreadable classification data refuses loudly instead of failing open — the
+# helper gates tart-rm's delete path. (Subshell: the guard exits the shell.)
+( tart_is_base_image app-a "$WORK/stacks" "$WORK/absent-distros" ) 2>"$WORK/base-err"; brc=$?
+if [ "$brc" -ne 0 ]; then ok "missing distros file → loud refusal, no fail-open"; else bad "missing distros file → loud refusal, no fail-open" "want rc!=0 got rc=0"; fi
+assert_contains "refusal names the unreadable file" "$(<"$WORK/base-err")" "absent-distros"
 
 echo
 echo "  $pass passed, $fail failed"

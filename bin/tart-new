@@ -101,13 +101,23 @@ NAME="${positionals[0]}"
 STACK="${positionals[1]}"
 DISTRO="${positionals[2]}"
 
-# 1. Stack must exist in the repo.
+# 1. The name must be a token every consumer can carry: it becomes the ssh
+#    alias, the guest hostname (`hostname -s` must equal it — dots would
+#    truncate), and a vm-pattern token (commas and `*` are grammar there).
+#    Gating at create time makes every downstream assumption hold by
+#    construction; raw `tart clone` stays the escape hatch for exotic names.
+if ! tart_valid_vm_name "$NAME"; then
+  echo "$prog: invalid VM name '$NAME' — use letters, digits, '_' or '-', starting with a letter or digit (the name becomes the ssh alias and the guest hostname)." >&2
+  exit 1
+fi
+
+# 2. Stack must exist in the repo.
 if ! stack_exists "$STACK"; then
   echo "$prog: no stack '$STACK'; available: $(list_stacks | sort | paste -sd, - | sed 's/,/, /g')" >&2
   exit 1
 fi
 
-# 2. Distro must be supported.
+# 3. Distro must be supported.
 if ! distro_supported "$DISTRO"; then
   echo "$prog: distro '$DISTRO' not supported; available: $(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" | paste -sd, - | sed 's/,/, /g')" >&2
   exit 1
@@ -116,14 +126,14 @@ fi
 # Image name for this stack + distro — used by the not-built hint and the clone below.
 img="$(image_for_stack "$STACK" "$DISTRO")"
 
-# 3. No clobbering an existing VM. Sits ahead of the build offer so a 15-20 min
+# 4. No clobbering an existing VM. Sits ahead of the build offer so a 15-20 min
 #    build can never end in "already exists".
 if vm_exists "$NAME"; then
   echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
   exit 1
 fi
 
-# 4. Image must be built. Offer to build interactively; otherwise fail with the
+# 5. Image must be built. Offer to build interactively; otherwise fail with the
 #    exact command (no silent 15-20 min side-effect).
 if ! image_built "$STACK" "$DISTRO"; then
   echo "$prog: stack '$STACK' image '$img' is not built." >&2
@@ -147,7 +157,7 @@ fi
 # can't strand it.
 ssh-keygen -R "tart-$NAME" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
-# 5. Clone, then fold in resources if any were given.
+# 6. Clone, then fold in resources if any were given.
 tart clone "$img" "$NAME"
 set_args=()
 [ -n "$CPU" ]  && set_args+=(--cpu "$CPU")

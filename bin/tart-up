@@ -122,7 +122,7 @@ netpolicy_args() {
       case "$tok" in
         --net-*) printf '%s\n' "$tok" ;;
         *)
-          echo "${prog:-tart-up}: $NETPOLICY_CONFIG line $lineno: '$tok' is not a --net-* flag — refusing to start with a partial net-policy." >&2
+          echo "${prog:-tart-up}: $NETPOLICY_CONFIG line $lineno: '$tok' is not a --net-* flag — refusing to start with a partial net-policy. (A flag's value must ride the = form: --net-bridged=en0, not --net-bridged en0.)" >&2
           return 1 ;;
       esac
     done
@@ -290,9 +290,11 @@ for _ in $(seq 1 30); do
     # The unit is `sshd` on dnf-family guests and `ssh` on apt-family — try both.
     # The marker lands only after a successful restart: sshd serves the old key
     # until restarted, so marking earlier would pin a stale key on the host and
-    # never retry the restart.
+    # never retry the restart. Staging left by an interrupted run is cleared
+    # first — ssh-keygen would otherwise prompt to overwrite and die on the
+    # vsock channel's /dev/null stdin, wedging every retry.
     # shellcheck disable=SC2016  # $t/${t} are for the GUEST shell — keep single-quoted
-    regen='test -e /etc/ssh/.tart-keys && exit 0; cd /etc/ssh || exit 1; for t in rsa ecdsa ed25519; do ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new" || exit 1; done; for t in rsa ecdsa ed25519; do mv -f "ssh_host_${t}_key.new" "ssh_host_${t}_key"; mv -f "ssh_host_${t}_key.new.pub" "ssh_host_${t}_key.pub"; done; { systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; } && touch .tart-keys'
+    regen='test -e /etc/ssh/.tart-keys && exit 0; cd /etc/ssh || exit 1; rm -f ssh_host_*_key.new ssh_host_*_key.new.pub; for t in rsa ecdsa ed25519; do ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new" || exit 1; done; for t in rsa ecdsa ed25519; do mv -f "ssh_host_${t}_key.new" "ssh_host_${t}_key"; mv -f "ssh_host_${t}_key.new.pub" "ssh_host_${t}_key.pub"; done; { systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; } && touch .tart-keys'
     tart exec "$VM" sudo sh -c "$regen" >/dev/null 2>&1 || true
     exit 0
   fi

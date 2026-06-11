@@ -203,7 +203,7 @@ sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/shared
 
 `~/.config/tart-stacks/netpolicy` confines every VM's outbound network. `tart-up` reads it and passes its contents as Tart `--net-*` flags when it **starts** a VM, so it applies at VM start (a running VM needs a stop + start to pick up changes). An absent or empty file means default Tart NAT — unfiltered.
 
-Each non-blank, non-comment line contributes whitespace-separated tokens (`#` comments and blanks ignored), and **every token must be a `--net-*` flag** (any producer may write the file; that grammar is the contract, and `tart-up` enforces it). Any other token makes `tart-up` refuse to start the VM, naming the file, line, and token: this is security config, so it fails closed — starting under a partial policy would be worse than not starting at all. Example — softnet egress confined to the host gateway:
+Each non-blank, non-comment line contributes whitespace-separated tokens (`#` comments and blanks ignored), and **every token must be a `--net-*` flag** (any producer may write the file; that grammar is the contract, and `tart-up` enforces it). A flag's value rides the `=` form — `--net-bridged=en0`, never `--net-bridged en0`, even though Tart's own CLI accepts the space form. Any other token makes `tart-up` refuse to start the VM, naming the file, line, and token: this is security config, so it fails closed — starting under a partial policy would be worse than not starting at all. Example — softnet egress confined to the host gateway:
 
 ```
 --net-softnet
