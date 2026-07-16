@@ -317,6 +317,8 @@ assert_eq "TART_STACKS_CONFIG_DIR relocates a concern" \
   "/tmp/cfg/mounts" "$(unset TART_MOUNTS; TART_STACKS_CONFIG_DIR=/tmp/cfg tart_config_path mounts)"
 assert_eq "per-concern TART_* wins over the dir" \
   "/custom/np" "$(TART_NETPOLICY=/custom/np TART_STACKS_CONFIG_DIR=/tmp/cfg tart_config_path netpolicy)"
+assert_eq "TART_GUI wins over the config dir" \
+  "/custom/gui" "$(TART_GUI=/custom/gui TART_STACKS_CONFIG_DIR=/tmp/cfg tart_config_path gui)"
 
 # ── bin/tart-ssh-sync: config_valid + non-dry-run activation gate ───────────
 # The generated file is Included by the global ssh config, so activation is

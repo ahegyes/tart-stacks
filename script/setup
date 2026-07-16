@@ -13,7 +13,7 @@
 #
 # `--uninstall` (also: `make uninstall`) is the inverse. It removes only
 # what verifiably points into this repo, strips only the exact Include
-# block setup writes, keeps every per-VM config file (forwards, mounts,
+# block setup writes, keeps every per-VM config file (forwards, mounts, gui,
 # ssh-agents, netpolicy — they carry your opt-ins), and refuses outright
 # while any tart-supervise LaunchAgent exists, because those agents
 # restart VMs through the very tools being removed.
@@ -200,9 +200,9 @@ if [ "$MODE" = "uninstall" ]; then
     fi
   done
 
-  # 5. forwards/mounts/ssh-agents/netpolicy stay: they carry your opt-ins
-  #    (ssh-agents and netpolicy may even be written by external tooling).
-  info "kept the per-VM config files in $(tart_config_dir) (forwards, mounts, ssh-agents, netpolicy)."
+  # 5. forwards/mounts/gui/ssh-agents/netpolicy stay: they carry your opt-ins
+  #    (gui, ssh-agents, and netpolicy may even be written by external tooling).
+  info "kept the per-VM config files in $(tart_config_dir) (forwards, mounts, gui, ssh-agents, netpolicy)."
 
   echo "setup: uninstall done — removed ${summary:-nothing (nothing of ours was present)}. Reinstall anytime with:  make setup"
   exit 0

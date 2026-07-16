@@ -20,6 +20,8 @@
 # selects this VM, the matching `--dir` virtiofs shares are added to the
 # `tart run` that starts it. A `--dir` attaches at boot, so it applies only when
 # tart-up STARTS the VM — see dir_args.
+# GUI mode: `--gui=` overrides an exact-name entry in
+# ~/.config/tart-stacks/gui (override $TART_GUI); absent means headless.
 
 set -euo pipefail
 
@@ -49,10 +51,28 @@ DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
 NC_BIN="${TART_NC_BIN:-/usr/bin/nc}"
 
 usage() {
-  echo "usage: $prog <vm-name>" >&2
+  cat >&2 <<EOF
+usage: $prog [--gui=headless|vnc|window] <vm-name>
+
+GUI mode is a boot property. The command-line flag overrides an exact bare-name
+entry in ~/.config/tart-stacks/gui (override TART_GUI):
+  <bare-vm-name> headless|vnc|window
+An absent entry defaults to headless. Corrupt or duplicate entries fail closed.
+
+Window mode opens Tart's VM window. Closing that window kills the VM, and a
+windowed launch needs a GUI login session; a daemon context may not be able to
+open the window.
+EOF
 }
 
-case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+GUI_OVERRIDE=""
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  --gui=headless|--gui=vnc|--gui=window)
+    GUI_OVERRIDE="${1#--gui=}"
+    shift ;;
+  --gui*) usage; exit 64 ;;
+esac
 [ $# -eq 1 ] || { usage; exit 64; }
 
 VM="$1"
@@ -170,8 +190,137 @@ dir_args() {
   return 0
 }
 
-# Resolve this VM's net-policy + mounts once (bare name for mounts; netpolicy
-# is VM-agnostic). Both reused by the start + warning paths.
+# ---- per-VM gui mode (opt-in) ----------------------------------------------
+GUI_CONFIG=$(tart_config_path gui)
+
+# This is boot config, so it fails closed: starting the VM with only PART of a
+# corrupt file applied is worse than not starting it at all.
+gui_config_error() {
+  local location=""
+  [ -n "$1" ] && location=" line $1"
+  echo "${prog:-tart-up}: $GUI_CONFIG$location: $2 — refusing to start; starting the VM with only PART of the gui config applied is worse than not starting it at all." >&2
+}
+
+# gui_file_mode <bare-vm> — validate the entire exact-name file, then print
+# this VM's mode (headless when absent). Unlike mounts/forwards, this plane has
+# one winner per VM: patterns and duplicate names are corrupt config.
+gui_file_mode() {
+  local vm="$1" raw line lineno=0 name mode seen selected=""
+  local -a fields=() seen_names=()
+  [ -f "$GUI_CONFIG" ] || { printf 'headless'; return 0; }
+  if [ ! -r "$GUI_CONFIG" ]; then
+    gui_config_error "" "file exists but is not readable"
+    return 1
+  fi
+
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    lineno=$((lineno + 1))
+    line="${raw%%#*}"
+    fields=()
+    IFS=$' \t' read -ra fields <<< "$line"
+    [ "${#fields[@]}" -gt 0 ] || continue
+    if [ "${#fields[@]}" -ne 2 ]; then
+      gui_config_error "$lineno" "expected exactly '<bare-vm-name> headless|vnc|window'"
+      return 1
+    fi
+    name="${fields[0]}"
+    mode="${fields[1]}"
+    if ! tart_valid_vm_name "$name"; then
+      gui_config_error "$lineno" "'$name' is not an exact bare VM name (patterns and tart- prefixes are not allowed)"
+      return 1
+    fi
+    case "$mode" in
+      headless|vnc|window) ;;
+      *)
+        gui_config_error "$lineno" "unknown gui mode '$mode' (expected headless, vnc, or window)"
+        return 1 ;;
+    esac
+    if [ "${#seen_names[@]}" -gt 0 ]; then
+      for seen in "${seen_names[@]}"; do
+        if [ "$seen" = "$name" ]; then
+          gui_config_error "$lineno" "duplicate entry for VM '$name'"
+          return 1
+        fi
+      done
+    fi
+    seen_names+=("$name")
+    [ "$name" = "$vm" ] && selected="$mode"
+  done < "$GUI_CONFIG"
+
+  printf '%s' "${selected:-headless}"
+}
+
+# Classify the live VNC listener rather than trusting the unit config:
+# SecurityTypes=None makes this loopback bind the security boundary. Callers
+# use VNC_VERIFY_STATE rather than parsing diagnostics so unsafe/read failures
+# stop the poll immediately while an absent listener gets its startup grace.
+vnc_listener_state() {
+  local table local_addr found_v4=0
+  VNC_VERIFY_STATE="read-failure"
+  VNC_VERIFY_ERROR=""
+  if ! table=$(tart exec "$VM" ss -tln 2>/dev/null); then
+    if ! table=$(tart exec "$VM" ss -ltn 2>/dev/null); then
+      if ! table=$(tart exec "$VM" sudo ss -tln 2>/dev/null); then
+        VNC_VERIFY_ERROR="could not read the guest TCP listener table with ss"
+        return 0
+      fi
+    fi
+  fi
+  while IFS=$' \t' read -r _ _ _ local_addr _; do
+    case "$local_addr" in
+      *:5901)
+        case "$local_addr" in
+          # `ok` requires the IPv4 loopback listener specifically: the contract
+          # (and the tunnel command this script advertises) targets
+          # 127.0.0.1:5901, so a [::1]-only bind is not yet usable — treat it
+          # as absent and let the poll's grace window cover a v6-before-v4
+          # bind order.
+          127.0.0.1:5901) found_v4=1 ;;
+          '[::1]:5901') ;;
+          *)
+            VNC_VERIFY_STATE="unsafe"
+            VNC_VERIFY_ERROR="listener '$local_addr' is not loopback-only"
+            return 0 ;;
+        esac ;;
+    esac
+  done <<< "$table"
+  if [ "$found_v4" -eq 1 ]; then
+    VNC_VERIFY_STATE="ok"
+  else
+    VNC_VERIFY_STATE="absent"
+  fi
+  return 0
+}
+
+vnc_wait_for_loopback() {
+  local attempt
+  for ((attempt = 1; attempt <= 30; attempt++)); do
+    vnc_listener_state
+    case "$VNC_VERIFY_STATE" in
+      ok) return 0 ;;
+      absent) sleep 1 ;;
+      unsafe|read-failure) return 1 ;;
+    esac
+  done
+  VNC_VERIFY_ERROR="timed out after 30 seconds waiting for the 127.0.0.1:5901 listener"
+  return 1
+}
+
+# Any failed verification must remove the unauthenticated service. A failed
+# guest-agent stop leaves the listener's safety unknown, so power off the VM;
+# preserving availability is not worth preserving a possibly exposed VNC.
+vnc_fail_closed() {
+  if tart exec "$VM" sudo systemctl stop tart-stacks-vnc.service >/dev/null 2>&1; then
+    echo "$prog: '$VM' vnc gui activation failed loopback-bind verification: $VNC_VERIFY_ERROR; stopped tart-stacks-vnc.service because SecurityTypes=None requires a loopback-only listener." >&2
+  elif tart stop "$VM" >/dev/null 2>&1; then
+    echo "$prog: '$VM' vnc gui activation failed loopback-bind verification: $VNC_VERIFY_ERROR; stopping tart-stacks-vnc.service failed, so stopped VM '$VM' to prevent a possibly exposed SecurityTypes=None listener." >&2
+  else
+    echo "$prog: '$VM' vnc gui activation failed loopback-bind verification: $VNC_VERIFY_ERROR; FAILED to stop tart-stacks-vnc.service and FAILED to stop VM '$VM' — an unauthenticated non-loopback VNC listener may still be running." >&2
+  fi
+}
+
+# Resolve this VM's net-policy + mounts + gui once (bare name for the per-VM
+# planes; netpolicy is VM-agnostic). Reuse them in the start + warning paths.
 # Net-policy is captured via command substitution so a bad token aborts right
 # here (set -e on the assignment, after netpolicy_args printed its error) —
 # read from a process substitution, the function's failure would be swallowed
@@ -190,6 +339,9 @@ DIR_ARGS=()
 while IFS= read -r d; do
   [ -n "$d" ] && DIR_ARGS+=("$d")
 done < <(dir_args "${VM#tart-}")
+
+GUI_FILE_MODE=$(gui_file_mode "${VM#tart-}")
+GUI_MODE="${GUI_OVERRIDE:-$GUI_FILE_MODE}"
 
 # Guest-agent provisioning (hostname + host-key regen, below) runs only on a
 # boot this script starts: it is once-per-boot work, and each `tart exec` opens
@@ -218,12 +370,16 @@ if [ "$STATE" = "running" ]; then
   if [ "${#NETPOLICY_ARGS[@]}" -gt 0 ]; then
     echo "$prog: '$VM' already running — net-policy (from $NETPOLICY_CONFIG) applies at boot, so it has whatever it started with (stop + start to apply net-policy changes)." >&2
   fi
+  if [ "$GUI_MODE" != "headless" ]; then
+    echo "$prog: '$VM' already running — gui mode '$GUI_MODE' applies at boot, so it has whatever it started with (stop + start to apply gui mode changes)." >&2
+  fi
 elif [ "$STATE" = "stopped" ]; then
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
   # tart's --net-* family is mutually exclusive, so keep them visually adjacent.
-  run_cmd=(tart run "$VM" --no-graphics)
+  run_cmd=(tart run "$VM")
+  [ "$GUI_MODE" = "window" ] || run_cmd+=(--no-graphics)
   [ "${#NETPOLICY_ARGS[@]}" -gt 0 ] && run_cmd+=("${NETPOLICY_ARGS[@]}")
   [ "${#DIR_ARGS[@]}" -gt 0 ] && run_cmd+=("${DIR_ARGS[@]}")
   # Capture tart's stderr (stdout is just VM console noise). A Tart crash is an
@@ -297,6 +453,39 @@ for _ in $(seq 1 30); do
     # shellcheck disable=SC2016  # $t/${t} are for the GUEST shell — keep single-quoted
     regen='test -e /etc/ssh/.tart-keys && exit 0; cd /etc/ssh || exit 1; rm -f ssh_host_*_key.new ssh_host_*_key.new.pub; for t in rsa ecdsa ed25519; do ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new" || exit 1; done; for t in rsa ecdsa ed25519; do mv -f "ssh_host_${t}_key.new" "ssh_host_${t}_key"; mv -f "ssh_host_${t}_key.new.pub" "ssh_host_${t}_key.pub"; done; { systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; } && touch .tart-keys'
     tart exec "$VM" sudo sh -c "$regen" >/dev/null 2>&1 || true
+    case "$GUI_MODE" in
+      window)
+        if ! tart exec "$VM" sudo systemctl isolate graphical.target >/dev/null; then
+          echo "$prog: '$VM' window gui activation failed: 'systemctl isolate graphical.target' did not succeed; the VM remains running and headless-usable." >&2
+          exit 1
+        fi
+        # Isolating graphical.target only Wants= the display manager, so the
+        # isolate succeeds even on an image with no DM baked (or a DM that
+        # fails). The desktop is the point of window mode — verify the DM
+        # actually comes up before reporting success.
+        dm_active=""
+        for _ in $(seq 1 15); do
+          if tart exec "$VM" systemctl is-active --quiet display-manager.service 2>/dev/null; then
+            dm_active=1
+            break
+          fi
+          sleep 1
+        done
+        if [ -z "$dm_active" ]; then
+          echo "$prog: '$VM' window gui activation failed: display-manager.service did not become active after isolating graphical.target (is a desktop baked into this image? see /etc/tart-stacks-release); the VM remains running and headless-usable." >&2
+          exit 1
+        fi ;;
+      vnc)
+        if ! tart exec "$VM" sudo systemctl start tart-stacks-vnc.service >/dev/null; then
+          echo "$prog: '$VM' vnc gui activation failed: 'systemctl start tart-stacks-vnc.service' did not succeed; the VM remains running and headless-usable." >&2
+          exit 1
+        fi
+        if ! vnc_wait_for_loopback; then
+          vnc_fail_closed
+          exit 1
+        fi
+        echo "$prog: VNC ready for '$VM'. Tunnel with: ssh -L 5901:127.0.0.1:5901 tart-${VM#tart-} ; then point a VNC client at localhost:5901." >&2 ;;
+    esac
     exit 0
   fi
   sleep 1

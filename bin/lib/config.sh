@@ -8,11 +8,12 @@
 
 tart_config_dir() { printf '%s' "${TART_STACKS_CONFIG_DIR:-$HOME/.config/tart-stacks}"; }
 
-# tart_config_path <concern> — resolve one of the four config files.
+# tart_config_path <concern> — resolve one of the five config files.
 tart_config_path() {
   case "$1" in
     netpolicy)  printf '%s' "${TART_NETPOLICY:-$(tart_config_dir)/netpolicy}" ;;
     mounts)     printf '%s' "${TART_MOUNTS:-$(tart_config_dir)/mounts}" ;;
+    gui)        printf '%s' "${TART_GUI:-$(tart_config_dir)/gui}" ;;
     forwards)   printf '%s' "${TART_FORWARDS:-$(tart_config_dir)/forwards}" ;;
     ssh-agents) printf '%s' "${TART_SSH_AGENTS:-$(tart_config_dir)/ssh-agents}" ;;
     *) echo "tart_config_path: unknown concern '$1'" >&2; return 2 ;;

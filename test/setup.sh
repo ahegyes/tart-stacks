@@ -110,6 +110,7 @@ assert_absent "re-run → pubkey warning gone once the key exists" "$(cat "$ERR"
 # uninstall: the inverse — user bytes preserved, generated state swept,
 # per-VM config files kept
 touch "${GEN}.rejected"   # stale failed candidate — swept with the output
+printf 'app-a vnc\n' > "$CFG/gui"  # engine-rendered policy is user state, not generated SSH output
 run_setup --uninstall
 assert_rc "uninstall → exit 0" 0
 for c in "${CMDS[@]}"; do
@@ -122,6 +123,7 @@ assert_same "uninstall → user ssh config byte-identical to pre-install" "$SSHC
 assert_path "uninstall → forwards kept" "$CFG/forwards"
 assert_contains "uninstall → forwards edits kept" "$(cat "$CFG/forwards")" "sentinel-edit"
 assert_path "uninstall → mounts kept" "$CFG/mounts"
+assert_contains "uninstall → gui config kept" "$(cat "$CFG/gui")" "app-a vnc"
 assert_contains "uninstall → says the config files were kept" "$(cat "$OUT")" "kept the per-VM config files"
 assert_contains "uninstall → closing summary printed" "$(cat "$OUT")" "uninstall done"
 

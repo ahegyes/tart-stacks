@@ -6,8 +6,9 @@
 # `tart run` cmdline the liveness scan reads) make the IP poll and the :22
 # probe converge on the first iteration. Covers resolve + prefix lookup, the
 # tart-list failure path, base-image refusal, the stopped→`tart run` command
-# (netpolicy gating + mount flags + stderr log capture), the running-VM paths
-# (alive vs wedged), and the hostname-set branch. Plain bash, no framework.
+# (netpolicy gating + mount/gui flags + stderr log capture), fail-closed gui
+# parsing, started-only desktop activation, the running-VM paths (alive vs
+# wedged), and the hostname-set branch. Plain bash, no framework.
 # Run via script/test or directly.
 set -uo pipefail
 
@@ -31,15 +32,22 @@ MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
 CALLS="$WORK/calls"; export CALLS
 ERR="$WORK/stderr"
 EMPTY="$WORK/empty"; : > "$EMPTY"
+SS_COUNT="$WORK/ss-count"
 
 # Mock `tart`: `list` emits one VM (name=$MOCK_VM, state=$MOCK_STATE), or —
 # with MOCK_TART_LIST_RC nonzero — prints a stderr marker and fails with that
 # rc; `ip` returns $MOCK_IP; `exec <vm> hostname -s` returns $MOCK_HOSTNAME
-# (drives the set-hostname branch); `run` and any other `exec` just record.
-# Every call is logged to $CALLS.
+# (drives the set-hostname branch); `exec <vm> ss -tln` emits either the fixed
+# $MOCK_SS_OUTPUT or successive lines from $MOCK_SS_SEQUENCE_FILE (the
+# <absent> sentinel emits an empty table). MOCK_TART_EXEC_FAIL_MATCH makes one
+# exact exec argv fail; MOCK_TART_FAIL_MATCH can fail any full tart argv.
+# `run` and every call are logged to $CALLS.
 cat > "$MOCKBIN/tart" <<'TART'
 #!/usr/bin/env bash
 echo "tart $*" >> "$CALLS"
+if [ -n "${MOCK_TART_FAIL_MATCH:-}" ] && [ "$*" = "$MOCK_TART_FAIL_MATCH" ]; then
+  exit 1
+fi
 case "$1" in
   list)
     if [ "${MOCK_TART_LIST_RC:-0}" -ne 0 ]; then
@@ -48,7 +56,27 @@ case "$1" in
     fi
     printf '[{"Name":"%s","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
   ip)   printf '%s\n' "${MOCK_IP:-10.0.0.9}" ;;
-  exec) shift 2; [ "$*" = "hostname -s" ] && printf '%s\n' "${MOCK_HOSTNAME:-app-a}"; exit 0 ;;
+  exec)
+    shift 2
+    if [ -n "${MOCK_TART_EXEC_FAIL_MATCH:-}" ] && [ "$*" = "$MOCK_TART_EXEC_FAIL_MATCH" ]; then
+      exit 1
+    fi
+    case "$*" in
+      "hostname -s") printf '%s\n' "${MOCK_HOSTNAME:-app-a}" ;;
+      "ss -tln"|"ss -ltn"|"sudo ss -tln")
+        [ "${MOCK_SS_READ_FAIL:-0}" -eq 0 ] || exit 1
+        if [ -n "${MOCK_SS_SEQUENCE_FILE:-}" ]; then
+          call=0
+          read -r call < "$MOCK_SS_COUNT_FILE" 2>/dev/null || call=0
+          call=$((call + 1))
+          printf '%s\n' "$call" > "$MOCK_SS_COUNT_FILE"
+          output=$(sed -n "${call}p" "$MOCK_SS_SEQUENCE_FILE")
+          [ "$output" = "<absent>" ] || printf '%s\n' "$output"
+        else
+          printf '%s\n' "${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}"
+        fi ;;
+    esac
+    exit 0 ;;
   run)  echo "MOCK_TART_RUN_STDERR_MARKER" >&2; exit 0 ;;  # stderr → tart-up's per-VM log
   *)    exit 0 ;;
 esac
@@ -66,6 +94,16 @@ exit "${MOCK_NC_RC:-0}"
 NC
 chmod +x "$MOCKBIN/nc"
 
+# VNC listener polling waits one second in production. Keep the characterization
+# suite instant while recording each requested wait so immediate-failure and
+# timeout behavior can be distinguished without wall-clock assertions.
+cat > "$MOCKBIN/sleep" <<'SLEEP'
+#!/usr/bin/env bash
+echo "sleep $*" >> "$CALLS"
+exit 0
+SLEEP
+chmod +x "$MOCKBIN/sleep"
+
 # Mock `ps`: tart_vm_alive runs `ps -axo args=`; emit a `tart run` cmdline for
 # it to scan. MOCK_PS_LINE sets the exact line; MOCK_ALIVE=1 emits the
 # canonical shape for $MOCK_VM.
@@ -80,19 +118,29 @@ exit 0
 PS
 chmod +x "$MOCKBIN/ps"
 
-# Run tart-up with the mocks prepended (real jq/seq/sleep/etc. stay on PATH).
+# Run tart-up with the mocks prepended (real jq/seq/etc. stay on PATH).
 # Knobs arrive as env on the call: MOCK_ALIVE (default 1 — a listed-running VM
-# has a live process), MOCK_TART_LIST_RC, MOCK_NC_RC, RUNUP_LOG_DIR. Exit code
-# lands in $rc, stderr in $ERR, recorded mock calls in $CALLS.
-runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <vm-arg>
-  : > "$CALLS"; rc=0
-  PATH="$MOCKBIN:$PATH" MOCK_VM=app-a MOCK_STATE="$1" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$2" \
+# has a live process), MOCK_TART_LIST_RC, MOCK_NC_RC, MOCK_SS_OUTPUT,
+# MOCK_SS_SEQUENCE_FILE, MOCK_SS_READ_FAIL, MOCK_TART_EXEC_FAIL_MATCH,
+# MOCK_TART_FAIL_MATCH, and RUNUP_LOG_DIR. Exit code lands in $rc, stderr in
+# $ERR, recorded mock calls in $CALLS. The sequenced-listener counter is reset
+# for every invocation.
+runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-up argv...>
+  local state="$1" hostname="$2" netpolicy="$3" mounts="$4" gui="$5"
+  shift 5
+  : > "$CALLS"; : > "$SS_COUNT"; rc=0
+  PATH="$MOCKBIN:$PATH" MOCK_VM=app-a MOCK_STATE="$state" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$hostname" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_NC_RC="${MOCK_NC_RC-0}" \
-    TART_NC_BIN="$MOCKBIN/nc" TART_NETPOLICY="$3" TART_MOUNTS="$4" \
+    MOCK_SS_OUTPUT="${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
+    MOCK_SS_SEQUENCE_FILE="${MOCK_SS_SEQUENCE_FILE-}" MOCK_SS_COUNT_FILE="$SS_COUNT" \
+    MOCK_SS_READ_FAIL="${MOCK_SS_READ_FAIL-0}" \
+    MOCK_TART_EXEC_FAIL_MATCH="${MOCK_TART_EXEC_FAIL_MATCH-}" \
+    MOCK_TART_FAIL_MATCH="${MOCK_TART_FAIL_MATCH-}" \
+    TART_NC_BIN="$MOCKBIN/nc" TART_NETPOLICY="$netpolicy" TART_MOUNTS="$mounts" TART_GUI="$gui" \
     TART_LOG_DIR="${RUNUP_LOG_DIR:-$WORK/logs}" \
-    bash "$BIN/tart-up" "$5" >/dev/null 2>"$ERR" || rc=$?
+    bash "$BIN/tart-up" "$@" >/dev/null 2>"$ERR" || rc=$?
   # The stopped-VM `tart run` is backgrounded (& disown); give the mock up to ~2s to log it.
-  if [ "$rc" -eq 0 ] && [ "$1" = stopped ]; then
+  if [ "$rc" -eq 0 ] && [ "$state" = stopped ]; then
     local _; for _ in $(seq 1 20); do grep -q 'tart run' "$CALLS" 2>/dev/null && break; sleep 0.1; done
   fi
 }
@@ -100,16 +148,18 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <vm-arg>
 # argument count
 check_rc "no args → exit 64"  64 env PATH="$MOCKBIN:$PATH" bash "$BIN/tart-up"
 check_rc "two args → exit 64" 64 env PATH="$MOCKBIN:$PATH" bash "$BIN/tart-up" a b
+check_rc "bare --gui → exit 64" 64 env PATH="$MOCKBIN:$PATH" bash "$BIN/tart-up" --gui app-a
+check_rc "unknown --gui value → exit 64" 64 env PATH="$MOCKBIN:$PATH" bash "$BIN/tart-up" --gui=bogus app-a
 
 # unknown VM (mock lists a different name) → exit 1
 check_rc "unknown VM → exit 1" 1 \
   env PATH="$MOCKBIN:$PATH" MOCK_VM=other MOCK_STATE=stopped TART_NC_BIN="$MOCKBIN/nc" \
-  TART_NETPOLICY="$EMPTY" TART_MOUNTS="$EMPTY" \
+  TART_NETPOLICY="$EMPTY" TART_MOUNTS="$EMPTY" TART_GUI="$EMPTY" \
   bash "$BIN/tart-up" app-a
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
 # with tart's own stderr surfaced, no prefix-swap retry, and no VM start.
-MOCK_TART_LIST_RC=1 runup stopped app-a "$EMPTY" "$EMPTY" app-a
+MOCK_TART_LIST_RC=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_rc       "tart list failure → exit 1" 1
 assert_contains "tart list failure → diagnostic names the tool" "$(cat "$ERR")" "'tart list' failed"
 assert_contains "tart list failure → tart's stderr surfaced"    "$(cat "$ERR")" "MOCK_TART_LIST_STDERR_MARKER"
@@ -119,14 +169,14 @@ assert_eq       "tart list failure → no prefix-swap retry" 1 "$(grep -c 'tart 
 # base image refusal (a stack clone-source is not a dev VM)
 check_rc "base image (fedora-php) → exit 1" 1 \
   env PATH="$MOCKBIN:$PATH" MOCK_VM=fedora-php MOCK_STATE=stopped TART_NC_BIN="$MOCKBIN/nc" \
-  TART_NETPOLICY="$EMPTY" TART_MOUNTS="$EMPTY" \
+  TART_NETPOLICY="$EMPTY" TART_MOUNTS="$EMPTY" TART_GUI="$EMPTY" \
   bash "$BIN/tart-up" fedora-php
 
 # stopped → `tart run` carries the netpolicy + mount flags; the probe goes
 # through $TART_NC_BIN (the recorded `nc` call proves the seam is honored).
 NETP="$WORK/netpolicy"; printf -- '--net-softnet=@host-only\n' > "$NETP"
 MNTS="$WORK/mounts";    printf -- '* /srv/data:ro\n'           > "$MNTS"
-runup stopped app-a "$NETP" "$MNTS" app-a
+runup stopped app-a "$NETP" "$MNTS" "$EMPTY" app-a
 calls="$(cat "$CALLS")"
 assert_contains "stopped → tart run --no-graphics"      "$calls" "tart run app-a --no-graphics"
 assert_contains "stopped → run carries netpolicy flag"  "$calls" "--net-softnet=@host-only"
@@ -143,7 +193,7 @@ assert_contains "stopped → tart run stderr captured to per-VM log" "$(cat "$ru
 # an unusable log target must never block the start (the redirect degrades to
 # /dev/null instead): point TART_LOG_DIR at a regular file.
 : > "$WORK/not-a-dir"
-RUNUP_LOG_DIR="$WORK/not-a-dir" runup stopped app-a "$EMPTY" "$EMPTY" app-a
+RUNUP_LOG_DIR="$WORK/not-a-dir" runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_rc       "log dir is a regular file → still exits 0" 0
 assert_contains "log dir is a regular file → VM still starts" "$(cat "$CALLS")" "tart run app-a --no-graphics"
 
@@ -153,7 +203,7 @@ assert_contains "log dir is a regular file → VM still starts" "$(cat "$CALLS")
 GLOBCWD="$WORK/globcwd"; mkdir -p "$GLOBCWD"
 : > "$GLOBCWD/--net-softnet-allow=evil"
 printf -- '--net-softnet-allow=*\n' > "$WORK/netpolicy-glob"
-( cd "$GLOBCWD" && runup stopped app-a "$WORK/netpolicy-glob" "$EMPTY" app-a )
+( cd "$GLOBCWD" && runup stopped app-a "$WORK/netpolicy-glob" "$EMPTY" "$EMPTY" app-a )
 # rc/ERR die with the subshell — assert via $CALLS only.
 calls="$(cat "$CALLS")"
 assert_contains "netpolicy glob char reaches tart run literally" "$calls" "tart run app-a --no-graphics --net-softnet-allow=*"
@@ -162,10 +212,160 @@ assert_absent   "netpolicy token did not expand against the cwd" "$calls" "--net
 # a non-`--net-*` token is a corrupt or tampered-with policy: refuse to start
 # at all (a partially applied policy must never happen) and name the token.
 printf -- '--net-softnet --dir=/x\n' > "$WORK/netpolicy-bad"
-runup stopped app-a "$WORK/netpolicy-bad" "$EMPTY" app-a
+runup stopped app-a "$WORK/netpolicy-bad" "$EMPTY" "$EMPTY" app-a
 assert_rc       "non --net-* netpolicy token → exit 1" 1
 assert_contains "netpolicy refusal names the token" "$(cat "$ERR")" "--dir=/x"
 assert_absent   "netpolicy refusal → VM not started" "$(cat "$CALLS")" "tart run"
+
+# Gui config is exact-name and single-winner. Comments/blanks are tolerated,
+# but every non-comment line is validated even when it names another VM.
+GUI_VALID="$WORK/gui-valid"
+printf '\n# engine-managed defaults\nother-vm headless\napp-a vnc # desktop\n' > "$GUI_VALID"
+runup stopped app-a "$EMPTY" "$EMPTY" "$GUI_VALID" app-a
+assert_rc       "gui file valid exact-name line → exit 0" 0
+calls="$(cat "$CALLS")"
+assert_contains "gui file vnc → headless tart launch" "$calls" "tart run app-a --no-graphics"
+assert_contains "gui file vnc → starts VNC on a started boot" "$calls" "sudo systemctl start tart-stacks-vnc.service"
+assert_contains "gui file vnc → verifies listener with ss" "$calls" "tart exec app-a ss -tln"
+assert_contains "gui file vnc → prints tunnel hint" "$(cat "$ERR")" "ssh -L 5901:127.0.0.1:5901 tart-app-a"
+
+printf '# ok\napp-a sideways\n' > "$WORK/gui-unknown"
+runup stopped app-a "$EMPTY" "$EMPTY" "$WORK/gui-unknown" app-a
+assert_rc       "unknown gui token → exit 1" 1
+assert_contains "unknown gui token → names line 2" "$(cat "$ERR")" "line 2"
+assert_absent   "unknown gui token → refuses boot" "$(cat "$CALLS")" "tart run"
+
+printf '# ok\napp-a vnc trailing\n' > "$WORK/gui-extra"
+runup stopped app-a "$EMPTY" "$EMPTY" "$WORK/gui-extra" app-a
+assert_rc       "extra gui field → exit 1" 1
+assert_contains "extra gui field → names line 2" "$(cat "$ERR")" "line 2"
+assert_absent   "extra gui field → refuses boot" "$(cat "$CALLS")" "tart run"
+
+printf '# ok\napp-a vnc\napp-a window\n' > "$WORK/gui-duplicate"
+runup stopped app-a "$EMPTY" "$EMPTY" "$WORK/gui-duplicate" app-a
+assert_rc       "duplicate gui name → exit 1" 1
+assert_contains "duplicate gui name → names line 3" "$(cat "$ERR")" "line 3"
+assert_absent   "duplicate gui name → refuses boot" "$(cat "$CALLS")" "tart run"
+
+printf '# patterns are corrupt here\n* vnc\n' > "$WORK/gui-pattern"
+runup stopped app-a "$EMPTY" "$EMPTY" "$WORK/gui-pattern" app-a
+assert_rc       "gui pattern → exit 1" 1
+assert_contains "gui pattern → names line 2" "$(cat "$ERR")" "line 2"
+assert_contains "gui pattern → explains exact-name grammar" "$(cat "$ERR")" "patterns"
+assert_absent   "gui pattern → refuses boot" "$(cat "$CALLS")" "tart run"
+
+printf 'app-a window\n' > "$WORK/gui-unreadable"
+chmod 000 "$WORK/gui-unreadable"
+runup stopped app-a "$EMPTY" "$EMPTY" "$WORK/gui-unreadable" app-a
+assert_rc       "unreadable gui file → exit 1" 1
+assert_contains "unreadable gui file → names readability" "$(cat "$ERR")" "file exists but is not readable"
+assert_contains "unreadable gui file → uses fail-closed voice" "$(cat "$ERR")" "refusing to start"
+assert_absent   "unreadable gui file → refuses boot" "$(cat "$CALLS")" "tart run"
+chmod 600 "$WORK/gui-unreadable"
+
+# Argv wins over a valid file line. Window is the sole run shape that omits
+# --no-graphics; netpolicy and mounts retain their normal order and spelling.
+printf 'app-a vnc\n' > "$WORK/gui-vnc"
+runup stopped app-a "$NETP" "$MNTS" "$WORK/gui-vnc" --gui=window app-a
+assert_rc       "argv window beats file vnc → exit 0" 0
+calls="$(cat "$CALLS")"
+assert_contains "window → run keeps netpolicy + mounts" "$calls" "tart run app-a --net-softnet=@host-only --dir=data:/srv/data:ro"
+assert_absent   "window → run drops --no-graphics" "$calls" "tart run app-a --no-graphics"
+assert_contains "window → isolates graphical target on started boot" "$calls" "sudo systemctl isolate graphical.target"
+assert_contains "window → verifies the display manager came up" "$calls" "systemctl is-active --quiet display-manager.service"
+assert_absent   "window override → does not start VNC" "$calls" "systemctl start tart-stacks-vnc.service"
+
+runup stopped app-a "$EMPTY" "$EMPTY" "$WORK/gui-vnc" --gui=headless app-a
+assert_rc       "argv headless beats file vnc → exit 0" 0
+calls="$(cat "$CALLS")"
+assert_contains "headless override → tart run --no-graphics" "$calls" "tart run app-a --no-graphics"
+assert_absent   "headless override → no window activation" "$calls" "graphical.target"
+assert_absent   "headless override → no vnc activation" "$calls" "tart-stacks-vnc.service"
+
+# Started activation fails loud while leaving the VM process up. A VNC bind
+# outside loopback is actively shut down because the unit uses no VNC auth.
+MOCK_TART_EXEC_FAIL_MATCH="sudo systemctl isolate graphical.target" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "window activation failure → exit 1" 1
+assert_contains "window activation failure → named error" "$(cat "$ERR")" "window gui activation failed"
+
+# graphical.target only Wants= the DM: the isolate can succeed with no desktop
+# (non-GUI clone, failed DM). The DM-active verify is what makes window mode
+# honest about showing one.
+MOCK_TART_EXEC_FAIL_MATCH="systemctl is-active --quiet display-manager.service" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "window DM never active → exit 1" 1
+assert_contains "window DM never active → names the DM verify" "$(cat "$ERR")" "display-manager.service did not become active"
+assert_eq       "window DM never active → bounded poll" 15 "$(grep -c 'tart exec app-a systemctl is-active --quiet display-manager.service' "$CALLS")"
+
+MOCK_TART_EXEC_FAIL_MATCH="sudo systemctl start tart-stacks-vnc.service" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc activation failure → exit 1" 1
+assert_contains "vnc activation failure → named error" "$(cat "$ERR")" "vnc gui activation failed"
+
+SS_SEQUENCE="$WORK/ss-sequence"
+printf '<absent>\nLISTEN 0 5 127.0.0.1:5901 0.0.0.0:*\n' > "$SS_SEQUENCE"
+MOCK_SS_SEQUENCE_FILE="$SS_SEQUENCE" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc delayed bind → exit 0" 0
+assert_eq       "vnc delayed bind → probes until listener appears" 2 "$(grep -c 'tart exec app-a ss -tln' "$CALLS")"
+assert_eq       "vnc delayed bind → waits after the absent probe" 1 "$(grep -c '^sleep 1$' "$CALLS")"
+assert_contains "vnc delayed bind → prints tunnel hint" "$(cat "$ERR")" "VNC ready"
+
+MOCK_SS_OUTPUT="LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*${nl:-$'\n'}LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc wildcard listener → exit 1" 1
+assert_contains "vnc wildcard listener → names unsafe bind" "$(cat "$ERR")" "0.0.0.0:5901"
+assert_contains "vnc wildcard listener → stops unauthenticated service" "$(cat "$CALLS")" "sudo systemctl stop tart-stacks-vnc.service"
+assert_eq       "vnc wildcard listener → fails on first probe" 1 "$(grep -c 'tart exec app-a ss -tln' "$CALLS")"
+assert_eq       "vnc wildcard listener → does not wait" 0 "$(grep -c '^sleep 1$' "$CALLS")"
+
+MOCK_SS_OUTPUT="" runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc never binds → exit 1" 1
+assert_contains "vnc never binds → names 30-second timeout" "$(cat "$ERR")" "timed out after 30 seconds"
+assert_eq       "vnc never binds → probes 30 times" 30 "$(grep -c 'tart exec app-a ss -tln' "$CALLS")"
+assert_eq       "vnc never binds → waits 30 one-second intervals" 30 "$(grep -c '^sleep 1$' "$CALLS")"
+
+SS_SEQUENCE_V6="$WORK/ss-sequence-v6"
+printf 'LISTEN 0 5 [::1]:5901 [::]:*\nLISTEN 0 5 127.0.0.1:5901 0.0.0.0:*\n' > "$SS_SEQUENCE_V6"
+MOCK_SS_SEQUENCE_FILE="$SS_SEQUENCE_V6" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc v6-only bind → polls for the v4 listener" 0
+assert_eq       "vnc v6-only bind → second probe found v4" 2 "$(grep -c 'tart exec app-a ss -tln' "$CALLS")"
+
+MOCK_SS_OUTPUT="LISTEN 0 5 [::1]:5901 [::]:*" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc v6-only forever → exit 1 (tunnel targets 127.0.0.1)" 1
+assert_contains "vnc v6-only forever → names the 127.0.0.1:5901 wait" "$(cat "$ERR")" "127.0.0.1:5901 listener"
+
+MOCK_SS_READ_FAIL=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc listener-table read failure → exit 1" 1
+assert_contains "vnc listener-table read failure → named error" "$(cat "$ERR")" "could not read the guest TCP listener table"
+assert_eq       "vnc listener-table read failure → tries all ss fallbacks" 3 "$(grep -Ec 'tart exec app-a (sudo )?ss -(tln|ltn)' "$CALLS")"
+assert_eq       "vnc listener-table read failure → does not wait" 0 "$(grep -c '^sleep 1$' "$CALLS")"
+
+MOCK_SS_OUTPUT="LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*" \
+MOCK_TART_EXEC_FAIL_MATCH="sudo systemctl stop tart-stacks-vnc.service" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc unsafe + unit stop failure → exit 1" 1
+assert_contains "vnc unsafe + unit stop failure → stops VM" "$(cat "$CALLS")" "tart stop app-a"
+assert_contains "vnc unsafe + unit stop failure → explains escalation" "$(cat "$ERR")" "stopped VM 'app-a'"
+
+MOCK_SS_OUTPUT="LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*" \
+MOCK_TART_EXEC_FAIL_MATCH="sudo systemctl stop tart-stacks-vnc.service" \
+MOCK_TART_FAIL_MATCH="stop app-a" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc unsafe + all cleanup failure → exit 1" 1
+assert_contains "vnc unsafe + all cleanup failure → names both failures" "$(cat "$ERR")" "FAILED to stop tart-stacks-vnc.service and FAILED to stop VM 'app-a'"
+
+# A [::1]-only bind is loopback-safe but unusable by the advertised
+# 127.0.0.1:5901 tunnel, so it is treated as absent (poll grace), never ok —
+# and never unsafe either: the service is not exposed, so it is not stopped
+# mid-wait; only the timeout path shuts it down.
+MOCK_SS_OUTPUT="LISTEN 0 5 [::1]:5901 [::]:*${nl:-$'\n'}LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "vnc v6+v4 loopback listeners → exit 0" 0
+assert_absent   "vnc v6+v4 loopback listeners → service stays up" "$(cat "$CALLS")" "sudo systemctl stop tart-stacks-vnc.service"
 
 # running + alive → no `tart run`, AND no guest-agent provisioning: an
 # already-up VM was provisioned on the boot that started it, and each
@@ -173,28 +373,35 @@ assert_absent   "netpolicy refusal → VM not started" "$(cat "$CALLS")" "tart r
 # Virtualization.framework trap and crashes the VM. The mounts notice is the
 # positive signal anchoring the absence checks: tart-up got past the liveness
 # gate rather than dying early.
-runup running app-a "$EMPTY" "$MNTS" app-a
+runup running app-a "$EMPTY" "$MNTS" "$WORK/gui-vnc" app-a
 assert_rc       "running+alive → exit 0" 0
 assert_contains "running+alive → mounts attach-at-boot notice" "$(cat "$ERR")" "configured mount(s) attach at boot"
+assert_contains "running+alive → gui applies-at-boot notice" "$(cat "$ERR")" "gui mode 'vnc' applies at boot"
 calls="$(cat "$CALLS")"
 assert_absent "running → no tart run issued"        "$calls" "tart run"
 assert_absent "running → no provisioning vsock hit" "$calls" "hostname -s"
+assert_absent "running vnc → no activation vsock hit" "$calls" "tart-stacks-vnc.service"
+
+runup running app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "running window → warns and exits 0" 0
+assert_contains "running window → gui applies-at-boot notice" "$(cat "$ERR")" "gui mode 'window' applies at boot"
+assert_absent   "running window → no activation vsock hit" "$(cat "$CALLS")" "graphical.target"
 
 # listed "running" with no live `tart run` process is the wedged-crash
 # signature: fail fast with the remedy instead of polling a ghost for minutes.
-MOCK_ALIVE=0 runup running app-a "$EMPTY" "$EMPTY" app-a
+MOCK_ALIVE=0 runup running app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_rc       "wedged (running, no process) → exit 1" 1
 assert_contains "wedge diagnostic names the remedy" "$(cat "$ERR")" "tart stop app-a"
 assert_absent   "wedged → no tart run issued" "$(cat "$CALLS")" "tart run"
 
 # hostname branch: a mismatch sets it; an already-correct hostname leaves it
-runup stopped wrong-name "$EMPTY" "$EMPTY" app-a
+runup stopped wrong-name "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_contains "hostname mismatch → set-hostname" "$(cat "$CALLS")" "hostnamectl set-hostname app-a"
-runup stopped app-a "$EMPTY" "$EMPTY" app-a
+runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_absent "hostname already correct → no set-hostname" "$(cat "$CALLS")" "set-hostname"
 
 # prefix lookup: stored bare `app-a`, asked as `tart-app-a`
-runup stopped app-a "$EMPTY" "$EMPTY" tart-app-a
+runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a
 assert_contains "prefix lookup tart-app-a → app-a" "$(cat "$CALLS")" "tart run app-a --no-graphics"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

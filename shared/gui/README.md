@@ -33,15 +33,20 @@ desktop on every boot can `systemctl enable tart-stacks-vnc.service` or
 `systemctl set-default graphical.target` — the image deliberately ships with
 neither.
 
-**Window mode needs a windowed launch.** The in-guest activation only drives
-the guest side; an actual window exists only when the VM process was started
-with a visible display — plain `tart run <vm>` (no `--no-graphics`). The
-repo's own `tart-up` (and therefore the `ssh tart-<vm>` auto-start) always
-boots `--no-graphics`, so isolating `graphical.target` on such a boot runs
-the desktop on an invisible virtual console. The launcher-side gui/headless
-toggle is deliberately **not** part of this layer — it belongs to whatever
-drives the VM (for workbench guests, the engine's `gui:` runtime work); VNC
-mode has no such dependency and works from any launch.
+`tart-up` owns the launcher side of these boot modes. Select one boot with
+`tart-up --gui=vnc|window <vm>`, or give the VM an exact-name, single-winner
+line in `~/.config/tart-stacks/gui` (`<bare-vm-name> headless|vnc|window`).
+The file fails closed on malformed or duplicate entries; an absent line means
+headless. Every `tart-up` path honors it, including the `ssh tart-<vm>`
+auto-start and `tart-supervise` restarts. An engine such as workbench renders
+this file from its own config.
+
+**Window mode needs a windowed launch.** `tart-up --gui=window` omits
+`--no-graphics`, then drives the in-guest activation. Closing the VM window
+kills the VM. Opening one also needs a GUI login session, so a
+`tart-supervise` daemon context may be unable to open it; stop the VM and start
+it from a terminal to recover a visible window. VNC has no windowed-launch
+dependency and stays behind the loopback-only SSH tunnel.
 
 ## The VNC surface
 
