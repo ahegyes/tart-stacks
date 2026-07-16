@@ -29,7 +29,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   └── lib/                          # config.sh + common.sh — sourced helpers (config paths, VM state/liveness, name-pattern matching); never on PATH
 ├── script/
 │   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards + mounts scaffold, closing tart-ssh-sync run; --uninstall (= `make uninstall`) is the inverse
-│   ├── smoke                         # End-to-end proof of a built image (run via `make smoke`): clone → boot → ssh → hostname assert → teardown
+│   ├── smoke                         # End-to-end proof of a built image (run via `make smoke`): clone → boot → ssh → hostname assert → teardown; an optional <de> arg smokes a GUI flavor and asserts its VNC surface
 │   └── test                          # Runs the test suite (test/*.sh) via `make test` / CI
 ├── completions/
 │   └── _tart-new                     # zsh completion for tart-new; installed by make setup
@@ -41,6 +41,8 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   ├── setup.sh                      # Characterization tests for script/setup — install + --uninstall, fully sandboxed
 │   ├── smoke.sh                      # Characterization tests for script/smoke (stage ordering, teardown trap; mocked — no real VM)
 │   ├── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
+│   ├── mise-lib.sh                   # Characterization tests for mise-lib's smoke_gate helper
+│   ├── gui-lib.sh                    # Characterization tests for gui-lib's DE × family selectors + the shared/desktops lockstep
 │   └── distro-lib.sh                 # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt)
 ├── shared/
 │   ├── scripts/                      # Provisioners shared across all stacks (00-base, mise, user-config, terminfo, 99-finalize, gui + gui-lib)
@@ -59,9 +61,9 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   └── jvm/                          # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
 ├── stack.pkr.hcl                     # ONE parameterized Packer template (`-var stack=<name> -var distro=<distro>` [+ `-var gui=true -var de=<de>`])
 ├── shared/distros                    # Supported distro list (one token per line); consumed by Makefile, tart-new, CI
-├── shared/desktops                   # Desktop environments the GUI layer can bake (one token per line); consumed by Makefile + base-image guard
+├── shared/desktops                   # Desktop environments the GUI layer can bake (one token per line); consumed by Makefile, tart-new (+ completion), and the base-image guard
 ├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/
-├── Makefile                          # Single top-level Makefile; commands take STACK=<name> DISTRO=<distro>
+├── Makefile                          # Single top-level Makefile; commands take STACK=<name> DISTRO=<distro> [GUI=1 DE=<de>]
 ├── .shellcheckrc  .gitignore         # shellcheck follows sources into bin/lib; Packer artifacts stay uncommitted
 └── .github/                          # CI (workflows/validate.yml: packer validate + shellcheck + tests; matrix is stack × distro) + dependabot.yml
 ```

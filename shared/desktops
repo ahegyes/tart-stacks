@@ -4,7 +4,8 @@
 # shared/scripts/gui-lib.sh. Not every distro × DE cell is buildable — the
 # support matrix lives in shared/gui/README.md; an unbuildable cell fails
 # loud at build time.
-# Consumed by: Makefile (DE validation), bin/lib/common.sh (base-image guard).
+# Consumed by: Makefile (check-de), bin/tart-new (de validation; completion
+# via completions/_tart-new), bin/lib/common.sh (base-image guard).
 kde
 gnome
 xfce

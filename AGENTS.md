@@ -39,7 +39,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   └── distro-lib.sh                   # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt) + pkg_install_optional skip recording
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── distros                         # Supported distro tokens, one per line; consumed by the Makefile, tart-new, the bin/ base-image guard, and the CI matrix
-│   ├── desktops                        # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de) and the bin/ base-image guard
+│   ├── desktops                        # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de), tart-new (+ its zsh completion), and the bin/ base-image guard
 │   ├── gui/README.md                   # GUI-flavor image contract (engine-facing): boot modes, VNC surface, support matrix; change with gui.sh/gui-lib.sh
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First. System update + core dev pkgs + build toolchain + zellij via distro-lib.sh (root)

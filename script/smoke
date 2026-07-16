@@ -39,7 +39,6 @@ VM="smoke-vm"
 # smoke test asserts the image is ALREADY built — it must never side-effect a
 # 15-20 min `make build`. Runs before the trap below is armed: on a name
 # collision the existing VM is not ours, so teardown must not touch it.
-# shellcheck disable=SC2086  # $DE expands to nothing or one validated token
 "$SMOKE_BIN/tart-new" "$VM" "$STACK" "$DISTRO" ${DE:+"$DE"} < /dev/null
 
 # From here the VM is ours — tear it down on ANY exit, so a failed boot or

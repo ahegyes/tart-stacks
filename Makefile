@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro check-de
+.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro check-gui check-de
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php DISTRO=fedora`.
 STACK ?=
@@ -10,6 +10,9 @@ DISTRO ?=
 # GUI flavor. Optional: GUI=1 bakes the desktop layer (shared/scripts/gui.sh)
 # and names the image <distro>-<stack>-<de>; DE picks the desktop (a line in
 # shared/desktops). e.g. `make build STACK=php DISTRO=fedora GUI=1 DE=kde`.
+# Strictly literal — check-gui rejects every other non-empty value: make
+# truthiness would read GUI=0 as ON, and an exported GUI in the caller's
+# environment must not silently flip a 40-min build either way.
 GUI ?=
 DE ?= kde
 
@@ -39,7 +42,7 @@ help:
 	@echo ""
 	@echo "  DISTRO — required distro token (e.g. fedora). Must be listed in shared/distros."
 	@echo "  IMAGE_TAG — override the base image tag (default: latest). e.g. IMAGE_TAG=42 make bootstrap DISTRO=fedora"
-	@echo "  GUI=1 — bake the desktop layer into build/rebuild; the image becomes <distro>-<stack>-<de>. See shared/gui/README.md"
+	@echo "  GUI=1 — bake the desktop layer into build/rebuild (strictly 1 or unset); the image becomes <distro>-<stack>-<de>. See shared/gui/README.md"
 	@echo "  DE — desktop for GUI=1 (default: kde). Must be listed in shared/desktops. e.g. make build STACK=php DISTRO=fedora GUI=1 DE=xfce"
 
 list-stacks:
@@ -102,6 +105,14 @@ check-distro:
 		exit 1; \
 	fi
 
+# GUI is 1 or unset — nothing else. Guards the $(if $(GUI),…) truthiness the
+# GUI-aware targets key off (see the GUI comment at the top).
+check-gui:
+	@case "$(GUI)" in ''|1) ;; *) \
+		echo "ERROR: GUI must be 1 (bake/select the desktop layer) or unset, got '$(GUI)'." >&2; \
+		exit 1 ;; \
+	esac
+
 # Validate DE is supported (a non-comment line in shared/desktops) — but only
 # when GUI is set: DE is meaningless for headless targets, and `DE ?=` picks
 # up the caller's environment, so an irrelevant stray value must not fail a
@@ -132,17 +143,23 @@ bootstrap: check-distro
 # DE value leaked from the environment.
 PACKER_VARS = -var stack=$(STACK) -var distro=$(DISTRO) $(if $(GUI),-var gui=true -var de=$(DE),-var gui=false)
 
-build: check-stack check-distro check-de bootstrap
+# bootstrap runs from the RECIPE, not the prerequisite list: recipe lines only
+# start after every check- prerequisite has passed, even under `make -j`,
+# whereas sibling prerequisites run in parallel — a rejected invocation must
+# never reach bootstrap's destructive base re-clone (tart delete + clone).
+build: check-stack check-distro check-gui check-de
+	@$(MAKE) bootstrap
 	packer build $(PACKER_VARS) stack.pkr.hcl
 
-rebuild: check-stack check-distro check-de bootstrap
+rebuild: check-stack check-distro check-gui check-de
+	@$(MAKE) bootstrap
 	packer build -force $(PACKER_VARS) stack.pkr.hcl
 
 # End-to-end proof of a BUILT image (clone → boot → ssh → assert → destroy).
 # Boots a real VM, so it stays a local dev-task — GitHub runners can't run
 # Tart VMs (no nested virtualization), hence deliberately absent from CI.
 # GUI=1 smokes the flavor image (<distro>-<stack>-<de>) instead.
-smoke: check-stack check-distro check-de
+smoke: check-stack check-distro check-gui check-de
 	@"$(CURDIR)/script/smoke" "$(STACK)" "$(DISTRO)" $(if $(GUI),"$(DE)")
 
 # Scaffold a new stack from templates/stack/ (substitutes __STACK__). Refuses to

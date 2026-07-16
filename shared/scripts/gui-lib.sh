@@ -29,8 +29,9 @@ gui_pkg_install() {
 }
 
 # gui_purge_if_present <pkg…> — remove packages that may have ridden in on
-# Recommends (installed-state is checked first: both package managers error on
-# removing a package that was never installed).
+# Recommends. Installed-state is checked first: dnf5 errors on removing a
+# package that was never installed (apt merely no-ops, but the check keeps
+# both paths uniform and skips pointless transactions).
 gui_purge_if_present() {
   local p
   for p in "$@"; do
