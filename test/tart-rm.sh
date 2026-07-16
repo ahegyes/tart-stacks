@@ -43,10 +43,11 @@ LA="$WORK/la"; mkdir -p "$LA"
 # ssh-keygen, which must land here, never in the developer's real ~/.ssh.
 mkdir -p "$WORK/home/.ssh"
 
-# Fixture stacks/ + distros for the base-image gate (same shape as
+# Fixture stacks/ + distros + desktops for the base-image gate (same shape as
 # test/tart-new.sh): fedora is supported, php is a stack → fedora-php is base.
 mkdir -p "$WORK/stacks/php"
 printf 'fedora\n' > "$WORK/distros"
+printf 'kde\n' > "$WORK/desktops"
 
 # Mocks: every call lands in $CALLS. `tart list` answers from the JSON fixture
 # file — or one line per call from $MOCK_TART_LIST_SEQ (last line repeats) for
@@ -107,7 +108,7 @@ run_rm() { # args... — exit code in $rc, stderr in $ERR, recorded calls in $CA
     MOCK_TART_LIST_SEQ="${MOCK_TART_LIST_SEQ-}" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_VM=app-a \
     TART_LAUNCHAGENTS_DIR="$LA" \
-    TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" \
+    TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" TART_DESKTOPS="$WORK/desktops" \
     bash "$BIN/tart-rm" "$@" >"$WORK/out" 2>"$ERR" || rc=$?
 }
 

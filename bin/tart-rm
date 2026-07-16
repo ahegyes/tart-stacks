@@ -31,11 +31,13 @@ SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
 tart_need_cmd jq   "Install: brew install jq"
 
-# Repo root + stacks dir (TART_STACKS_DIR / TART_DISTROS override for tests),
-# used by the base-image guard below to recognize any built stack image.
+# Repo root + stacks dir (TART_STACKS_DIR / TART_DISTROS / TART_DESKTOPS
+# override for tests), used by the base-image guard below to recognize any
+# built stack image (GUI flavors included).
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
 # Where tart-supervise keeps its per-VM LaunchAgent plists; the file's
 # presence is the signal that this VM is supervised.
 LAUNCHAGENTS_DIR="${TART_LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
@@ -73,10 +75,11 @@ if [ -z "$STATE" ]; then
   VM="$ALT"
 fi
 
-# Base images (the `<distro>-base` bootstrap intermediate + every <distro>-<stack>
-# built image) are clone-sources, not dev VMs — losing one costs a 15-20 min
-# rebuild, so removing one stays a deliberate raw-tart (or make) act. Refuse.
-if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE"; then
+# Base images (the `<distro>-base` bootstrap intermediate + every
+# <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — losing
+# one costs a 15-20+ min rebuild, so removing one stays a deliberate raw-tart
+# (or make) act. Refuse.
+if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to remove it. Delete a base deliberately with 'tart delete $VM', or rebuild it with 'make rebuild STACK=<stack> DISTRO=<distro>'." >&2
   exit 1
 fi

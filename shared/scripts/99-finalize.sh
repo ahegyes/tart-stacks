@@ -56,6 +56,9 @@ echo "==> Writing /etc/tart-stacks-release..."
   echo "built: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "stack: ${STACK:-unknown}"
   echo "distro: ${DISTRO:-unknown}"
+  # gui: <de> | none — the machine-readable "is this a GUI flavor" answer
+  # (shared/gui/README.md documents what a `gui: <de>` image exposes).
+  if [ "${GUI:-false}" = "true" ]; then echo "gui: ${DE:-unknown}"; else echo "gui: none"; fi
   # shellcheck disable=SC1091  # guest-only file, absent at lint time
   ( . /etc/os-release 2>/dev/null || true; echo "os: ${PRETTY_NAME:-unknown} (${VERSION_ID:-?})" )
   echo ""

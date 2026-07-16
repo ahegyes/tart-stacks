@@ -80,10 +80,12 @@ chmod +x "$MOCKBIN"/tart "$MOCKBIN"/tart-up "$MOCKBIN"/launchctl "$MOCKBIN"/ps
 
 LA="$WORK/la"; LOGS="$WORK/logs"
 
-# Fixture stacks/ + distros for the --install base-image gate (same shape as
-# test/tart-new.sh): fedora is supported, php is a stack → fedora-php is base.
+# Fixture stacks/ + distros + desktops for the --install base-image gate (same
+# shape as test/tart-new.sh): fedora is supported, php is a stack →
+# fedora-php is base.
 mkdir -p "$WORK/stacks/php"
 printf 'fedora\n' > "$WORK/distros"
+printf 'kde\n' > "$WORK/desktops"
 
 # Default `tart list` answer: app-a exists — the install/status happy paths
 # rely on it; validation tests override per call via an env prefix.
@@ -96,7 +98,7 @@ run_sup() { # <MOCK_ALIVE> <args...>
     MOCK_TART_LIST_JSON="${MOCK_TART_LIST_JSON:-$LIST_DEFAULT}" \
     MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC:-0}" \
     TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" \
-    TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" \
+    TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" TART_DESKTOPS="$WORK/desktops" \
     bash "$BIN/tart-supervise" "$@"
 }
 

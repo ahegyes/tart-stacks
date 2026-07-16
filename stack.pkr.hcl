@@ -33,6 +33,22 @@ variable "distro" {
   }
 }
 
+variable "gui" {
+  type        = bool
+  default     = false
+  description = "Bake the optional desktop layer (shared/scripts/gui.sh): a desktop environment, display manager, and a localhost-only VNC server. The built image is <distro>-<stack>-<de>. Boot contract in shared/gui/README.md."
+}
+
+variable "de" {
+  type        = string
+  default     = "kde"
+  description = "Desktop environment for gui=true. Ignored when gui=false. Must be a line in shared/desktops and a branch in gui-lib.sh (kde, gnome, xfce)."
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.de))
+    error_message = "DE must be a lowercase alphanumeric token such as kde, gnome, or xfce."
+  }
+}
+
 variable "source_image" {
   type        = string
   description = "Local Tart image to clone as the source. Defaults to <distro>-base, created by `make bootstrap`."
@@ -53,6 +69,11 @@ locals {
 
   # source_image defaults to <distro>-base (the make-bootstrap intermediate) unless overridden.
   source_image = var.source_image != "" ? var.source_image : "${var.distro}-base"
+
+  # The -<de> suffix keeps GUI flavors distinguishable (and side-by-side
+  # buildable) in `tart list`; the provenance manifest records the same fact
+  # as its `gui:` line.
+  vm_name = var.gui ? "${var.distro}-${var.stack}-${var.de}" : "${var.distro}-${var.stack}"
 }
 
 variable "ssh_pubkey_path" {
@@ -78,7 +99,7 @@ variable "disk_size_gb" {
 
 source "tart-cli" "stack" {
   vm_base_name = local.source_image
-  vm_name      = "${var.distro}-${var.stack}"
+  vm_name      = local.vm_name
   cpu_count    = var.cpu_count
   memory_gb    = var.memory_gb
   disk_size_gb = var.disk_size_gb
@@ -89,13 +110,21 @@ source "tart-cli" "stack" {
 }
 
 build {
-  name    = "${var.distro}-${var.stack}"
+  name    = local.vm_name
   sources = ["source.tart-cli.stack"]
 
   # Distro abstraction, sourced by every system provisioner — must land before they run.
   provisioner "file" {
     source      = "shared/scripts/distro-lib.sh"
     destination = "/tmp/distro-lib.sh"
+  }
+
+  # DE × family abstraction for the optional GUI layer, sourced by gui.sh.
+  # Uploaded unconditionally (Packer provisioners have no per-block condition);
+  # gui.sh no-ops when GUI=false.
+  provisioner "file" {
+    source      = "shared/scripts/gui-lib.sh"
+    destination = "/tmp/gui-lib.sh"
   }
 
   # Per-stack, per-family package lists, read by 00-stack.sh.
@@ -119,6 +148,16 @@ build {
       "stacks/${var.stack}/scripts/00-stack.sh",
       "shared/scripts/mise.sh",
     ]
+  }
+
+  # Optional desktop layer — desktop environment + display manager + a
+  # localhost-only VNC session service (contract: shared/gui/README.md).
+  # Its own root block because it needs GUI/DE as environment_vars, which
+  # {{ .Vars }} renders; exits immediately when GUI=false.
+  provisioner "shell" {
+    execute_command  = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
+    environment_vars = ["GUI=${var.gui}", "DE=${var.de}"]
+    scripts          = ["shared/scripts/gui.sh"]
   }
 
   # Drop in config files.
@@ -181,7 +220,7 @@ build {
     # all. They prefix sudo, and -E carries them into the script.
     execute_command   = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
     # The provenance manifest names the cell it was built as.
-    environment_vars  = ["STACK=${var.stack}", "DISTRO=${var.distro}"]
+    environment_vars  = ["STACK=${var.stack}", "DISTRO=${var.distro}", "GUI=${var.gui}", "DE=${var.de}"]
     expect_disconnect = true
     scripts           = ["shared/scripts/99-finalize.sh"]
   }

@@ -43,11 +43,13 @@ SELF="$SCRIPT_DIR/$prog"
 # shellcheck source=bin/lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
-# Repo root + stacks dir (TART_STACKS_DIR / TART_DISTROS override for tests),
-# used by the --install base-image guard to recognize any built stack image.
+# Repo root + stacks dir (TART_STACKS_DIR / TART_DISTROS / TART_DESKTOPS
+# override for tests), used by the --install base-image guard to recognize any
+# built stack image (GUI flavors included).
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
 
 # Tunables (env-overridable; defaults suit a desktop host).
 POLL="${TART_SUPERVISE_POLL:-5}"                 # liveness poll interval, seconds
@@ -190,7 +192,7 @@ install_agent() {
     echo "$prog: VM '$vm' not found — nothing to supervise. Try 'tart list' or 'tart-new $vm <stack> <distro>'." >&2
     return 1
   fi
-  if tart_is_base_image "$vm" "$STACKS_DIR" "$DISTROS_FILE"; then
+  if tart_is_base_image "$vm" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
     echo "$prog: '$vm' is a stack base image, not a dev VM — refusing to supervise it. Clone one with 'tart-new <name> <stack> <distro>'." >&2
     return 1
   fi

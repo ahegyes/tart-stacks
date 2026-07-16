@@ -34,6 +34,8 @@ mkdir -p "$WORK/stacks/php/scripts" "$WORK/stacks/jvm/scripts"
 printf 'fedora\n' > "$WORK/distros"
 # A two-distro variant for tart_is_base_image tests that need ubuntu too.
 printf 'fedora\nubuntu\n' > "$WORK/distros2"
+# Desktop tokens for the GUI-flavor arm of tart_is_base_image.
+printf 'kde\nxfce\n' > "$WORK/desktops"
 
 # Extract the pure helpers from the source and exercise them directly (same
 # technique parsing.sh uses for tart-up's parser fns — re-extracts each run so it
@@ -52,6 +54,8 @@ source "$WORK/fns.sh"
 echo "bin/tart-new — pure helpers:"
 assert_eq "image_for_stack joins distro-stack" "fedora-php" "$(image_for_stack php fedora)"
 assert_eq "image_for_stack ubuntu variant"     "ubuntu-jvm" "$(image_for_stack jvm ubuntu)"
+assert_eq "image_for_stack GUI flavor"         "fedora-php-kde" "$(image_for_stack php fedora kde)"
+assert_eq "image_for_stack empty de = no suffix" "fedora-php" "$(image_for_stack php fedora '')"
 assert_eq "list_stacks lists short tokens sorted" "jvm php" "$(list_stacks | sort | paste -sd' ' -)"
 if stack_exists php; then ok "stack_exists true for present stack"; else bad "stack_exists true for present stack" "rc 0" "rc 1"; fi
 if stack_exists rust; then bad "stack_exists false for absent stack" "rc 1" "rc 0"; else ok "stack_exists false for absent stack"; fi
@@ -98,7 +102,7 @@ if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent V
 # exit code, stderr message, and the recorded tart calls.
 run_new() { # args... -> stdout; stderr to $WORK/err; exit code in $rc
   rc=0
-  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" HOME="$WORK/home" \
+  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
     bash "$BIN/tart-new" "$@" >"$WORK/out" 2>"$WORK/err" </dev/null || rc=$?
 }
 
@@ -113,6 +117,17 @@ assert_contains "unknown stack lists available" "$(<"$WORK/err")" "available: jv
 run_new app-x php arch
 assert_eq       "unsupported distro exits 1" 1 "$rc"
 assert_contains "unsupported distro mentions not supported" "$(<"$WORK/err")" "not supported"
+
+# Unsupported desktop → exit 1, lists the supported tokens.
+run_new app-x php fedora cinnamon
+assert_eq       "unsupported desktop exits 1" 1 "$rc"
+assert_contains "unsupported desktop mentions not supported" "$(<"$WORK/err")" "desktop 'cinnamon' not supported"
+
+# Unbuilt GUI flavor → the hint carries the GUI build args.
+run_new app-x php fedora kde
+assert_eq       "unbuilt GUI image exits 1 non-interactively" 1 "$rc"
+assert_contains "unbuilt GUI error names the flavor image" "$(<"$WORK/err")" "image 'fedora-php-kde' is not built"
+assert_contains "unbuilt GUI hint carries GUI=1 DE=" "$(<"$WORK/err")" "make build STACK=php DISTRO=fedora GUI=1 DE=kde"
 
 # Unbuilt stack, non-interactive → exit 1, prints the build command, no clone.
 : > "$TART_CALLS"
@@ -226,20 +241,27 @@ check "empty invalid"                1 tart_valid_vm_name ''
 check "reserved tart- prefix invalid" 1 tart_valid_vm_name tart-x
 
 echo "bin/lib/common.sh — tart_is_base_image:"
-check "<distro>-base is a base"        0 tart_is_base_image fedora-base "$WORK/stacks" "$WORK/distros2"
-check "ubuntu-base is a base"          0 tart_is_base_image ubuntu-base "$WORK/stacks" "$WORK/distros2"
-check "<distro>-<stack> is a base"     0 tart_is_base_image fedora-php  "$WORK/stacks" "$WORK/distros2"
-check "ubuntu-jvm is a base"           0 tart_is_base_image ubuntu-jvm  "$WORK/stacks" "$WORK/distros2"
-check "plain dev VM not a base"        1 tart_is_base_image app-a       "$WORK/stacks" "$WORK/distros2"
-check "hyphenated dev VM not a base"   1 tart_is_base_image web-php     "$WORK/stacks" "$WORK/distros2"
-check "unsupported-prefix not a base"    1 tart_is_base_image arch-php    "$WORK/stacks" "$WORK/distros2"
-check "-base without a distro not a base" 1 tart_is_base_image app-base    "$WORK/stacks" "$WORK/distros2"
+check "<distro>-base is a base"        0 tart_is_base_image fedora-base "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "ubuntu-base is a base"          0 tart_is_base_image ubuntu-base "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "<distro>-<stack> is a base"     0 tart_is_base_image fedora-php  "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "ubuntu-jvm is a base"           0 tart_is_base_image ubuntu-jvm  "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "GUI flavor is a base"           0 tart_is_base_image fedora-php-kde "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "GUI flavor, 2nd de token"       0 tart_is_base_image ubuntu-jvm-xfce "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "unknown de suffix not a base"   1 tart_is_base_image fedora-php-2 "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "de without a stack not a base"  1 tart_is_base_image fedora-kde  "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "plain dev VM not a base"        1 tart_is_base_image app-a       "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "hyphenated dev VM not a base"   1 tart_is_base_image web-php     "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "unsupported-prefix not a base"    1 tart_is_base_image arch-php    "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
+check "-base without a distro not a base" 1 tart_is_base_image app-base    "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"
 
 # Unreadable classification data refuses loudly instead of failing open — the
 # helper gates tart-rm's delete path. (Subshell: the guard exits the shell.)
-( tart_is_base_image app-a "$WORK/stacks" "$WORK/absent-distros" ) 2>"$WORK/base-err"; brc=$?
+( tart_is_base_image app-a "$WORK/stacks" "$WORK/absent-distros" "$WORK/desktops" ) 2>"$WORK/base-err"; brc=$?
 if [ "$brc" -ne 0 ]; then ok "missing distros file → loud refusal, no fail-open"; else bad "missing distros file → loud refusal, no fail-open" "want rc!=0 got rc=0"; fi
 assert_contains "refusal names the unreadable file" "$(<"$WORK/base-err")" "absent-distros"
+( tart_is_base_image app-a "$WORK/stacks" "$WORK/distros2" "$WORK/absent-desktops" ) 2>"$WORK/base-err2"; brc=$?
+if [ "$brc" -ne 0 ]; then ok "missing desktops file → loud refusal, no fail-open"; else bad "missing desktops file → loud refusal, no fail-open" "want rc!=0 got rc=0"; fi
+assert_contains "refusal names the unreadable desktops file" "$(<"$WORK/base-err2")" "absent-desktops"
 
 echo
 echo "  $pass passed, $fail failed"

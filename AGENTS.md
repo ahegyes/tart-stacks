@@ -7,22 +7,22 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 ```
 .
 ├── README.md  CLAUDE.md  AGENTS.md  SECURITY.md  CONTRIBUTING.md  LICENSE
-├── Makefile                            # Single top-level Makefile; `make setup`/`make uninstall` install/remove the host tools; STACK=<name> DISTRO=<distro> select the cell for build/rebuild/smoke
-├── stack.pkr.hcl                       # the Packer template — one parameterized file (`-var stack= -var distro=`) builds every stack × distro; defines the provisioner chain
+├── Makefile                            # Single top-level Makefile; `make setup`/`make uninstall` install/remove the host tools; STACK=<name> DISTRO=<distro> select the cell for build/rebuild/smoke; GUI=1 DE=<de> select the optional GUI flavor
+├── stack.pkr.hcl                       # the Packer template — one parameterized file (`-var stack= -var distro=` + optional `-var gui= -var de=`) builds every stack × distro [× DE]; defines the provisioner chain
 ├── .shellcheckrc                       # external-sources=true so shellcheck follows `# shellcheck source=` into bin/lib
 ├── .gitignore                          # Packer build artifacts + editor/OS noise (Tart images live in ~/.tart/, never here)
 ├── bin/
 │   ├── lib/
 │   │   ├── common.sh                   # Sourced leaf helpers, never on PATH: tart_need_cmd, tart_vm_state, tart_supervise_label, tart_is_base_image, the vm-pattern pair (tart_pattern_matches/tart_resolve_pattern), tart_vm_alive (process liveness)
 │   │   └── config.sh                   # Single source of truth for the ~/.config/tart-stacks/* config paths (tart_config_dir/tart_config_path; TART_* env overrides)
-│   ├── tart-new                        # Creates a project VM by cloning a stack base image, with the validation `tart clone` lacks (stack exists, image built, no name collision) + `--cpu`/`--memory`/`--disk-size` pass-through; scrubs the stale host-key pin before cloning
+│   ├── tart-new                        # Creates a project VM by cloning a stack base image — `<name> <stack> <distro> [<de>]`, the optional <de> selecting a GUI flavor — with the validation `tart clone` lacks (stack exists, image built, no name collision) + `--cpu`/`--memory`/`--disk-size` pass-through; scrubs the stale host-key pin before cloning
 │   ├── tart-rm                         # Deletes a project VM with the teardown `tart delete` lacks: refuses base images, drops any supervision LaunchAgent first, stops a running VM, scrubs the host-key pin — the destroy-side mirror of tart-new
 │   ├── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms (`tart-*` wildcard + per-VM agent blocks from ssh-agents); validates the candidate with `ssh -G` before activation — a failing one lands at tart-vms.rejected, the live file untouched
 │   ├── tart-up                         # Starts a stopped VM (+ mounts + net-policy) and waits for SSH on :22; the hook the auto-start Match line fires on an interactive `ssh tart-<name>` (also runnable directly to pre-warm). Accepts bare or `tart-`-prefixed name
 │   └── tart-supervise                  # Keeps a VM running across abrupt `tart run` exits (e.g. an Apple Virtualization.framework vsock trap): a per-VM LaunchAgent that clears the wedged state and restarts via tart-up. --install/--once; --uninstall stops supervising ONLY (the VM stays up); --status prints agent/vm/process columns; retires its own agent once the VM is deleted
 ├── script/
 │   ├── setup                           # Host install run by `make setup` (symlinks all five commands, zsh completion, idempotent SSH Include + catch-all check, forwards + mounts scaffold, closing tart-ssh-sync run); --uninstall is the inverse (keeps per-VM config, refuses while supervision agents exist)
-│   ├── smoke                           # End-to-end proof of a built image, run by `make smoke`: tart-new clone → tart-up boot → BatchMode ssh → hostname assert → tart-rm teardown (SMOKE_KEEP=1 keeps the VM). Boots a real VM — local only, never CI
+│   ├── smoke                           # End-to-end proof of a built image, run by `make smoke`: tart-new clone → tart-up boot → BatchMode ssh → hostname assert → tart-rm teardown (SMOKE_KEEP=1 keeps the VM; optional <de> arg smokes a GUI flavor). Boots a real VM — local only, never CI
 │   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
 ├── completions/
 │   └── _tart-new                       # Zsh completion for tart-new (stack + distro tokens, resource flags); installed by `make setup`
@@ -35,13 +35,18 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── smoke.sh                        # Characterization tests for script/smoke (stage ordering, EXIT-trap teardown, SMOKE_KEEP, tart-new failure propagation; mocks via the TART_SMOKE_BIN seam — no real VM)
 │   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   ├── mise-lib.sh                     # Characterization tests for mise-lib's smoke_gate (argv-group grammar, word-split safety, hard-fail path)
+│   ├── gui-lib.sh                      # Characterization tests for gui-lib's DE × family selectors + the shared/desktops ↔ gui_require_de lockstep
 │   └── distro-lib.sh                   # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt) + pkg_install_optional skip recording
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── distros                         # Supported distro tokens, one per line; consumed by the Makefile, tart-new, the bin/ base-image guard, and the CI matrix
+│   ├── desktops                        # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de) and the bin/ base-image guard
+│   ├── gui/README.md                   # GUI-flavor image contract (engine-facing): boot modes, VNC surface, support matrix; change with gui.sh/gui-lib.sh
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First. System update + core dev pkgs + build toolchain + zellij via distro-lib.sh (root)
-│   │   ├── 99-finalize.sh              # LAST. Authorize SSH key + sshd drop-in + NOPASSWD sudo + lock admin password (root)
+│   │   ├── 99-finalize.sh              # LAST. Authorize SSH key + sshd drop-in + NOPASSWD sudo + lock admin password; writes the provenance manifest incl. the gui: line (root)
 │   │   ├── distro-lib.sh               # Package-manager abstraction: pkg_install/pkg_refresh/repo_add_mise/install_zellij etc. for dnf (Fedora) and apt (Debian/Ubuntu) families
+│   │   ├── gui.sh                      # Optional desktop layer (no-op unless -var gui=true): DE + display manager + loopback-only VNC session unit; netpolicy-neutral by design (root)
+│   │   ├── gui-lib.sh                  # DE × family abstraction sourced by gui.sh: package sets, DM units, X session candidates, TigerVNC session-starter paths
 │   │   ├── host-keys.sh                # Installs the first-boot oneshot that regenerates a clone's SSH host keys before its sshd ever starts (root)
 │   │   ├── mise-lib.sh                 # Shared helpers sourced by each stack's mise-install.sh (uploaded to /tmp; not run directly)
 │   │   ├── mise.sh                     # mise install system-wide via repo_add_mise (uses COPR on dnf, signed apt repo on apt) (root)
@@ -75,7 +80,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 - **Every shell script starts with `set -euo pipefail` — except the two classes that must survive failures.** `bin/tart-supervise` (a long-lived restart loop, where one failed probe must not kill supervision) and the result-aggregating test harnesses (`script/test` and every `test/*.sh`, which count failures into a verdict instead of dying on the first) deliberately drop `-e` and run `set -uo pipefail`. Everything else keeps all three.
 - **Comments explain WHY, not WHAT.** Don't restate the code; explain hidden constraints, load-order requirements, or surprising behavior.
 - **Function naming: `tart_` prefix marks functions sourced from `bin/lib/`; script-local helpers stay bare.** A prefixed call (`tart_need_cmd`, `tart_config_path`) signals "defined in the lib, not this file"; a bare one (`dir_args`, `netpolicy_args`) is local. The prefix only carries that signal while it stays selective — don't add it to local helpers.
-- **Naming is `tart-stacks` everywhere** for the repo. Stack directories are bare tokens (`php`, `jvm`). The Tart image name is `<distro>-<stack>` (e.g. `fedora-php`, `ubuntu-jvm`) — the distro prefix comes from the `-var distro=` build arg, not the stack dir name. Don't introduce alternative spellings within a stack's files.
+- **Naming is `tart-stacks` everywhere** for the repo. Stack directories are bare tokens (`php`, `jvm`). The Tart image name is `<distro>-<stack>` (e.g. `fedora-php`, `ubuntu-jvm`) — the distro prefix comes from the `-var distro=` build arg, not the stack dir name. A GUI flavor appends the DE token: `<distro>-<stack>-<de>` (e.g. `fedora-php-kde`). Don't introduce alternative spellings within a stack's files.
 - **Host (macOS) and guest (VM) live in the same repo.** Everything under `bin/` and `script/` runs on the host, as do `make`/`packer`; everything under `shared/scripts/`, `shared/files/`, and `stacks/*/scripts/`, `stacks/*/files/` runs inside the build VM.
 - **`script/` (singular) vs `scripts/` (plural) is deliberate, not a typo.** Three directories, three roles: `bin/` = user commands symlinked onto `$PATH` by `make setup` (`tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm`, `tart-supervise`; `make uninstall` is the inverse); `script/` = the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`, never on `$PATH` (`setup`, `smoke`, `test`); `scripts/` under `shared/` and `stacks/*/` = in-VM provisioner collections, each paired with a sibling `files/`.
 - **`shared/` vs `stacks/<name>/` rule.** A file goes in `shared/` if it would be byte-identical across every plausible stack. Anything that differs by stack lives under `stacks/<name>/`. If a script is mostly shared but needs one stack-specific tweak, split it (see `00-base.sh` + `00-stack.sh`) rather than parameterize.
@@ -96,6 +101,7 @@ Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts 
 | 1 | `shared/scripts/00-base.sh` | root | First (`00-` sentinel). System update, core dev packages, build toolchain, zellij — all via `distro-lib.sh`. Foundation for everything else |
 | 2 | `stacks/php/scripts/00-stack.sh` | root | Same root provisioner block as 00-base; reads `packages.<family>` and installs stack-specific native build deps via `pkg_install_optional`. Bundled with 00-base so the toolchain group and compile headers land in one transaction |
 | 3 | `shared/scripts/mise.sh` | root | Same root block; installs mise system-wide via `repo_add_mise` (COPR on dnf, signed apt repo on apt) |
+| 3b | `shared/scripts/gui.sh` | root | Own root block (needs GUI/DE as `environment_vars`); exits immediately unless `-var gui=true`. Desktop + display manager + loopback-only VNC unit per shared/gui/README.md — keep it netpolicy-neutral |
 | 4 | `shared/scripts/user-config.sh` | root | Root block between the file uploads and the user-level install: needs root (`chsh`, the virtiofs `/etc/fstab` entry) and the uploaded `~/.zshrc` + `~/.config` already on disk — it chowns both to the build user |
 | 5 | `shared/scripts/terminfo.sh` | root | Same root block as user-config; compiles the uploaded `xterm-ghostty.terminfo` into the system terminfo (`ncurses-term` omits it) |
 | 6 | `shared/scripts/host-keys.sh` | root | Same root block; installs + enables the first-boot oneshot that regenerates a clone's SSH host keys before sshd starts (marker-gated — shared with tart-up's host-side fallback for images built without it) |
@@ -133,7 +139,8 @@ The smoke test inside `stacks/php/scripts/mise-install.sh` is a hard gate — th
 - Don't introduce per-host paths (`/Users/<name>/...`) into any script or config file.
 - Don't add CI that tries to run `make build` — Apple Silicon nested VMs aren't available even on `macos-latest` GitHub runners. Schema validation (`packer validate`, shellcheck) is fine on GitHub-hosted macOS runners; see `.github/workflows/validate.yml`.
 - Don't `playwright install chrome` in the php stack — Google doesn't ship Chrome stable for ARM64. Use `--browser=chromium` (the bundled build works). See the PHP stack README's "Known limitations".
-- Don't add stack-specific or distro-specific logic to `shared/` scripts. Distro variance belongs in `distro-lib.sh`; stack variance belongs in the stack's own `scripts/` and `packages.<family>` files (see the `00-base.sh` / `00-stack.sh` / `packages.{dnf,apt}` pattern).
+- Don't add stack-specific or distro-specific logic to `shared/` scripts. Distro variance belongs in `distro-lib.sh`; stack variance belongs in the stack's own `scripts/` and `packages.<family>` files (see the `00-base.sh` / `00-stack.sh` / `packages.{dnf,apt}` pattern). DE × distro variance for the GUI layer belongs in `gui-lib.sh`, same rule.
+- Don't let the GUI layer touch network posture: no new non-loopback listeners, no firewall, no second interface manager, no broadcast daemons. Egress confinement is applied by the host at VM start (`tart-up` netpolicy); the image must stay neutral to it — shared/gui/README.md § "Network posture" is the contract.
 
 ## Upstream sources (trust boundary)
 

@@ -42,6 +42,7 @@ SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
 
 # BSD nc's -G is the probe's connect bound; a PATH-shadowing GNU netcat parses
 # -G as a no-op, so pin the system binary (TART_NC_BIN is the test seam).
@@ -86,10 +87,10 @@ if [ -z "$STATE" ]; then
   VM="$ALT"
 fi
 
-# Base images (the `<distro>-base` bootstrap intermediate + every <distro>-<stack>
-# built image) are clone-sources, not dev VMs — but the `tart-*` SSH wildcard
-# matches them too. Refuse.
-if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE"; then
+# Base images (the `<distro>-base` bootstrap intermediate + every
+# <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — but
+# the `tart-*` SSH wildcard matches them too. Refuse.
+if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <distro>'." >&2
   exit 1
 fi

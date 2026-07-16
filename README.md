@@ -2,7 +2,7 @@
 
 [![validate](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml/badge.svg)](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml)
 
-Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported distro (Fedora, Ubuntu, Debian — see `shared/distros`), producing a `<distro>-<stack>` image. Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
+Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported distro (Fedora, Ubuntu, Debian — see `shared/distros`), producing a `<distro>-<stack>` image. Any stack can additionally be built as a **GUI flavor** (`GUI=1 DE=kde|gnome|xfce`) — a desktop environment + loopback-only VNC layer baked on top, producing `<distro>-<stack>-<de>`; the boot contract lives in [shared/gui/README.md](./shared/gui/README.md). Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
 
 ## Stacks
 
@@ -21,7 +21,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 .
 ├── README.md  AGENTS.md  CLAUDE.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── bin/
-│   ├── tart-new                      # Creates a project VM by cloning a stack base image, with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size` pass-through
+│   ├── tart-new                      # Creates a project VM by cloning a stack base image (GUI flavors via the optional <de> arg), with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size` pass-through
 │   ├── tart-rm                       # Deletes a project VM with the teardown `tart delete` lacks (base-image refusal, supervision drop, stop, host-key-pin scrub)
 │   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start), `ssh -G`-validated before it goes live
 │   ├── tart-up                       # Starts a stopped VM (+ mounts + net-policy) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
@@ -43,7 +43,8 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   ├── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   └── distro-lib.sh                 # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt)
 ├── shared/
-│   ├── scripts/                      # Provisioners shared across all stacks (00-base, mise, user-config, terminfo, 99-finalize)
+│   ├── scripts/                      # Provisioners shared across all stacks (00-base, mise, user-config, terminfo, 99-finalize, gui + gui-lib)
+│   ├── gui/README.md                 # GUI-flavor image contract: what a GUI=1 image exposes and how a boot activates it
 │   └── files/
 │       ├── xterm-ghostty.terminfo    # Ghostty terminfo, compiled into the image by terminfo.sh
 │       └── zshrc                     # Baseline in-VM shell config
@@ -56,8 +57,9 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   │   ├── packages.apt              # Same capabilities, apt-family names
 │   │   └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
 │   └── jvm/                          # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
-├── stack.pkr.hcl                     # ONE parameterized Packer template (`-var stack=<name> -var distro=<distro>`)
+├── stack.pkr.hcl                     # ONE parameterized Packer template (`-var stack=<name> -var distro=<distro>` [+ `-var gui=true -var de=<de>`])
 ├── shared/distros                    # Supported distro list (one token per line); consumed by Makefile, tart-new, CI
+├── shared/desktops                   # Desktop environments the GUI layer can bake (one token per line); consumed by Makefile + base-image guard
 ├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/
 ├── Makefile                          # Single top-level Makefile; commands take STACK=<name> DISTRO=<distro>
 ├── .shellcheckrc  .gitignore         # shellcheck follows sources into bin/lib; Packer artifacts stay uncommitted
@@ -227,16 +229,25 @@ tart list                             # confirm fedora-php is present
 
 **Pin a base image tag:** `IMAGE_TAG=42 make bootstrap DISTRO=fedora`. Cirrus publishes `latest` and version-pinned tags per distro.
 
+**GUI flavor.** Add `GUI=1` (and optionally `DE=kde|gnome|xfce`, default `kde` — see `shared/desktops`) to bake a desktop environment, display manager, and a loopback-only VNC server on top of the same stack:
+
+```bash
+make build STACK=php DISTRO=fedora GUI=1 DE=kde    # builds fedora-php-kde (~+10 min, ~+2 GB)
+```
+
+The image still boots headless by default; a boot opts into the desktop by starting `tart-stacks-vnc.service` (VNC on `127.0.0.1:5901`, reach it through `ssh -L 5901:127.0.0.1:5901 tart-<vm>`) or isolating `graphical.target` — the latter shows a window only when the VM was launched with one (plain `tart run <vm>`; `tart-up` and the `ssh` auto-start boot `--no-graphics`, so prefer VNC there). Autologin is baked (the image locks the account password, so a greeter would be a dead end), and the desktop deliberately changes nothing about the network posture. The full contract — boot modes, VNC surface, support matrix (note: `kde` on Debian 13 is unsupported — Wayland-only) — is [shared/gui/README.md](./shared/gui/README.md).
+
 ## Daily use
 
 ### Clone for a project
 
 ```bash
-tart-new app-a php fedora   # validate stack + image, clone (resources optional)
-ssh tart-app-a              # auto-starts the stopped clone and connects
+tart-new app-a php fedora       # validate stack + image, clone (resources optional)
+tart-new gui-a php fedora kde   # same, from the GUI flavor fedora-php-kde
+ssh tart-app-a                  # auto-starts the stopped clone and connects
 ```
 
-`tart-new <name> <stack> <distro>` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
+`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/gui/README.md](./shared/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
 
 **Per-clone tweaks** (no rebuild required):
 

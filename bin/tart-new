@@ -5,11 +5,13 @@
 # flags fold in the otherwise-separate `tart set` step.
 #
 # Usage:
-#   tart-new <name> <stack> <distro> [--cpu N] [--memory MB] [--disk-size GB]
+#   tart-new <name> <stack> <distro> [<de>] [--cpu N] [--memory MB] [--disk-size GB]
 #
 # <stack> is the short token (php, jvm) — the same one `make build STACK=…`
 # takes; <distro> is the OS token (fedora) — the same one `make build DISTRO=…`
-# takes; the cloned image is `<distro>-<stack>`.
+# takes; the cloned image is `<distro>-<stack>`. The optional <de> (kde, …)
+# selects a GUI flavor — the same token `make build … GUI=1 DE=…` takes; the
+# cloned image is then `<distro>-<stack>-<de>`.
 set -euo pipefail
 
 prog="${0##*/}"
@@ -31,9 +33,13 @@ STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
 distro_supported() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$DISTROS_FILE" 2>/dev/null); }
 
-# image_for_stack <stack> <distro> — the image name (php, ubuntu → ubuntu-php).
+DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
+de_supported() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$DESKTOPS_FILE" 2>/dev/null); }
+
+# image_for_stack <stack> <distro> [<de>] — the image name (php, ubuntu →
+# ubuntu-php; php, ubuntu, kde → ubuntu-php-kde).
 image_for_stack() {
-  printf '%s-%s\n' "$2" "$1"
+  printf '%s-%s%s\n' "$2" "$1" "${3:+-$3}"
 }
 
 # list_stacks — short stack tokens (php, jvm) discovered from stacks/*/.
@@ -51,11 +57,11 @@ stack_exists() {
   [ -d "$STACKS_DIR/$1" ]
 }
 
-# image_built <stack> <distro> — 0 if image_for_stack(<stack>, <distro>) is a
+# image_built <stack> <distro> [<de>] — 0 if image_for_stack's result is a
 # *local* row in `tart list` (an OCI-pulled row of the same name does not count as built).
 image_built() {
   tart list --format json 2>/dev/null \
-    | jq -e --arg n "$(image_for_stack "$1" "$2")" \
+    | jq -e --arg n "$(image_for_stack "$1" "$2" "${3:-}")" \
         'any(.[]; .Name == $n and .Source == "local")' >/dev/null
 }
 
@@ -66,7 +72,7 @@ vm_exists() {
 }
 
 usage() {
-  echo "usage: $prog <name> <stack> <distro> [--cpu N] [--memory MB] [--disk-size GB]" >&2
+  echo "usage: $prog <name> <stack> <distro> [<de>] [--cpu N] [--memory MB] [--disk-size GB]" >&2
 }
 
 # need_value <flag> <argc> — usage error (64) for a space-form flag with no
@@ -96,10 +102,11 @@ while [ $# -gt 0 ]; do
     *)             positionals+=("$1"); shift ;;
   esac
 done
-[ "${#positionals[@]}" -eq 3 ] || { usage; exit 64; }
+[ "${#positionals[@]}" -eq 3 ] || [ "${#positionals[@]}" -eq 4 ] || { usage; exit 64; }
 NAME="${positionals[0]}"
 STACK="${positionals[1]}"
 DISTRO="${positionals[2]}"
+DE="${positionals[3]:-}"
 
 # 1. The name must be a token every consumer can carry: it becomes the ssh
 #    alias, the guest hostname (`hostname -s` must equal it — dots would
@@ -123,8 +130,15 @@ if ! distro_supported "$DISTRO"; then
   exit 1
 fi
 
-# Image name for this stack + distro — used by the not-built hint and the clone below.
-img="$(image_for_stack "$STACK" "$DISTRO")"
+# 3b. The GUI flavor, when asked for, must be a supported desktop token.
+if [ -n "$DE" ] && ! de_supported "$DE"; then
+  echo "$prog: desktop '$DE' not supported; available: $(grep -vE '^[[:space:]]*(#|$)' "$DESKTOPS_FILE" | paste -sd, - | sed 's/,/, /g')" >&2
+  exit 1
+fi
+
+# Image name for this stack + distro (+ GUI flavor) — used by the not-built
+# hint and the clone below.
+img="$(image_for_stack "$STACK" "$DISTRO" "$DE")"
 
 # 4. No clobbering an existing VM. Sits ahead of the build offer so a 15-20 min
 #    build can never end in "already exists".
@@ -135,14 +149,19 @@ fi
 
 # 5. Image must be built. Offer to build interactively; otherwise fail with the
 #    exact command (no silent 15-20 min side-effect).
-if ! image_built "$STACK" "$DISTRO"; then
+if ! image_built "$STACK" "$DISTRO" "$DE"; then
   echo "$prog: stack '$STACK' image '$img' is not built." >&2
-  echo "  build it with: make build STACK=$STACK DISTRO=$DISTRO" >&2
+  echo "  build it with: make build STACK=$STACK DISTRO=$DISTRO${DE:+ GUI=1 DE=$DE}" >&2
   if [ -t 0 ] && [ -t 1 ]; then
     printf '%s: build it now? [y/N] ' "$prog" >&2
     read -r reply
+    # Array, not a ${DE:+…} inline expansion: the GUI pair must reach make as
+    # two separate words, and the array form says so without leaning on
+    # field-splitting rules a reader has to re-derive.
+    build_args=(STACK="$STACK" DISTRO="$DISTRO")
+    [ -n "$DE" ] && build_args+=(GUI=1 DE="$DE")
     case "$reply" in
-      [yY]|[yY][eE][sS]) make -C "$REPO" build STACK="$STACK" DISTRO="$DISTRO" || { echo "$prog: build failed." >&2; exit 1; } ;;
+      [yY]|[yY][eE][sS]) make -C "$REPO" build "${build_args[@]}" || { echo "$prog: build failed." >&2; exit 1; } ;;
       *) exit 1 ;;
     esac
   else

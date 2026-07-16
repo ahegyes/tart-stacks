@@ -21,14 +21,16 @@ REPO=$(cd -P "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)
 SMOKE_BIN="${TART_SMOKE_BIN:-$REPO/bin}"
 
 usage() {
-  echo "usage: $prog <stack> <distro>" >&2
+  echo "usage: $prog <stack> <distro> [<de>]" >&2
+  echo "  <de>          smoke the GUI flavor <distro>-<stack>-<de> instead" >&2
   echo "  SMOKE_KEEP=1  keep the VM on exit (debugging — also survives a Ctrl-C)" >&2
 }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
-[ $# -eq 2 ] || { usage; exit 64; }
+[ $# -eq 2 ] || [ $# -eq 3 ] || { usage; exit 64; }
 STACK="$1"
 DISTRO="$2"
+DE="${3:-}"
 
 # Fixed name, short and obviously disposable; the SSH alias is tart-smoke-vm.
 VM="smoke-vm"
@@ -37,7 +39,8 @@ VM="smoke-vm"
 # smoke test asserts the image is ALREADY built — it must never side-effect a
 # 15-20 min `make build`. Runs before the trap below is armed: on a name
 # collision the existing VM is not ours, so teardown must not touch it.
-"$SMOKE_BIN/tart-new" "$VM" "$STACK" "$DISTRO" < /dev/null
+# shellcheck disable=SC2086  # $DE expands to nothing or one validated token
+"$SMOKE_BIN/tart-new" "$VM" "$STACK" "$DISTRO" ${DE:+"$DE"} < /dev/null
 
 # From here the VM is ours — tear it down on ANY exit, so a failed boot or
 # assert can't strand it. SMOKE_KEEP=1 keeps it for debugging instead. The
@@ -74,4 +77,31 @@ if [ "$got" != "$VM" ]; then
   exit 1
 fi
 
-echo "$prog: OK — $DISTRO-$STACK smoke passed: clone, boot, ssh, hostname." >&2
+# GUI flavor: the desktop surface IS what a GUI smoke proves — start the baked
+# VNC unit (deliberately not enabled in the image, so this also exercises the
+# activation path a consumer uses) and read the RFB banner off the loopback
+# listener. Runs after the hostname assert so the plain SSH chain is already
+# proven when this stage fails.
+if [ -n "$DE" ]; then
+  ssh -o BatchMode=yes "tart-$VM" "sudo systemctl start tart-stacks-vnc.service" || {
+    rc=$?
+    echo "$prog: FAIL — tart-stacks-vnc.service failed to start (rc=$rc); re-run with SMOKE_KEEP=1 and inspect 'systemctl status tart-stacks-vnc' in the VM." >&2
+    exit "$rc"
+  }
+  # A forking start returns once the session starter daemonizes; give Xvnc's
+  # listener a few beats before calling the surface broken. The knobs are the
+  # test seam (mocked runs set delay 0).
+  tries="${SMOKE_VNC_TRIES:-5}"
+  banner=""
+  while [ "$tries" -gt 0 ]; do
+    banner=$(ssh -o BatchMode=yes "tart-$VM" "timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/5901 && head -c 3 <&3'" 2>/dev/null) && [ -n "$banner" ] && break
+    tries=$((tries - 1))
+    [ "$tries" -gt 0 ] && sleep "${SMOKE_VNC_DELAY:-2}"
+  done
+  if [ "$banner" != "RFB" ]; then
+    echo "$prog: FAIL — no RFB banner on 127.0.0.1:5901 inside 'tart-$VM' (got '${banner:-nothing}') — the VNC session did not come up (re-run with SMOKE_KEEP=1 to inspect)." >&2
+    exit 1
+  fi
+fi
+
+echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, ssh, hostname${DE:+, vnc}." >&2

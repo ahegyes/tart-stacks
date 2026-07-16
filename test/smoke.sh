@@ -62,7 +62,15 @@ cat > "$MOCKBIN/ssh" <<'M'
 #!/usr/bin/env bash
 echo "ssh $*" >> "$CALLS"
 [ "${MOCK_SSH_RC:-0}" -eq 0 ] || exit "${MOCK_SSH_RC}"
-printf '%s\n' "${MOCK_SSH_HOSTNAME:-smoke-vm}"
+case "$*" in
+  *tart-stacks-vnc.service*)
+    exit "${MOCK_VNC_START_RC:-0}" ;;
+  */dev/tcp/127.0.0.1/5901*)
+    [ "${MOCK_VNC_BANNER_RC:-0}" -eq 0 ] || exit "${MOCK_VNC_BANNER_RC}"
+    printf '%s' "${MOCK_VNC_BANNER:-RFB}" ;;
+  *)
+    printf '%s\n' "${MOCK_SSH_HOSTNAME:-smoke-vm}" ;;
+esac
 M
 chmod +x "$MOCKBIN/tart-new" "$MOCKBIN/tart-up" "$MOCKBIN/tart-rm" "$MOCKBIN/ssh"
 
@@ -73,14 +81,19 @@ run_smoke() { # args... — exit code in $rc, stderr in $ERR, recorded calls in 
     MOCK_TART_UP_RC="${MOCK_TART_UP_RC-0}" \
     MOCK_SSH_RC="${MOCK_SSH_RC-0}" \
     MOCK_SSH_HOSTNAME="${MOCK_SSH_HOSTNAME-smoke-vm}" \
+    MOCK_VNC_START_RC="${MOCK_VNC_START_RC-0}" \
+    MOCK_VNC_BANNER="${MOCK_VNC_BANNER-RFB}" \
+    MOCK_VNC_BANNER_RC="${MOCK_VNC_BANNER_RC-0}" \
+    SMOKE_VNC_TRIES=2 SMOKE_VNC_DELAY=0 \
     SMOKE_KEEP="${SMOKE_KEEP-}" \
     bash "$SMOKE" "$@" >"$WORK/out" 2>"$ERR" || rc=$?
 }
 
 # argument validation
-check_rc "no args → exit 64"  64 bash "$SMOKE"
-check_rc "one arg → exit 64"  64 bash "$SMOKE" php
-check_rc "--help → exit 0"    0  bash "$SMOKE" --help
+check_rc "no args → exit 64"   64 bash "$SMOKE"
+check_rc "one arg → exit 64"   64 bash "$SMOKE" php
+check_rc "four args → exit 64" 64 bash "$SMOKE" php fedora kde extra
+check_rc "--help → exit 0"     0  bash "$SMOKE" --help
 
 # happy path: the four stages in order, ssh non-interactive against the
 # prefixed alias, clean exit
@@ -92,6 +105,37 @@ assert_order    "ssh precedes tart-rm"      "ssh " "tart-rm smoke-vm"
 assert_contains "ssh runs under BatchMode"      "$(cat "$CALLS")" "BatchMode=yes"
 assert_contains "ssh dials the prefixed alias"  "$(cat "$CALLS")" "tart-smoke-vm"
 assert_contains "verdict line says OK"          "$(cat "$ERR")" "OK"
+
+# GUI flavor: the optional <de> rides through to tart-new (flavor image
+# selection is tart-new's job), the VNC surface is exercised (unit start +
+# loopback RFB banner), and the verdict says so
+run_smoke php fedora kde
+assert_rc       "GUI flavor → exit 0" 0
+assert_contains "de reaches tart-new"        "$(cat "$CALLS")" "tart-new smoke-vm php fedora kde"
+assert_contains "GUI smoke starts the VNC unit" "$(cat "$CALLS")" "tart-stacks-vnc.service"
+assert_contains "GUI smoke probes loopback 5901" "$(cat "$CALLS")" "/dev/tcp/127.0.0.1/5901"
+assert_contains "verdict names the flavor"   "$(cat "$ERR")" "fedora-php-kde"
+assert_contains "verdict includes the vnc stage" "$(cat "$ERR")" "hostname, vnc"
+
+# non-GUI run never touches the VNC surface
+run_smoke php fedora
+assert_absent   "plain smoke does not start the VNC unit" "$(cat "$CALLS")" "tart-stacks-vnc"
+
+# VNC unit fails to start → smoke fails, teardown still fires
+MOCK_VNC_START_RC=9 run_smoke php fedora kde
+assert_rc       "vnc start failure → exit 9" 9
+assert_contains "vnc start failure names the unit" "$(cat "$ERR")" "tart-stacks-vnc.service failed to start"
+assert_contains "vnc start failure still tears down" "$(cat "$CALLS")" "tart-rm smoke-vm"
+
+# wrong banner on 5901 → smoke fails naming the port
+MOCK_VNC_BANNER=XXX run_smoke php fedora kde
+assert_rc       "bad RFB banner → exit 1" 1
+assert_contains "bad banner names the loopback port" "$(cat "$ERR")" "127.0.0.1:5901"
+
+# listener never answers (probe rc!=0 through all retries) → smoke fails
+MOCK_VNC_BANNER_RC=1 run_smoke php fedora kde
+assert_rc       "dead listener → exit 1" 1
+assert_contains "dead listener reports nothing received" "$(cat "$ERR")" "got 'nothing'"
 
 # hostname mismatch: fails naming expected vs got — and the EXIT trap still
 # tears the VM down

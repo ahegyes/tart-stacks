@@ -1,11 +1,17 @@
 SHELL := /bin/bash
-.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro
+.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro check-de
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php DISTRO=fedora`.
 STACK ?=
 
 # Distro selector. Required for build/rebuild/bootstrap. Must be a line in shared/distros.
 DISTRO ?=
+
+# GUI flavor. Optional: GUI=1 bakes the desktop layer (shared/scripts/gui.sh)
+# and names the image <distro>-<stack>-<de>; DE picks the desktop (a line in
+# shared/desktops). e.g. `make build STACK=php DISTRO=fedora GUI=1 DE=kde`.
+GUI ?=
+DE ?= kde
 
 # Override to pin a non-latest base image tag: `IMAGE_TAG=24.04 make bootstrap DISTRO=ubuntu`.
 IMAGE_TAG ?= latest
@@ -28,11 +34,13 @@ help:
 	@echo "  make init                                 Install the Packer plugin (run once)"
 	@echo "  make build STACK=<name> DISTRO=<distro>   Bootstrap + build the stack image"
 	@echo "  make rebuild STACK=<name> DISTRO=<distro> Force-rebuild — overwrites existing image"
-	@echo "  make smoke STACK=<name> DISTRO=<distro>   Smoke-test a BUILT image end-to-end: clone, boot a real VM (~1 min), ssh, assert, destroy. Local-only — never run in CI"
+	@echo "  make smoke STACK=<name> DISTRO=<distro>   Smoke-test a BUILT image end-to-end: clone, boot a real VM (~1 min), ssh, assert, destroy. Local-only — never run in CI. GUI=1 [DE=<de>] smokes the GUI flavor"
 	@echo "  make clean                                Remove Packer build artifacts"
 	@echo ""
 	@echo "  DISTRO — required distro token (e.g. fedora). Must be listed in shared/distros."
 	@echo "  IMAGE_TAG — override the base image tag (default: latest). e.g. IMAGE_TAG=42 make bootstrap DISTRO=fedora"
+	@echo "  GUI=1 — bake the desktop layer into build/rebuild; the image becomes <distro>-<stack>-<de>. See shared/gui/README.md"
+	@echo "  DE — desktop for GUI=1 (default: kde). Must be listed in shared/desktops. e.g. make build STACK=php DISTRO=fedora GUI=1 DE=xfce"
 
 list-stacks:
 	@ls -1 stacks 2>/dev/null | sed 's/^/  /' || echo "  (none)"
@@ -94,6 +102,17 @@ check-distro:
 		exit 1; \
 	fi
 
+# Validate DE is supported (a non-comment line in shared/desktops) — but only
+# when GUI is set: DE is meaningless for headless targets, and `DE ?=` picks
+# up the caller's environment, so an irrelevant stray value must not fail a
+# headless build/smoke.
+check-de:
+	@if [ -n "$(GUI)" ] && ! grep -qxF "$(DE)" <(grep -vE '^\s*(#|$$)' shared/desktops); then \
+		echo "ERROR: desktop '$(DE)' is not supported. Add it to shared/desktops (and branches in gui-lib.sh) first. Supported:" >&2; \
+		grep -vE '^\s*(#|$$)' shared/desktops | sed 's/^/  /' >&2; \
+		exit 1; \
+	fi
+
 # Install the Packer plugin for the single parameterized root template (run once,
 # stack-agnostic).
 init:
@@ -108,17 +127,23 @@ bootstrap: check-distro
 
 # Build a stack from the one parameterized template, run from the repo root so
 # the provisioner script paths (shared/…, stacks/<stack>/…) resolve.
-build: check-stack check-distro bootstrap
-	packer build -var stack=$(STACK) -var distro=$(DISTRO) stack.pkr.hcl
+# GUI is folded to packer's bool: any non-empty value means true. `de` rides
+# along only with GUI — headless builds must not depend on (or trip over) a
+# DE value leaked from the environment.
+PACKER_VARS = -var stack=$(STACK) -var distro=$(DISTRO) $(if $(GUI),-var gui=true -var de=$(DE),-var gui=false)
 
-rebuild: check-stack check-distro bootstrap
-	packer build -force -var stack=$(STACK) -var distro=$(DISTRO) stack.pkr.hcl
+build: check-stack check-distro check-de bootstrap
+	packer build $(PACKER_VARS) stack.pkr.hcl
+
+rebuild: check-stack check-distro check-de bootstrap
+	packer build -force $(PACKER_VARS) stack.pkr.hcl
 
 # End-to-end proof of a BUILT image (clone → boot → ssh → assert → destroy).
 # Boots a real VM, so it stays a local dev-task — GitHub runners can't run
 # Tart VMs (no nested virtualization), hence deliberately absent from CI.
-smoke: check-stack check-distro
-	@"$(CURDIR)/script/smoke" "$(STACK)" "$(DISTRO)"
+# GUI=1 smokes the flavor image (<distro>-<stack>-<de>) instead.
+smoke: check-stack check-distro check-de
+	@"$(CURDIR)/script/smoke" "$(STACK)" "$(DISTRO)" $(if $(GUI),"$(DE)")
 
 # Scaffold a new stack from templates/stack/ (substitutes __STACK__). Refuses to
 # clobber an existing dir; the root template + dynamic CI then cover it with no

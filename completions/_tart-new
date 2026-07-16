@@ -3,8 +3,9 @@
 # Zsh completion for tart-new. Positional 1 is the new VM name (no completion);
 # positional 2 is the stack token, completed from stacks/*/ in the repo this
 # command is symlinked from (real path via `:A`); positional 3 is the distro
-# token, completed from shared/distros. _arguments tracks positions net of
-# options, so the stack and distro still complete when resource flags come first
+# token, completed from shared/distros; optional positional 4 is the GUI
+# desktop token, completed from shared/desktops. _arguments tracks positions
+# net of options, so the tokens still complete when resource flags come first
 # (e.g. `tart-new --cpu 4 myvm <TAB>`), and the flags complete too.
 #
 # Install:
@@ -23,9 +24,10 @@ _tart-new() {
     '(-h --help)'{-h,--help}'[show usage and exit]' \
     '1:new VM name:' \
     '2:stack:->stack' \
-    '3:distro:->distro'
+    '3:distro:->distro' \
+    '4::desktop (GUI flavor):->de'
 
-  [[ $state == stack || $state == distro ]] || return 0
+  [[ $state == stack || $state == distro || $state == de ]] || return 0
 
   bin=${commands[tart-new]}
   [[ -n $bin ]] || { _message 'tart-new not on PATH'; return 1; }
@@ -41,6 +43,12 @@ _tart-new() {
     local -a distros
     distros=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' "${repo}/shared/distros" 2>/dev/null)"})
     _describe -t distros 'distro' distros; return 0
+  }
+
+  [[ $state == de ]] && {
+    local -a desktops
+    desktops=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' "${repo}/shared/desktops" 2>/dev/null)"})
+    _describe -t desktops 'desktop (GUI flavor)' desktops; return 0
   }
 }
 
