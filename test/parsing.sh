@@ -144,6 +144,8 @@ out=$(run_sync_with_agents "vm-a alpha /tmp/sock-alpha")
 assert_contains  "single-VM block: Host tart-<name>"          "$out" "Host tart-vm-a"
 assert_contains  "single-VM block: ForwardAgent uses given path" "$out" "ForwardAgent /tmp/sock-alpha"
 assert_absent    "single-VM single-agent: no RemoteForward"   "$out" "RemoteForward /run/tart/agent-"
+# Nothing binds a fixed path here, so there is nothing to unlink.
+assert_absent    "single-VM single-agent: no StreamLocalBindUnlink" "$out" "StreamLocalBindUnlink"
 
 # Single VM, two agents: ForwardAgent = primary (first listed), additional
 # agent becomes RemoteForward at /run/tart/agent-<name>.sock (tart-stacks's
@@ -151,6 +153,8 @@ assert_absent    "single-VM single-agent: no RemoteForward"   "$out" "RemoteForw
 out=$(run_sync_with_agents "vm-a alpha /tmp/sock-alpha${nl}vm-a beta /tmp/sock-beta")
 assert_contains  "multi-agent: primary becomes ForwardAgent"   "$out" "ForwardAgent /tmp/sock-alpha"
 assert_contains  "multi-agent: additional becomes RemoteForward at /run/tart/agent-<name>.sock" "$out" "RemoteForward /run/tart/agent-beta.sock /tmp/sock-beta"
+# A fixed path survives the session that bound it, so rebinding must not be blocked by what is left behind.
+assert_contains  "multi-agent: fixed socket paths are unlinked before rebinding" "$out" "StreamLocalBindUnlink yes"
 
 # Two VMs: two distinct Host blocks in first-seen order.
 out=$(run_sync_with_agents "vm-a alpha /tmp/a${nl}vm-b beta /tmp/b")

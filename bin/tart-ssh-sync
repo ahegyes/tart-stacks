@@ -263,6 +263,9 @@ emit() {
       printf '\n'
       echo "Host tart-$vm"
       echo "  ForwardAgent $primary_socket"
+      # These paths are fixed, so a socket outlives the session that bound it and blocks the next connection's
+      # forward. ForwardAgent needs no equivalent: sshd picks a fresh path per session.
+      [ "$count" -gt 1 ] && echo "  StreamLocalBindUnlink yes"
       # Additional agents — skip the primary on this pass.
       local first_seen=0
       for j in "${!ssh_agents_vms[@]}"; do
