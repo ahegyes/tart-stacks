@@ -43,9 +43,12 @@ gui_purge_if_present() {
   return 0
 }
 
-# gui_packages <de> — the DE + display-manager package set for this family.
+# gui_packages <de> — the DE shell + display-manager package set for this family.
 # Deliberately narrower than the distros' full desktop groups/tasks: the images
-# are dev substrates, so the desktop shell + a terminal is the whole point.
+# are dev substrates, so this set stops at the shell, its display manager, and a
+# terminal. The handful of applications a substrate still needs to be usable is
+# gui_app_packages' concern, kept separate so the session machinery below stays
+# readable next to it.
 gui_packages() {
   case "$_DISTRO_FAMILY/$1" in
     dnf/kde)   echo "plasma-desktop plasma-workspace-x11 sddm konsole" ;;
@@ -54,6 +57,36 @@ gui_packages() {
     apt/kde)   echo "kde-plasma-desktop sddm konsole" ;;
     apt/gnome) echo "gnome-session gnome-shell gdm3 gnome-terminal" ;;
     apt/xfce)  echo "xfce4 xfce4-terminal lightdm lightdm-gtk-greeter" ;;
+  esac
+}
+
+# gui_app_packages <de> — the applications that make a desktop usable rather
+# than merely present: a file manager, a GUI text editor, an archive handler, an
+# image viewer, and a screenshot tool. Each is the DE's own, so it inherits the
+# session's theming and file associations instead of dragging in a second
+# toolkit's dependency tree. Two names diverge by family and are easy to get
+# wrong: Fedora packages Thunar under its upstream capitalization, and the apt
+# family namespaces Spectacle as kde-spectacle. GNOME captures screenshots from
+# the Shell itself, so its row deliberately names no screenshot tool.
+gui_app_packages() {
+  case "$_DISTRO_FAMILY/$1" in
+    dnf/kde)   echo "dolphin kate ark gwenview spectacle" ;;
+    dnf/gnome) echo "nautilus gnome-text-editor file-roller loupe" ;;
+    dnf/xfce)  echo "Thunar mousepad xarchiver ristretto xfce4-screenshooter" ;;
+    apt/kde)   echo "dolphin kate ark gwenview kde-spectacle" ;;
+    apt/gnome) echo "nautilus gnome-text-editor file-roller loupe" ;;
+    apt/xfce)  echo "thunar mousepad xarchiver ristretto xfce4-screenshooter" ;;
+  esac
+}
+
+# gui_agent_packages — the SPICE guest agent, which is what host↔guest clipboard
+# sharing in a native VM window depends on (`tart run --help` names the package).
+# Its shipped udev rule starts the daemon only once the host actually exposes the
+# channel device, so a headless or VNC-only boot pays nothing for it; VNC carries
+# its own clipboard over RFB and does not use this at all.
+gui_agent_packages() {
+  case "$_DISTRO_FAMILY" in
+    dnf|apt) echo "spice-vdagent" ;;
   esac
 }
 

@@ -16,6 +16,31 @@ file together.
   non-GUI images) — the machine-readable probe for "is a desktop baked, and
   which".
 
+## What is installed
+
+The desktop shell, its display manager, and a terminal — plus the minimum set of
+applications that make the session usable rather than merely present: a **file
+manager**, a GUI text editor, an archive handler, an image viewer, and a
+screenshot tool where the DE ships none of its own. Each is the DE's own
+application, so it inherits the session's theming and file associations. Nothing
+beyond this is stable API: rely on the *capability*, never on a package name.
+
+| DE | file manager | editor | archives | images | screenshots |
+|---|---|---|---|---|---|
+| `kde` | Dolphin | Kate | Ark | Gwenview | Spectacle |
+| `gnome` | Nautilus | GNOME Text Editor | File Roller | Loupe | built into the Shell |
+| `xfce` | Thunar | Mousepad | Xarchiver | Ristretto | xfce4-screenshooter |
+
+Package names for these diverge across families in two places that read like
+typos but are not: Fedora keeps Thunar's upstream capitalization (`Thunar`), and
+the apt family namespaces Spectacle as `kde-spectacle`.
+
+`spice-vdagent` is installed on every GUI image. It is what host↔guest clipboard
+sharing depends on in a native VM window (`tart run --help` names the package).
+Its udev rule starts the daemon only once the host exposes the channel device, so
+a headless or VNC-only boot pays nothing for it; VNC carries its own clipboard
+over RFB and does not use it.
+
 ## Boot modes
 
 The image boots **headless by default** — the systemd default target is pinned
@@ -78,6 +103,13 @@ dependency and stays behind the loopback-only SSH tunnel.
   sudo). Treat "can see the VM window" as "owns the VM".
 - **Screen locking is disabled** (same locked-password reasoning), and the
   sleep/suspend/hibernate targets are masked — a suspended VM is a dead VM.
+- **Geometry is a property of the VM, not of the session.** The virtual display
+  is sized on the host (`tart set <vm> --display WIDTHxHEIGHT`); nothing inside
+  the guest can raise it, so a VM left at Tart's 1024×768 default is stuck there.
+  `tart-new` therefore sizes every GUI clone at create time (1920×1080, override
+  with `--display`) and sets `--display-refit` so the guest follows the host
+  window as it is resized. A VM created by other means gets the Tart default and
+  needs an explicit `tart set`.
 
 ## Network posture — unchanged, on purpose
 

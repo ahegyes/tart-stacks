@@ -40,9 +40,9 @@ if [ "$_DISTRO_FAMILY" = "apt" ] && [ "$DE" = "kde" ]; then
   esac
 fi
 
-echo "==> Installing ${DE} desktop + display manager + TigerVNC..."
+echo "==> Installing ${DE} desktop + display manager + applications + agent + TigerVNC..."
 # shellcheck disable=SC2046  # intentional word-split of the package lists
-gui_pkg_install $(gui_packages "$DE") $(gui_vnc_packages)
+gui_pkg_install $(gui_packages "$DE") $(gui_app_packages "$DE") $(gui_agent_packages) $(gui_vnc_packages)
 
 # Resolve the X session baked for VNC (and DM autologin). Hard assert: a DE
 # whose X11 session didn't materialize would bake a desktop that can't start.

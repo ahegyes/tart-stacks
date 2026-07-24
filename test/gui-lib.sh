@@ -30,6 +30,11 @@ while IFS= read -r de; do
     if [ -n "$pkgs" ]; then ok "$fam/$de packages non-empty"; else bad "$fam/$de packages non-empty" "packages" "(empty)"; fi
     dm="$(with_family "$fam" gui_dm_unit "$de")"
     case "$dm" in *.service) ok "$fam/$de dm unit is a unit name ($dm)" ;; *) bad "$fam/$de dm unit is a unit name" "*.service" "$dm" ;; esac
+    # Every cell must name a file manager. A desktop that boots without one is
+    # the specific gap this row exists to close, so an empty cell is a failure
+    # rather than a merely thinner desktop.
+    apps="$(with_family "$fam" gui_app_packages "$de")"
+    if [ -n "$apps" ]; then ok "$fam/$de apps non-empty"; else bad "$fam/$de apps non-empty" "packages" "(empty)"; fi
   done
   sess="$(with_family dnf gui_session_candidates "$de")"
   if [ -n "$sess" ]; then ok "$de session candidates non-empty"; else bad "$de session candidates non-empty" "candidates" "(empty)"; fi
@@ -40,6 +45,18 @@ assert_eq "dnf session starter" "/usr/libexec/vncsession-start"      "$(with_fam
 assert_eq "apt session starter" "/usr/libexec/tigervncsession-start" "$(with_family apt gui_vncsession_start)"
 assert_eq "dnf pidfile"         "/run/vncsession-:1.pid"             "$(with_family dnf gui_vncsession_pidfile)"
 assert_eq "apt pidfile"         "/run/tigervncsession-:1.pid"        "$(with_family apt gui_vncsession_pidfile)"
+
+# Pinned verbatim because two of these names diverge by family in ways that look
+# like typos: only Fedora capitalizes Thunar, and only the apt family namespaces
+# Spectacle. A silent "fix" toward the other family's spelling fails the image
+# build, since the DE application install is fail-loud.
+echo "gui-lib — family-divergent application names:"
+assert_eq "dnf/kde apps"  "dolphin kate ark gwenview spectacle"                     "$(with_family dnf gui_app_packages kde)"
+assert_eq "apt/kde apps"  "dolphin kate ark gwenview kde-spectacle"                 "$(with_family apt gui_app_packages kde)"
+assert_eq "dnf/xfce apps" "Thunar mousepad xarchiver ristretto xfce4-screenshooter" "$(with_family dnf gui_app_packages xfce)"
+assert_eq "apt/xfce apps" "thunar mousepad xarchiver ristretto xfce4-screenshooter" "$(with_family apt gui_app_packages xfce)"
+assert_eq "dnf agent"     "spice-vdagent"                                           "$(with_family dnf gui_agent_packages)"
+assert_eq "apt agent"     "spice-vdagent"                                           "$(with_family apt gui_agent_packages)"
 
 echo "gui-lib — gui_require_de gate:"
 with_family dnf gui_require_de kde; rc=$?

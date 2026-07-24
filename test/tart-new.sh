@@ -182,6 +182,30 @@ assert_contains "equals-form folds into the same tart set" "$(<"$TART_CALLS")" "
 run_new bare php fedora
 assert_eq     "no-resource path exits 0" 0 "$rc"
 assert_absent "no-resource path skips tart set" "$(<"$TART_CALLS")" "set bare"
+assert_absent "headless clone is given no display" "$(<"$TART_CALLS")" "--display"
+
+# A GUI clone is sized at create time. Tart's 1024x768 default cannot be raised
+# from inside the guest — the resolution belongs to the virtual display, not the
+# X session — so a desktop flavor that inherited it would stay unusable for life.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"fedora-php","Source":"local"},
+ {"Name":"fedora-php-kde","Source":"local"}]
+JSON
+: > "$TART_CALLS"
+run_new deskvm php fedora kde
+assert_eq       "GUI clone exits 0" 0 "$rc"
+assert_contains "GUI clone sizes its display" "$(<"$TART_CALLS")" "set deskvm --display 1920x1080 --display-refit"
+
+: > "$TART_CALLS"
+run_new deskvm2 php fedora kde --display 2560x1440
+assert_contains "explicit --display overrides the GUI default" "$(<"$TART_CALLS")" "set deskvm2 --display 2560x1440 --display-refit"
+
+# Restore the shared fixture list for the cases below.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"fedora-php","Source":"local"},
+ {"Name":"app-a","Source":"local"},
+ {"Name":"fedora-jvm","Source":"oci"}]
+JSON
 
 # `tart set` failure after a successful clone: the scrub precedes the clone, so
 # the aborted create leaves no stale alias pin behind; unrelated pins survive.

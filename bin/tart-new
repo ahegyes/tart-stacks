@@ -6,6 +6,7 @@
 #
 # Usage:
 #   tart-new <name> <stack> <distro> [<de>] [--cpu N] [--memory MB] [--disk-size GB]
+#           [--display WxH]
 #
 # <stack> is the short token (php, jvm) — the same one `make build STACK=…`
 # takes; <distro> is the OS token (fedora) — the same one `make build DISTRO=…`
@@ -72,8 +73,11 @@ vm_exists() {
 }
 
 usage() {
-  echo "usage: $prog <name> <stack> <distro> [<de>] [--cpu N] [--memory MB] [--disk-size GB]" >&2
+  echo "usage: $prog <name> <stack> <distro> [<de>] [--cpu N] [--memory MB] [--disk-size GB] [--display WxH]" >&2
 }
+
+# The screen a GUI clone is born with, absent an explicit --display.
+DEFAULT_DISPLAY_GEOMETRY="1920x1080"
 
 # need_value <flag> <argc> — usage error (64) for a space-form flag with no
 # value; an unguarded "$2" read dies as an opaque set -u error instead.
@@ -87,16 +91,18 @@ need_value() {
 tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
 tart_need_cmd jq   "Install: brew install jq"
 
-CPU="" MEM="" DISK=""
+CPU="" MEM="" DISK="" DISPLAY_GEOMETRY=""
 positionals=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --cpu)         need_value "$1" $#; CPU="$2"; shift 2 ;;
     --memory)      need_value "$1" $#; MEM="$2"; shift 2 ;;
     --disk-size)   need_value "$1" $#; DISK="$2"; shift 2 ;;
+    --display)     need_value "$1" $#; DISPLAY_GEOMETRY="$2"; shift 2 ;;
     --cpu=*)       CPU="${1#*=}"; shift ;;
     --memory=*)    MEM="${1#*=}"; shift ;;
     --disk-size=*) DISK="${1#*=}"; shift ;;
+    --display=*)   DISPLAY_GEOMETRY="${1#*=}"; shift ;;
     -h|--help)     usage; exit 0 ;;
     -*)            echo "$prog: unknown option '$1'" >&2; usage; exit 64 ;;
     *)             positionals+=("$1"); shift ;;
@@ -182,6 +188,16 @@ set_args=()
 [ -n "$CPU" ]  && set_args+=(--cpu "$CPU")
 [ -n "$MEM" ]  && set_args+=(--memory "$MEM")
 [ -n "$DISK" ] && set_args+=(--disk-size "$DISK")
+# A GUI clone gets a workable screen by construction. Tart's own default is
+# 1024x768, which a desktop session has no way to change from inside the guest —
+# the resolution is a property of the virtual display, not of the X session — so
+# a clone left at the default is stuck there for its whole life. --display-refit
+# additionally lets the guest follow the host window as it is resized.
+if [ -n "$DE" ]; then
+  set_args+=(--display "${DISPLAY_GEOMETRY:-$DEFAULT_DISPLAY_GEOMETRY}" --display-refit)
+elif [ -n "$DISPLAY_GEOMETRY" ]; then
+  set_args+=(--display "$DISPLAY_GEOMETRY")
+fi
 [ "${#set_args[@]}" -gt 0 ] && tart set "$NAME" "${set_args[@]}"
 
 echo "$prog: created '$NAME' from $img — next: ssh tart-$NAME" >&2
