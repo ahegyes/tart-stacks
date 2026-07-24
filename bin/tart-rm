@@ -123,6 +123,11 @@ tart delete "$VM"
 # future VM reusing this name re-pins fresh instead of tripping accept-new.
 ssh-keygen -R "tart-$VM" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
+# Same reasoning for the deliberate-stop mark: names are reused, and a mark
+# outliving its VM would tell a supervisor to leave the NEXT VM of that name
+# down.
+rm -f "$(tart_stop_mark "$VM")" 2>/dev/null || true
+
 if [ "$SUPERVISED" -eq 1 ]; then
   echo "$prog: removed '$VM' — supervision dropped, VM deleted, host-key pin cleared" >&2
 else

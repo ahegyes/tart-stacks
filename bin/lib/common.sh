@@ -24,6 +24,21 @@ tart_vm_state() {
 # drop supervision before deleting a VM.
 tart_supervise_label() { printf 'com.tart-stacks.supervise.%s' "$1"; }
 
+# Host-side runtime state, deliberately NOT under tart_config_dir: the files
+# there are a format contract with external tooling, while this is ours alone.
+tart_state_dir() { printf '%s' "${TART_STATE_DIR:-$HOME/.local/state/tart-stacks}"; }
+
+# tart_stop_mark <vm> — the marker recording that an operator stopped <vm> on
+# purpose. Supervision cannot infer this: the `tart run` process is disowned
+# (tart-up), so no exit status survives to distinguish a deliberate stop from a
+# crash, and a halted kernel often never exits at all. Intent is therefore
+# recorded rather than deduced. tart-down writes it, tart-up clears it on a
+# start, and tart-supervise declines to restart while it exists.
+tart_stop_mark() { printf '%s/stopped/%s' "$(tart_state_dir)" "$1"; }
+
+# tart_stop_marked <vm> — 0 iff <vm> is marked as deliberately stopped.
+tart_stop_marked() { [ -e "$(tart_stop_mark "$1")" ]; }
+
 # tart_valid_vm_name <name> — 0 iff the name is a token every consumer can
 # carry: the ssh alias (tart-<name>), the guest hostname (`hostname -s` must
 # equal the name, so no dots), and the vm-pattern grammar (commas are list

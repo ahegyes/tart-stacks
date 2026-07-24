@@ -98,6 +98,7 @@ run_sup() { # <MOCK_ALIVE> <args...>
     MOCK_TART_LIST_JSON="${MOCK_TART_LIST_JSON:-$LIST_DEFAULT}" \
     MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC:-0}" \
     TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" \
+    TART_STATE_DIR="$WORK/state" \
     TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" TART_DESKTOPS="$WORK/desktops" \
     bash "$BIN/tart-supervise" "$@"
 }
@@ -119,6 +120,19 @@ run_sup 1 --once app-a >/dev/null 2>&1
 calls="$(cat "$CALLS")"
 assert_absent "up → no tart stop" "$calls" "tart stop"
 assert_absent "up → no tart-up"   "$calls" "tart-up"
+
+# A deliberate stop outranks down-ness: the same DOWN vm that restarts above is
+# left alone once marked, which is the one judgement liveness cannot supply.
+mkdir -p "$WORK/state/stopped"; : > "$WORK/state/stopped/app-a"
+run_sup 0 --once app-a >/dev/null 2>&1
+calls="$(cat "$CALLS")"
+assert_absent "marked down → no tart-up"   "$calls" "tart-up"
+assert_absent "marked down → no tart stop" "$calls" "tart stop"
+
+# Clearing the mark restores ordinary supervision with nothing to re-arm.
+rm -f "$WORK/state/stopped/app-a"
+run_sup 0 --once app-a >/dev/null 2>&1
+assert_contains "mark cleared → restarts again" "$(cat "$CALLS")" "tart-up app-a"
 
 # prefix form is accepted and normalized to the bare name
 run_sup 0 --once tart-app-a >/dev/null 2>&1

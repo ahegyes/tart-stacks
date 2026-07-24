@@ -64,7 +64,7 @@ MARKER_LINE="# Added by tart-stacks. Run 'make setup' to restore this line if re
 KEEP_ABOVE_LINE='# Keep it above any Host block so per-VM settings beat a catch-all Host *.'
 
 # Commands symlinked onto PATH — install and uninstall iterate the same list.
-COMMANDS=(tart-up tart-ssh-sync tart-new tart-rm tart-supervise)
+COMMANDS=(tart-up tart-ssh-sync tart-new tart-rm tart-down tart-supervise)
 
 info() { printf '  %s\n' "$*"; }
 warn() { printf '  WARNING: %s\n' "$*" >&2; }
@@ -314,7 +314,7 @@ if [ ! -e "$HOME/.ssh/tart-vm.pub" ]; then
   warn "no ~/.ssh/tart-vm.pub — every stack build bakes that key in and the generated SSH config pins it. Create + link it first: README, Setup step 1."
 fi
 if ! command -v jq >/dev/null 2>&1; then
-  warn "jq not found — tart-new, tart-up, tart-rm and tart-supervise all require it. Install: brew install jq"
+  warn "jq not found — tart-new, tart-up, tart-rm, tart-down and tart-supervise all require it. Install: brew install jq"
 fi
 
 # 7. Generate the SSH config the Include points at. OpenSSH silently ignores

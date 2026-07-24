@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# tart-down — stop a Tart project VM and keep it stopped. `tart stop` on its own
+# is not enough for a supervised VM: tart-supervise sees only that the VM is no
+# longer alive, and cannot tell a deliberate stop from a crash, so it restarts
+# the VM within one poll interval. No exit status is available to tell the two
+# apart either — tart-up disowns the `tart run` process, and a VM halted by a
+# kernel fault frequently never exits at all — so intent is recorded rather than
+# inferred. The destroy-side sibling is tart-rm; this is the reversible one.
+#
+# Usage:
+#   tart-down <vm-name>
+#
+# Nothing needs re-arming afterwards: tart-up clears the mark whenever it starts
+# the VM, so an ordinary `ssh tart-<vm>` or `tart-up <vm>` resumes supervision.
+set -euo pipefail
+
+prog="${0##*/}"
+
+# Resolve this script's real dir (following the ~/.local/bin symlink that
+# script/setup installs) to source the shared bin/lib helpers.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+# shellcheck source=bin/lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+
+REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
+DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
+DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
+
+usage() {
+  echo "usage: $prog <vm-name>" >&2
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+[ $# -eq 1 ] || { usage; exit 64; }
+
+tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
+tart_need_cmd jq   "Install: brew install jq"
+
+VM="$1"
+
+# A nonzero tart_vm_state means the tool is broken, not that the name missed —
+# bail instead of retrying the swapped prefix against the same broken tool.
+list_failed() {
+  echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
+  exit 1
+}
+
+# Two-way prefix lookup: the SSH alias is `tart-<name>`, but Tart stores VMs
+# bare. Try the name as-given, then swap the prefix on a miss so either form
+# works. Empty after both = genuinely absent.
+STATE=$(tart_vm_state "$VM") || list_failed
+if [ -z "$STATE" ]; then
+  case "$VM" in
+    tart-*) ALT="${VM#tart-}" ;;
+    *)      ALT="tart-$VM" ;;
+  esac
+  STATE=$(tart_vm_state "$ALT") || list_failed
+  if [ -z "$STATE" ]; then
+    echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list'." >&2
+    exit 1
+  fi
+  VM="$ALT"
+fi
+
+# Base images are clone sources that are never run as dev VMs, so stopping one
+# is always a mistaken name rather than an intent worth recording.
+if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
+  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to stop it." >&2
+  exit 1
+fi
+
+# The mark precedes the stop, and that order is the whole point: a supervisor
+# polls on an interval, so marking afterwards leaves a window in which it sees a
+# dead VM with no recorded intent and restarts it. Marking an already-stopped VM
+# is meaningful too — it holds down a VM whose supervisor is between polls.
+MARK=$(tart_stop_mark "$VM")
+mkdir -p "$(dirname "$MARK")"
+: > "$MARK"
+
+if ! tart stop "$VM" 2>/dev/null; then
+  # A VM that is already stopped makes `tart stop` fail; the mark is still
+  # correct and must stand, so this is not an error. A genuine failure to stop a
+  # running VM is, and is reported by the state re-read below.
+  STATE=$(tart_vm_state "$VM") || list_failed
+  if [ "$STATE" = "running" ]; then
+    echo "$prog: '$VM' is still running — 'tart stop' failed; the stop mark stands, so supervision will not restart it." >&2
+    exit 1
+  fi
+fi
+
+echo "$prog: '$VM' stopped and marked — supervision will not restart it. Starting it (ssh tart-${VM#tart-}, or tart-up $VM) clears the mark." >&2

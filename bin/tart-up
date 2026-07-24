@@ -375,6 +375,11 @@ if [ "$STATE" = "running" ]; then
   fi
 elif [ "$STATE" = "stopped" ]; then
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
+  # Starting the VM is what retracts an operator's deliberate stop, so the mark
+  # tart-down left is cleared here rather than by a separate re-arm step. It is
+  # dropped before the launch: a supervisor that wakes mid-start must not find a
+  # stale mark and decline to watch the instance now coming up.
+  rm -f "$(tart_stop_mark "$VM")" 2>/dev/null || true
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
   # tart's --net-* family is mutually exclusive, so keep them visually adjacent.

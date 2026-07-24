@@ -77,6 +77,12 @@ EOF
 # cleanup that restarting after an abnormal exit needs.
 ensure_up() {
   local vm="$1"
+  # A recorded deliberate stop outranks liveness: down-ness alone cannot
+  # distinguish an operator's `tart-down` from a crash, which is the one
+  # judgement this loop is otherwise unable to make. Supervision idles rather
+  # than exiting, so starting the VM again — which clears the mark — resumes it
+  # without anything being re-armed.
+  tart_stop_marked "$vm" && return 0
   tart_vm_alive "$vm" && return 0
   log "'$vm' appears down — restarting"
   # Re-check liveness right before stopping: an interactive login may have raced
@@ -127,6 +133,13 @@ supervise_loop() {
     # the sleep / escalate after it, so the first fast restart waits BACKOFF_BASE,
     # not double it.)
     [ "$up" -ge "$HEALTHY" ] && backoff="$BACKOFF_BASE"
+    # A marked VM reaches here every poll without anything having exited, so the
+    # restart narration would be both false and endless. Idle quietly instead;
+    # the absent-VM check above still runs, so a deleted VM is still noticed.
+    if tart_stop_marked "$vm"; then
+      sleep "$POLL"
+      continue
+    fi
     log "'$vm' exited after ${up}s — restarting in ${backoff}s"
     sleep "$backoff"
     if [ "$up" -lt "$HEALTHY" ]; then

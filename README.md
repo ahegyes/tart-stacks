@@ -23,6 +23,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 ├── bin/
 │   ├── tart-new                      # Creates a project VM by cloning a stack base image (GUI flavors via the optional <de> arg), with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size` pass-through
 │   ├── tart-rm                       # Deletes a project VM with the teardown `tart delete` lacks (base-image refusal, supervision drop, stop, host-key-pin scrub)
+│   ├── tart-down                     # Stops a VM and keeps it stopped — records the deliberate-stop mark tart-supervise honours (see "Keep a VM alive across crashes")
 │   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start), `ssh -G`-validated before it goes live
 │   ├── tart-up                       # Starts a stopped VM (+ mounts + net-policy) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
 │   ├── tart-supervise                # Keeps a VM running across `tart run` crashes via a per-VM LaunchAgent (see "Keep a VM alive across crashes")
@@ -36,6 +37,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 ├── test/
 │   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
 │   ├── tart-rm.sh                    # Characterization tests for tart-rm (refusal gates, supervision-drop → stop → delete ordering, known-hosts scrub)
+│   ├── tart-down.sh                  # Characterization tests for tart-down (mark/stop ordering, failure paths, base-image refusal)
 │   ├── tart-up.sh                    # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc + ps)
 │   ├── tart-supervise.sh             # Characterization tests for tart-supervise (--once cycle, install gates, uninstall semantics, self-retirement, --status columns)
 │   ├── setup.sh                      # Characterization tests for script/setup — install + --uninstall, fully sandboxed
@@ -320,13 +322,27 @@ The supervisor watches for the `tart run <name>` process; when it is gone it run
 re-provisions, and waits for sshd). Restarts back off if a VM keeps dying
 quickly.
 
-A supervised VM is *kept* running — a manual `tart stop` is undone within a
-few seconds — so taking one down starts with `--uninstall`. That removes
-supervision *only*: the LaunchAgent is unloaded without touching the VM
-(launchd's `AbandonProcessGroup`, so the `tart run` the agent spawned isn't
-killed with it), and a running VM stays up. Then stop or delete the VM as
-usual — or skip the two-step with `tart-rm <name>`, which drops supervision
-itself before deleting.
+A supervised VM is *kept* running, and a bare `tart stop` is undone within a few
+seconds: the supervisor sees only that the VM is no longer alive, and cannot
+tell a deliberate stop from a crash. No exit status settles it either — `tart
+run` is disowned, and a VM halted by a kernel fault often never exits at all —
+so intent is recorded rather than inferred:
+
+```sh
+tart-down <name>                   # stop it and keep it stopped
+```
+
+`tart-down` writes a deliberate-stop mark before stopping (marking afterwards
+would lose a race with the supervisor's poll), and the supervisor declines to
+restart a marked VM while idling in place. Nothing needs re-arming: `tart-up`,
+including the `ssh tart-<name>` auto-start, clears the mark whenever it starts
+the VM, and supervision resumes.
+
+To stop supervising altogether, `--uninstall` removes supervision *only*: the
+LaunchAgent is unloaded without touching the VM (launchd's
+`AbandonProcessGroup`, so the `tart run` the agent spawned isn't killed with
+it), and a running VM stays up. To delete a VM, `tart-rm <name>` drops
+supervision itself beforehand.
 
 The reverse order is safe too — delete a VM out from under its supervisor and
 the agent retires itself: after a few consecutive `tart list` checks confirm
