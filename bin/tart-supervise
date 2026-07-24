@@ -84,7 +84,7 @@ ensure_up() {
   # without anything being re-armed.
   tart_stop_marked "$vm" && return 0
   tart_vm_alive "$vm" && return 0
-  log "'$vm' appears down — restarting"
+  log "'$vm' appears down — restarting (no stop mark recorded; 'tart-down $vm' stops it and keeps it down)"
   # Re-check liveness right before stopping: an interactive login may have raced
   # to start the VM in the gap, and we must not tear that down. `tart stop` on a
   # genuinely-dead VM only clears the wedged "running" state a crash leaves.
@@ -140,7 +140,7 @@ supervise_loop() {
       sleep "$POLL"
       continue
     fi
-    log "'$vm' exited after ${up}s — restarting in ${backoff}s"
+    log "'$vm' exited after ${up}s — restarting in ${backoff}s (no stop mark recorded; 'tart-down $vm' stops it and keeps it down)"
     sleep "$backoff"
     if [ "$up" -lt "$HEALTHY" ]; then
       backoff=$(( backoff * 2 ))
