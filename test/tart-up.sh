@@ -7,8 +7,9 @@
 # probe converge on the first iteration. Covers resolve + prefix lookup, the
 # tart-list failure path, base-image refusal, the stopped→`tart run` command
 # (netpolicy gating + mount/gui flags + stderr log capture), fail-closed gui
-# parsing, started-only desktop activation, the running-VM paths (alive vs
-# wedged), and the hostname-set branch. Plain bash, no framework.
+# parsing, started-only desktop activation + window backing-scale application,
+# the running-VM paths (alive vs wedged), and the hostname-set branch. Plain
+# bash, no framework.
 # Run via script/test or directly.
 set -uo pipefail
 
@@ -26,6 +27,13 @@ check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
 assert_rc() { # label want — checks $rc from the last runup
   if [ "$rc" -eq "$2" ]; then ok "$1"; else bad "$1" "want rc=$2 got rc=$rc"; fi; }
+line_of() { grep -nF -- "$1" "$CALLS" 2>/dev/null | head -n 1 | cut -d: -f1; }
+assert_order() { # label earlier-needle later-needle — both in $CALLS, in that order
+  local l="$1" a b
+  a=$(line_of "$2"); b=$(line_of "$3")
+  if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then ok "$l"
+  else bad "$l" "want » $2 « (line ${a:-absent}) before » $3 « (line ${b:-absent}) in: $(tr '\n' '|' < "$CALLS")"; fi
+}
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
@@ -118,13 +126,29 @@ exit 0
 PS
 chmod +x "$MOCKBIN/ps"
 
+# Mock `system_profiler`: the default fixture is a main display whose native
+# 3840px width is twice its logical 1920pt width. Failure and custom-JSON knobs
+# drive display-scale fallback without depending on the test host's displays.
+cat > "$MOCKBIN/system_profiler" <<'SYSTEM_PROFILER'
+#!/usr/bin/env bash
+echo "system_profiler $*" >> "$CALLS"
+[ "${MOCK_SYSTEM_PROFILER_RC:-0}" -eq 0 ] || exit "${MOCK_SYSTEM_PROFILER_RC}"
+if [ "${MOCK_SYSTEM_PROFILER_JSON+x}" = x ]; then
+  printf '%s\n' "$MOCK_SYSTEM_PROFILER_JSON"
+else
+  printf '%s\n' '{"SPDisplaysDataType":[{"spdisplays_ndrvs":[{"spdisplays_main":"spdisplays_yes","_spdisplays_pixels":"3840 x 2160","_spdisplays_resolution":"1920 x 1080 @ 60.00Hz"}]}]}'
+fi
+SYSTEM_PROFILER
+chmod +x "$MOCKBIN/system_profiler"
+
 # Run tart-up with the mocks prepended (real jq/seq/etc. stay on PATH).
 # Knobs arrive as env on the call: MOCK_LIST_VM (default app-a), MOCK_ALIVE
 # (default 1 — a listed-running VM has a live process), MOCK_TART_LIST_RC,
 # MOCK_NC_RC, MOCK_SS_OUTPUT, MOCK_SS_SEQUENCE_FILE, MOCK_SS_READ_FAIL,
-# MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH, and RUNUP_LOG_DIR. Exit code
-# lands in $rc, stderr in $ERR, recorded mock calls in $CALLS. The
-# sequenced-listener counter is reset for every invocation.
+# MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH, MOCK_SYSTEM_PROFILER_RC,
+# MOCK_SYSTEM_PROFILER_JSON, TART_DISPLAY_SCALE, and RUNUP_LOG_DIR. Exit code
+# lands in $rc, stderr in $ERR, recorded mock calls in $CALLS. The sequenced
+# listener counter is reset for every invocation.
 runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-up argv...>
   local state="$1" hostname="$2" netpolicy="$3" mounts="$4" gui="$5"
   shift 5
@@ -245,6 +269,8 @@ assert_contains "gui file vnc → headless tart launch" "$calls" "tart run app-a
 assert_contains "gui file vnc → starts VNC on a started boot" "$calls" "sudo systemctl start tart-stacks-vnc.service"
 assert_contains "gui file vnc → verifies listener with ss" "$calls" "tart exec app-a ss -tln"
 assert_contains "gui file vnc → prints tunnel hint" "$(cat "$ERR")" "ssh -L 5901:127.0.0.1:5901 tart-app-a"
+assert_absent   "gui file vnc → no host-window scale detection" "$calls" "system_profiler"
+assert_absent   "gui file vnc → no guest display-scale application" "$calls" "tart-stacks-display-scale"
 
 printf '# ok\napp-a sideways\n' > "$WORK/gui-unknown"
 runup stopped app-a "$EMPTY" "$EMPTY" "$WORK/gui-unknown" app-a
@@ -288,7 +314,12 @@ assert_rc       "argv window beats file vnc → exit 0" 0
 calls="$(cat "$CALLS")"
 assert_contains "window → run keeps netpolicy + mounts" "$calls" "tart run app-a --net-softnet=@host-only --dir=data:/srv/data:ro"
 assert_absent   "window → run drops --no-graphics" "$calls" "tart run app-a --no-graphics"
+assert_contains "window → detects main-display backing scale" "$calls" "system_profiler -json SPDisplaysDataType"
+assert_contains "window → applies detected scale in guest" "$calls" "tart exec app-a /usr/local/bin/tart-stacks-display-scale 2"
 assert_contains "window → isolates graphical target on started boot" "$calls" "sudo systemctl isolate graphical.target"
+assert_order    "window → applies scale before graphical session starts" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 2" \
+  "tart exec app-a sudo systemctl isolate graphical.target"
 assert_contains "window → verifies the display manager came up" "$calls" "systemctl is-active --quiet display-manager.service"
 assert_absent   "window override → does not start VNC" "$calls" "systemctl start tart-stacks-vnc.service"
 
@@ -298,6 +329,69 @@ calls="$(cat "$CALLS")"
 assert_contains "headless override → tart run --no-graphics" "$calls" "tart run app-a --no-graphics"
 assert_absent   "headless override → no window activation" "$calls" "graphical.target"
 assert_absent   "headless override → no vnc activation" "$calls" "tart-stacks-vnc.service"
+assert_absent   "headless override → no display-scale detection" "$calls" "system_profiler"
+assert_absent   "headless override → no display-scale application" "$calls" "tart-stacks-display-scale"
+
+# Scale is cosmetic boot state: detection and guest application failures never
+# block the graphical activation. An explicit override bypasses host probing.
+MOCK_SYSTEM_PROFILER_RC=1 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "display-scale detection failure → window still starts" 0
+assert_contains "display-scale detection failure → applies safe factor 1" "$(cat "$CALLS")" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 1"
+
+TART_DISPLAY_SCALE=3 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "display-scale override → window starts" 0
+calls="$(cat "$CALLS")"
+assert_contains "display-scale override → drives guest factor" "$calls" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 3"
+assert_absent   "display-scale override → skips system_profiler" "$calls" "system_profiler"
+
+TART_DISPLAY_SCALE=99 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "out-of-range display-scale override → window starts" 0
+assert_contains "out-of-range display-scale override → clamps to 3" "$(cat "$CALLS")" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 3"
+
+TART_DISPLAY_SCALE=bogus \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "invalid display-scale override → window still starts" 0
+assert_contains "invalid display-scale override → warns" "$(cat "$ERR")" "invalid TART_DISPLAY_SCALE 'bogus'"
+assert_contains "invalid display-scale override → applies safe factor 1" "$(cat "$CALLS")" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 1"
+
+# A fractional ("More Space") mode divides the panel's pixels by a logical width
+# that is not half of them, yet macOS still backs that mode at 2 — so the
+# nearest integer is the truthful factor, not a parse failure.
+MOCK_SYSTEM_PROFILER_JSON='{"SPDisplaysDataType":[{"spdisplays_ndrvs":[{"spdisplays_main":"spdisplays_yes","_spdisplays_pixels":"3456 x 2234","_spdisplays_resolution":"2056 x 1329 @ 120.00Hz"}]}]}' \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "fractional display mode → window still starts" 0
+assert_contains "fractional display mode → rounds to the backing factor" "$(cat "$CALLS")" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 2"
+
+# A panel whose pixels are its points needs no scaling at all.
+MOCK_SYSTEM_PROFILER_JSON='{"SPDisplaysDataType":[{"spdisplays_ndrvs":[{"spdisplays_main":"spdisplays_yes","_spdisplays_pixels":"1920 x 1080","_spdisplays_resolution":"1920 x 1080 @ 60.00Hz"}]}]}' \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "non-Retina main display → window starts" 0
+assert_contains "non-Retina main display → applies unscaled factor 1" "$(cat "$CALLS")" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 1"
+
+# With no display flagged main there is no window backing scale to read; a
+# secondary's is not a stand-in for it.
+MOCK_SYSTEM_PROFILER_JSON='{"SPDisplaysDataType":[{"spdisplays_ndrvs":[{"_spdisplays_pixels":"3840 x 2160","_spdisplays_resolution":"1920 x 1080 @ 60.00Hz"}]}]}' \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "no main display → window still starts" 0
+assert_contains "no main display → applies safe factor 1" "$(cat "$CALLS")" \
+  "tart exec app-a /usr/local/bin/tart-stacks-display-scale 1"
+
+TART_DISPLAY_SCALE=2 \
+MOCK_TART_EXEC_FAIL_MATCH="/usr/local/bin/tart-stacks-display-scale 2" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "display-scale apply failure → window still starts" 0
+assert_contains "display-scale apply failure → warns" "$(cat "$ERR")" "could not apply display scale '2'"
+assert_contains "display-scale apply failure → still isolates graphical target" "$(cat "$CALLS")" \
+  "sudo systemctl isolate graphical.target"
 
 # Started activation fails loud while leaving the VM process up. A VNC bind
 # outside loopback is actively shut down because the unit uses no VNC auth.
@@ -403,6 +497,8 @@ runup running app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
 assert_rc       "running window → warns and exits 0" 0
 assert_contains "running window → gui applies-at-boot notice" "$(cat "$ERR")" "gui mode 'window' applies at boot"
 assert_absent   "running window → no activation vsock hit" "$(cat "$CALLS")" "graphical.target"
+assert_absent   "running window → no display-scale detection" "$(cat "$CALLS")" "system_profiler"
+assert_absent   "running window → no display-scale application" "$(cat "$CALLS")" "tart-stacks-display-scale"
 
 # listed "running" with no live `tart run` process is the wedged-crash
 # signature: fail fast with the remedy instead of polling a ghost for minutes.

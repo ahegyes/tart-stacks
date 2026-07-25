@@ -42,7 +42,7 @@ fi
 
 echo "==> Installing ${DE} desktop + display manager + applications + agent + TigerVNC..."
 # shellcheck disable=SC2046  # intentional word-split of the package lists
-gui_pkg_install $(gui_packages "$DE") $(gui_app_packages "$DE") $(gui_agent_packages) $(gui_vnc_packages)
+gui_pkg_install $(gui_packages "$DE") $(gui_app_packages "$DE") $(gui_agent_packages) $(gui_scale_packages "$DE") $(gui_vnc_packages)
 
 # Resolve the X session baked for VNC (and DM autologin). Hard assert: a DE
 # whose X11 session didn't materialize would bake a desktop that can't start.
@@ -55,6 +55,18 @@ done
   exit 1
 }
 echo "==> X session: ${SESSION}"
+
+# The host applies its window's backing scale before graphical.target starts.
+# Bake the DE and account into a plain per-user editor: no runtime desktop
+# detection or privileged config write is needed over the guest agent.
+echo "==> Installing the pre-session display scale applier..."
+install -d -m 755 /usr/local/bin
+sed \
+  -e "s|__TART_STACKS_DE__|${DE}|g" \
+  -e "s|__TART_STACKS_TARGET_USER__|${TARGET_USER}|g" \
+  -e "s|__TART_STACKS_TARGET_HOME__|${TARGET_HOME}|g" \
+  /tmp/display-scale.sh > /usr/local/bin/tart-stacks-display-scale
+chmod 755 /usr/local/bin/tart-stacks-display-scale
 
 # ── VNC: TigerVNC session on :1, loopback only ────────────────────────────
 # No VNC password is baked (it would be a shared secret in every clone) and

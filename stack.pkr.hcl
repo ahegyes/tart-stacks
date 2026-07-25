@@ -127,6 +127,13 @@ build {
     destination = "/tmp/gui-lib.sh"
   }
 
+  # Per-user desktop scale editor installed by gui.sh with this image's DE
+  # and build account baked in. Uploaded unconditionally for gui=false parity.
+  provisioner "file" {
+    source      = "shared/scripts/display-scale.sh"
+    destination = "/tmp/display-scale.sh"
+  }
+
   # Per-stack, per-family package lists, read by 00-stack.sh.
   provisioner "file" {
     source      = "stacks/${var.stack}/packages.dnf"

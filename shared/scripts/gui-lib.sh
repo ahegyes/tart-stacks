@@ -90,6 +90,16 @@ gui_agent_packages() {
   esac
 }
 
+# gui_scale_packages <de> — runtime needed by the pre-session scale applier.
+# KDE and GNOME already carry their native config tools with the desktop;
+# XFCE's XML must be changed structurally while xfconfd is not running.
+gui_scale_packages() {
+  case "$1" in
+    kde|gnome) ;;
+    xfce) echo "python3" ;;
+  esac
+}
+
 # gui_vnc_packages — TigerVNC server bits: Xvnc plus the packaged PAM session
 # starter (vncsession on dnf, tigervncsession on apt). dbus-x11 provides
 # dbus-launch, which the X session bootstrap needs on both families.

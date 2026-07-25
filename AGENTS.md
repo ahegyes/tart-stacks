@@ -35,6 +35,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── tart-supervise.sh               # Characterization tests for tart-supervise (--once restart cycle; install gates; plist contract incl. AbandonProcessGroup; uninstall's supervision-only semantics; deleted-VM self-retirement; --status columns; mocks tart/tart-up/ps/launchctl)
 │   ├── setup.sh                        # Characterization tests for script/setup — install surface (symlinks, Include placement, scaffolds, closing sync, idempotence) and the --uninstall inverse (supervised-VM gate, ownership checks, kept config); fully sandboxed
 │   ├── smoke.sh                        # Characterization tests for script/smoke (stage ordering, EXIT-trap teardown, SMOKE_KEEP, tart-new failure propagation; mocks via the TART_SMOKE_BIN seam — no real VM)
+│   ├── display-scale.sh                # Guest display-scale applier tests: exact installed template instantiated per DE against temp homes; KDE config preservation/reset, GNOME private-dbus writes, XFCE XML preservation/reset
 │   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   ├── mise-lib.sh                     # Characterization tests for mise-lib's smoke_gate (argv-group grammar, word-split safety, hard-fail path)
 │   ├── gui-lib.sh                      # Characterization tests for gui-lib's DE × family selectors + the shared/desktops ↔ gui_require_de lockstep
@@ -46,6 +47,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First. System update + core dev pkgs + build toolchain + zellij via distro-lib.sh (root)
 │   │   ├── 99-finalize.sh              # LAST. Authorize SSH key + sshd drop-in + NOPASSWD sudo + lock admin password; writes the provenance manifest incl. the gui: line (root)
+│   │   ├── display-scale.sh             # Install template for the per-boot, per-DE guest display-scale applier; gui.sh bakes the DE/account placeholders into /usr/local/bin
 │   │   ├── distro-lib.sh               # Package-manager abstraction: pkg_install/pkg_refresh/repo_add_mise/install_zellij etc. for dnf (Fedora) and apt (Debian/Ubuntu) families
 │   │   ├── gui.sh                      # Optional desktop layer (no-op unless -var gui=true): DE + display manager + loopback-only VNC session unit; netpolicy-neutral by design (root)
 │   │   ├── gui-lib.sh                  # DE × family abstraction sourced by gui.sh: package sets, DM units, X session candidates, TigerVNC session-starter paths

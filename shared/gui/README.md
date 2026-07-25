@@ -47,16 +47,19 @@ The image boots **headless by default** — the systemd default target is pinned
 to `multi-user.target`, so a plain boot starts no desktop process and pays no
 desktop RAM. A consumer activates graphics per boot, in one of two ways:
 
-| Mode | Activation (in-guest, root) | What appears |
+| Mode | Activation (in-guest) | What appears |
 |---|---|---|
 | headless | nothing | no desktop processes; the image behaves like the non-GUI build |
 | vnc | `systemctl start tart-stacks-vnc.service` | a full desktop session on display `:1`, served on **`127.0.0.1:5901`** |
-| window | `systemctl isolate graphical.target` | the display manager autologs the dev user into a desktop on the VM's virtual console |
+| window | apply the host backing scale as the dev user, then `systemctl isolate graphical.target` | the display manager autologs the dev user into a correctly scaled desktop on the VM's virtual console |
 
-Both activations are per-boot (nothing is persisted); a consumer that wants a
-desktop on every boot can `systemctl enable tart-stacks-vnc.service` or
-`systemctl set-default graphical.target` — the image deliberately ships with
-neither.
+Both activations are per-boot (neither the unit nor default target is changed);
+a consumer that wants a desktop on every boot can
+`systemctl enable tart-stacks-vnc.service` or `systemctl set-default
+graphical.target` — the image deliberately ships with neither. Window-scale
+keys persist in the user's DE config, but `tart-up` reconciles them to the
+detected factor before every window session it starts, including removing them
+for factor 1.
 
 `tart-up` owns the launcher side of these boot modes. Select one boot with
 `tart-up --gui=vnc|window <vm>`, or give the VM an exact-name, single-winner
@@ -108,8 +111,30 @@ dependency and stays behind the loopback-only SSH tunnel.
   the guest can raise it, so a VM left at Tart's 1024×768 default is stuck there.
   `tart-new` therefore sizes every GUI clone at create time (1920×1080, override
   with `--display`) and sets `--display-refit` so the guest follows the host
-  window as it is resized. A VM created by other means gets the Tart default and
+  window as it is resized **in host device pixels**. The 1920×1080 boot geometry
+  deliberately remains a normal window size; it is not the host screen's full
+  logical-point geometry. A VM created by other means gets the Tart default and
   needs an explicit `tart set`.
+- **Desktop scale follows the main host display's backing scale.** The virtual
+  connector reports no physical dimensions, so the guest cannot derive this
+  value itself. On a window boot that `tart-up` starts, it divides the main
+  display's native pixel width by its logical point width, validates an integer
+  scale in the range 1–3, and invokes
+  `/usr/local/bin/tart-stacks-display-scale <factor>` as the dev user **before**
+  isolating `graphical.target`. This ordering makes the scale visible to the
+  first desktop session. `TART_DISPLAY_SCALE=<integer>` forces the host value;
+  invalid overrides warn and use 1. Scale-probe failures also yield 1, and a
+  guest-application failure warns but does not block the VM or desktop.
+- **The scale applier owns only each DE's scale keys.** KDE writes
+  `forceFontDPI`, `ScaleFactor`, and `ScreenScaleFactors`; GNOME writes its
+  interface window scale while keeping the independent text multiplier at its
+  default; XFCE writes its GDK window scale and Xft DPI. Reapplying a different
+  factor replaces those values, and factor 1 removes/resets them so a VM moved
+  to a non-HiDPI host does not retain an earlier scale.
+
+Scale detection is intentionally window-only. VNC has no host window whose
+device-pixel framebuffer inherits a backing scale, so its 1920×1080/RandR
+surface is left under the VNC client's control.
 
 ## Network posture — unchanged, on purpose
 
