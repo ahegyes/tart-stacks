@@ -39,12 +39,9 @@ assert_order() { # label earlier-needle later-needle — both in $CALLS, in that
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
-# tart-up deletes the stop mark under $HOME. Sandboxing HOME rather than just
-# TART_STATE_DIR contains every $HOME-derived path at once — the state dir, the
-# config dir, and anything added later — so a real `tart-down` mark on the
-# developer's machine cannot be destroyed by running the suite.
+# HOME is sandboxed so nothing the commands derive from it can reach the
+# developer's real dotfiles when the suite runs.
 SANDBOX_HOME="$WORK/home"; mkdir -p "$SANDBOX_HOME"
-MARKS="$SANDBOX_HOME/.local/state/tart-stacks/stopped"
 CALLS="$WORK/calls"; export CALLS
 ERR="$WORK/stderr"
 EMPTY="$WORK/empty"; : > "$EMPTY"
@@ -206,29 +203,6 @@ assert_contains "unknown prefixed VM → diagnostic names the stored form" "$(ca
 assert_absent   "unknown prefixed VM → claims no second form" "$(cat "$ERR")" "also tried"
 assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <distro>"
 assert_eq       "unknown prefixed VM → one list query" 1 "$(grep -c 'tart list' "$CALLS")"
-
-# ── the deliberate-stop mark ────────────────────────────────────────────────
-# Being asked to bring a VM up retracts an operator's stop. Clearing only on the
-# `stopped` branch left a marked-but-running VM holding its mark forever, with
-# supervision silently declining to restart it and nothing to show for it.
-mkdir -p "$MARKS"
-
-: > "$MARKS/app-a"
-runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
-assert_rc      "stopped + marked → exit 0" 0
-assert_no_path "stopped + marked → mark cleared" "$MARKS/app-a"
-
-: > "$MARKS/app-a"
-runup running app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
-assert_rc      "running + marked → exit 0" 0
-assert_no_path "running + marked → mark cleared" "$MARKS/app-a"
-
-# Supervision restarts crashes; it never retracts intent it did not record.
-: > "$MARKS/app-a"
-TART_UP_KEEP_STOP_MARK=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
-assert_rc   "keep-mark set → exit 0" 0
-assert_path "keep-mark set → mark survives" "$MARKS/app-a"
-rm -f "$MARKS/app-a"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
 # with tart's own stderr surfaced, no stripped-name retry, and no VM start.

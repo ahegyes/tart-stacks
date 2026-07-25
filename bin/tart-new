@@ -164,9 +164,8 @@ img="$(image_for_stack "$STACK" "$DISTRO" "$DE")"
 # 4. No clobbering an existing VM. Sits ahead of the build offer so a 15-20 min
 #    build can never end in "already exists".
 if vm_exists "$NAME"; then
-  # tart-rm, not raw `tart delete`: it drops supervision, scrubs the host-key
-  # pin and clears the stop mark. Recommending the raw command is what strands
-  # the name-scoped state this script then has to scrub below.
+  # tart-rm, not raw `tart delete`: it stops the VM and scrubs the host-key pin
+  # this script would otherwise have to work around.
   echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart-rm $NAME' first." >&2
   exit 1
 fi
@@ -200,10 +199,6 @@ fi
 # can't strand it.
 ssh-keygen -R "tart-$NAME" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
-# Same stale-by-definition reasoning for the deliberate-stop mark: the collision
-# gate proved this name free, so any surviving mark belongs to a VM that no
-# longer exists — and would tell a supervisor to hold this brand-new one down.
-tart_clear_stop_mark "$NAME"
 
 # 6. Clone, then fold in resources if any were given.
 tart clone "$img" "$NAME"

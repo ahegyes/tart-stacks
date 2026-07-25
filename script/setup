@@ -13,10 +13,8 @@
 #
 # `--uninstall` (also: `make uninstall`) is the inverse. It removes only
 # what verifiably points into this repo, strips only the exact Include
-# block setup writes, keeps every per-VM config file (forwards, mounts, gui,
-# ssh-agents, netpolicy — they carry your opt-ins), and refuses outright
-# while any tart-supervise LaunchAgent exists, because those agents
-# restart VMs through the very tools being removed.
+# block setup writes, and keeps every per-VM config file (forwards, mounts,
+# gui, ssh-agents, netpolicy — they carry your opt-ins).
 #
 # Override targets via env (non-default host layouts, or to sandbox a run):
 #   TART_LOCAL_BIN         command symlink dir       (default ~/.local/bin)
@@ -25,7 +23,6 @@
 #   TART_FORWARDS          per-VM forwards to scaffold (default ~/.config/tart-stacks/forwards)
 #   TART_MOUNTS            per-VM dir mounts to scaffold (default ~/.config/tart-stacks/mounts)
 #   TART_SSH_CONFIG_D      generated ssh config        (default ~/.ssh/config.d/tart-vms)
-#   TART_LAUNCHAGENTS_DIR  LaunchAgent dir the uninstall gate scans (default ~/Library/LaunchAgents)
 
 set -euo pipefail
 
@@ -54,7 +51,6 @@ MOUNTS=$(tart_config_path mounts)
 # tart-ssh-sync's output path (same default and env seam as that script): the
 # install's closing sync writes it, the uninstall removes it.
 GENERATED="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
-LAUNCHAGENTS_DIR="${TART_LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
 
 # The Include block, line by line. Install writes exactly these three lines
 # plus a blank separator; uninstall removes exactly that four-line shape and
@@ -64,7 +60,7 @@ MARKER_LINE="# Added by tart-stacks. Run 'make setup' to restore this line if re
 KEEP_ABOVE_LINE='# Keep it above any Host block so per-VM settings beat a catch-all Host *.'
 
 # Commands symlinked onto PATH — install and uninstall iterate the same list.
-COMMANDS=(tart-up tart-ssh-sync tart-new tart-rm tart-down tart-supervise)
+COMMANDS=(tart-up tart-ssh-sync tart-new tart-rm tart-down)
 
 info() { printf '  %s\n' "$*"; }
 warn() { printf '  WARNING: %s\n' "$*" >&2; }
@@ -115,24 +111,6 @@ if [ "$MODE" = "uninstall" ]; then
   echo "setup: uninstalling host tools (repo at $REPO_DIR)"
   summary=""
   add_summary() { summary="${summary:+$summary, }$1"; }
-
-  # Gate before removing ANYTHING: a tart-supervise LaunchAgent restarts its
-  # VM through tart-up/tart-supervise, so pulling the tools out from under a
-  # live agent breaks it mid-flight.
-  supervised=()
-  for plist in "$LAUNCHAGENTS_DIR"/com.tart-stacks.supervise.*.plist; do
-    [ -e "$plist" ] || continue
-    label="${plist##*/}"; label="${label%.plist}"
-    supervised+=("${label#com.tart-stacks.supervise.}")
-  done
-  if [ "${#supervised[@]}" -gt 0 ]; then
-    warn "supervised VM LaunchAgent(s) found in $LAUNCHAGENTS_DIR — they restart VMs through the tools this would remove."
-    for vm in "${supervised[@]}"; do
-      warn "  drop supervision first:  tart-supervise --uninstall $vm"
-    done
-    warn "nothing was removed."
-    exit 1
-  fi
 
   # 1. Command symlinks — removed only when one still resolves into this
   #    repo's bin/; a same-named file from anywhere else is not ours to touch.
@@ -314,7 +292,7 @@ if [ ! -e "$HOME/.ssh/tart-vm.pub" ]; then
   warn "no ~/.ssh/tart-vm.pub — every stack build bakes that key in and the generated SSH config pins it. Create + link it first: README, Setup step 1."
 fi
 if ! command -v jq >/dev/null 2>&1; then
-  warn "jq not found — tart-new, tart-up, tart-rm, tart-down and tart-supervise all require it. Install: brew install jq"
+  warn "jq not found — tart-new, tart-up, tart-rm and tart-down all require it. Install: brew install jq"
 fi
 
 # 7. Generate the SSH config the Include points at. OpenSSH silently ignores

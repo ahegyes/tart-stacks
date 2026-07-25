@@ -420,15 +420,6 @@ GUI_MODE="${GUI_OVERRIDE:-$GUI_FILE_MODE}"
 # `tart run` would miss host-key regen until its next tart-up-driven start.)
 STARTED=0
 
-# Being asked to bring this VM up is what retracts an operator's deliberate
-# stop — the invocation, not whichever branch the VM's state happens to take.
-# Clearing only on the `stopped` branch left a marked-but-running VM (started
-# out of band, or left running by a tart-down whose `tart stop` failed) holding
-# a mark forever, silently disabling supervision with nothing to show for it.
-# TART_UP_KEEP_STOP_MARK is set by tart-supervise: supervision restarts crashes
-# and must never retract intent it did not record.
-[ "${TART_UP_KEEP_STOP_MARK:-}" = 1 ] || tart_clear_stop_mark "$VM"
-
 if [ "$STATE" = "running" ]; then
   # A Tart crash can leave the listed state wedged at "running" with no live
   # `tart run` process — polling :22 against that ghost burns the full timeout
@@ -437,7 +428,7 @@ if [ "$STATE" = "running" ]; then
   # a nonstandard `tart run` invocation, so stopping is the operator's call.
   if ! tart_vm_alive "$VM"; then
     echo "$prog: '$VM' is listed as running, but no 'tart run $VM' process exists — likely crashed or wedged (or started by a nonstandard 'tart run' invocation)." >&2
-    echo "$prog: run 'tart stop $VM' then retry ssh, or 'tart-supervise --install $VM' to auto-recover crashes." >&2
+    echo "$prog: run 'tart stop $VM' then retry ssh." >&2
     exit 1
   fi
   if [ "${#DIR_ARGS[@]}" -gt 0 ]; then

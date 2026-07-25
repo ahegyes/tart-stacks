@@ -2,12 +2,12 @@
 # Characterization tests for script/setup — the install and its --uninstall
 # inverse. Everything is sandboxed: HOME and every TART_* seam point into a
 # tmpdir and `tart` is a PATH mock, so no run can touch the real ~/.ssh,
-# ~/.local/bin, LaunchAgents, or the live VMs on the machine running the
+# ~/.local/bin or the live VMs on the machine running the
 # suite. Covers the install surface (symlinks, completion, Include placement,
 # scaffolds, the closing tart-ssh-sync run, the pubkey preflight warning,
 # idempotent re-run), the tart-less install (warned, exit 0, nothing
 # generated), the catch-all ordering warning, the uninstall inverse
-# (supervised-VM gate, ownership-checked removal, byte-preserved user config,
+# (ownership-checked removal, byte-preserved user config,
 # unmarked-Include refusal, kept config files), and argument handling. Plain
 # bash, no framework. Run via script/test or directly.
 set -uo pipefail
@@ -195,19 +195,6 @@ run_setup --uninstall
 assert_rc "drifted block → uninstall exit 0" 0
 assert_contains "drifted block → warned about the drift" "$(cat "$ERR")" "drifted"
 assert_same "drifted block → ssh config untouched" "$SSHCFG" "$WORK/s5b.orig"
-
-# uninstall: supervised-VM gate refuses before removing anything
-sandbox s6
-run_setup
-printf 'seed\n' > "$LA/com.tart-stacks.supervise.app-a.plist"
-run_setup --uninstall
-assert_rc "supervised gate → refuses with exit 1" 1
-assert_contains "supervised gate → names the exact unsupervise command" "$(cat "$ERR")" "tart-supervise --uninstall app-a"
-assert_contains "supervised gate → states nothing was removed" "$(cat "$ERR")" "nothing was removed"
-assert_link "supervised gate → symlinks untouched" "$LB/tart-up" "$REPO/bin/tart-up"
-assert_link "supervised gate → completion untouched" "$COMP/_tart-new" "$REPO/completions/_tart-new"
-assert_path "supervised gate → generated config untouched" "$GEN"
-assert_eq "supervised gate → Include block untouched" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 
 # argument handling
 run_setup --help

@@ -22,11 +22,10 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 ├── README.md  AGENTS.md  CLAUDE.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── bin/
 │   ├── tart-new                      # Creates a project VM by cloning a stack base image (GUI flavors via the optional <de> arg), with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size`/`--display` pass-through
-│   ├── tart-rm                       # Deletes a project VM with the teardown `tart delete` lacks (base-image refusal, supervision drop, stop, host-key-pin scrub)
-│   ├── tart-down                     # Stops a VM and keeps it stopped — records the deliberate-stop mark tart-supervise honours (see "Keep a VM alive across crashes")
+│   ├── tart-rm                       # Deletes a project VM with the teardown `tart delete` lacks (base-image refusal, stop, host-key-pin scrub)
+│   ├── tart-down                     # Stops a VM: resolves the `tart-` alias form and refuses base images, then `tart stop`
 │   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start), `ssh -G`-validated before it goes live
 │   ├── tart-up                       # Starts a stopped VM (+ mounts + net-policy) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
-│   ├── tart-supervise                # Keeps a VM running across `tart run` crashes via a per-VM LaunchAgent (see "Keep a VM alive across crashes")
 │   └── lib/                          # config.sh + common.sh — sourced helpers (config paths, VM state/liveness, name-pattern matching); never on PATH
 ├── script/
 │   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards + mounts scaffold, closing tart-ssh-sync run; --uninstall (= `make uninstall`) is the inverse
@@ -36,10 +35,8 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   └── _tart-new                     # zsh completion for tart-new; installed by make setup
 ├── test/
 │   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
-│   ├── tart-rm.sh                    # Characterization tests for tart-rm (refusal gates, supervision-drop → stop → delete ordering, known-hosts scrub)
-│   ├── tart-down.sh                  # Characterization tests for tart-down (mark/stop ordering, failure paths, base-image refusal)
+│   ├── tart-rm.sh                    # Characterization tests for tart-rm (refusal gates, stop → delete ordering, known-hosts scrub)
 │   ├── tart-up.sh                    # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc + ps)
-│   ├── tart-supervise.sh             # Characterization tests for tart-supervise (--once cycle, install gates, uninstall semantics, self-retirement, --status columns)
 │   ├── setup.sh                      # Characterization tests for script/setup — install + --uninstall, fully sandboxed
 │   ├── smoke.sh                      # Characterization tests for script/smoke (stage ordering, teardown trap; mocked — no real VM)
 │   ├── kde-panel.sh                  # Behavioral tests for the KDE panel launcher pinning (synthetic Plasma 5/6 templates)
@@ -80,7 +77,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 - **8 GB RAM minimum**; 16 GB+ recommended for multiple concurrent VMs.
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
-- [jq](https://jqlang.org/): `brew install jq` — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`, `tart-supervise`) parse `tart list --format json` with it. macOS 15+ ships a system jq, but the floor here is macOS 13, so install it explicitly.
+- [jq](https://jqlang.org/): `brew install jq` — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`) parse `tart list --format json` with it. macOS 15+ ships a system jq, but the floor here is macOS 13, so install it explicitly.
 - **OpenSSH 10.0 or later** (`ssh -V`) — the generated SSH config's auto-start hook uses `Match sessiontype`, which older ssh rejects as a fatal parse error. Current macOS updates ship 10.x; `tart-ssh-sync` checks and refuses to write the config rather than break your ssh.
 
 ## Setup
@@ -124,9 +121,9 @@ Two caveats: **(1)** "no auth while unlocked" is *no prompt*, not *no protection
 make setup
 ```
 
-Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm`, `tart-down` and `tart-supervise` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm` and `tart-down` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
 
-`make uninstall` is the inverse: it removes only what verifiably points into this repo (the command symlinks, the completion, the exact Include block setup wrote, the generated config), keeps every per-VM config file (`forwards`, `mounts`, `gui`, `ssh-agents`, `netpolicy` — they carry your opt-ins), and refuses to run while any `tart-supervise` LaunchAgent exists, since those agents restart VMs through the very tools being removed.
+`make uninstall` is the inverse: it removes only what verifiably points into this repo (the command symlinks, the completion, the exact Include block setup wrote, the generated config), keeps every per-VM config file (`forwards`, `mounts`, `gui`, `ssh-agents`, `netpolicy` — they carry your opt-ins).
 
 There's no SSH wrapper to remember — you connect with plain **`ssh tart-<name>`**. The generated config (next section) resolves the VM's current IP at connect time (Tart's DHCP-assigned IPs aren't stable across clone/delete cycles) and, on an *interactive* login only, auto-starts the VM if it's stopped. So `ssh tart-app-a` to a powered-off VM just works: it boots, waits for SSH, and drops you in — with a Touch ID prompt only if the key is in require-authentication mode. To pre-warm a VM without opening a shell, run `tart-up <name>` directly.
 
@@ -294,87 +291,40 @@ tart-new app-a php fedora
 # fresh, identical, ready in seconds (Tart uses copy-on-write).
 ```
 
-`tart-rm <name>` is the teardown mirror of `tart-new`'s guarded create. Under the hood it's a `tart stop && tart delete` with the gates that command pair lacks: it accepts the bare or `tart-`-prefixed name, refuses stack base images (losing one costs a 15-20 min rebuild), drops any `tart-supervise` LaunchAgent *first* (a live supervisor would resurrect the VM mid-teardown), stops a running VM, deletes it, and scrubs the VM's host-key pin from `~/.ssh/known_hosts.tart` so a future VM reusing the name re-pins fresh instead of tripping `accept-new`.
+`tart-rm <name>` is the teardown mirror of `tart-new`'s guarded create. Under the hood it's a `tart stop && tart delete` with the gates that command pair lacks: it accepts the bare or `tart-`-prefixed name, refuses stack base images (losing one costs a 15-20 min rebuild), stops a running VM, deletes it, and scrubs the VM's host-key pin from `~/.ssh/known_hosts.tart` so a future VM reusing the name re-pins fresh instead of tripping `accept-new`.
 
-### Keep a VM alive across crashes
+### When a VM crashes
 
 A `tart run` process can die abruptly — for example when Apple's
 Virtualization.framework traps on a guest-vsock connect and aborts the whole
-process (the failure observed on this host). When it does, every SSH session to that VM drops at
-once (surfacing as a "broken pipe" the next time you type), any host service the
-VM reached over a forwarded port goes with it, and Tart can leave the VM wedged
-in a "running" state that a plain restart refuses until `tart stop` clears it.
-This is an upstream bug, not something tart-stacks can fix — but the generated
-SSH config adds keepalives so a dead VM disconnects in ~45s instead of hanging,
-and `tart run`'s stderr is captured to `~/Library/Logs/tart-stacks/<name>.run.log`
-(a crash's `fixme:` line is captured there; a full report lands in
-`~/Library/Logs/DiagnosticReports/tart-*.ips`).
+process. When it does, every SSH session to that VM drops at once (surfacing as
+a "broken pipe" the next time you type), any host service the VM reached over a
+forwarded port goes with it, and Tart can leave the VM wedged in a "running"
+state that a plain restart refuses until `tart stop` clears it.
 
-To recover automatically, install a per-VM supervisor:
-
-```sh
-tart-supervise --install <name>    # LaunchAgent: restart the VM whenever its process dies
-tart-supervise --status            # one row per supervised VM: agent / vm / process columns
-tart-supervise --uninstall <name>  # stop supervising — a running VM stays up
-```
-
-The supervisor watches for the `tart run <name>` process; when it is gone it runs
-`tart stop` (clearing a wedged crash state) then `tart-up` (which restarts,
-re-provisions, and waits for sshd). Restarts back off if a VM keeps dying
-quickly.
-
-A supervised VM is *kept* running, and a bare `tart stop` is undone within a few
-seconds: the supervisor sees only that the VM is no longer alive, and cannot
-tell a deliberate stop from a crash. No exit status settles it either — `tart
-run` is disowned, and a VM halted by a kernel fault often never exits at all —
-so intent is recorded rather than inferred:
+This is an upstream bug, not something tart-stacks can fix. What it does do:
+the generated SSH config adds keepalives so a dead VM disconnects in ~45s
+instead of hanging, `tart run`'s stderr is captured to
+`~/Library/Logs/tart-stacks/<name>.run.log` (a crash's `fixme:` line lands
+there; a full report goes to `~/Library/Logs/DiagnosticReports/tart-*.ips`),
+and `tart-up` recognises the wedged state and names the remedy instead of
+timing out against a ghost:
 
 ```sh
-tart-down <name>                   # stop it and keep it stopped
+ssh tart-app-a
+# tart-up: 'app-a' is listed as running, but no 'tart run app-a' process
+#          exists — likely crashed or wedged.
+# tart-up: run 'tart stop app-a' then retry ssh.
+
+tart stop app-a && ssh tart-app-a    # back up
 ```
 
-`tart-down` writes a deliberate-stop mark before stopping, and the supervisor
-declines to restart a marked VM while idling in place — logging why, so a VM
-that does not come back explains itself. `tart-supervise --status` shows the
-mark in a `stop:` column, since a deliberately stopped VM otherwise reads
-exactly like a supervisor that is failing to restart one. Nothing needs re-arming: `tart-up`,
-including the `ssh tart-<name>` auto-start, clears the mark whenever it starts
-the VM, and supervision resumes.
-
-To stop supervising altogether, `--uninstall` removes supervision *only*: the
-LaunchAgent is unloaded without touching the VM (launchd's
-`AbandonProcessGroup`, so the `tart run` the agent spawned isn't killed with
-it), and a running VM stays up. To delete a VM, `tart-rm <name>` drops
-supervision itself beforehand.
-
-The reverse order is safe too — delete a VM out from under its supervisor and
-the agent retires itself: after a few consecutive `tart list` checks confirm
-the VM is gone, the supervisor removes its own LaunchAgent and exits.
-
-`--status` prints one row per supervised VM:
-
-- **agent state** — `loaded` / `installed (not loaded)`;
-- **VM presence** — the VM's `tart list` state (`vm:MISSING` marks a deleted
-  VM, `vm:?` an unreadable list);
-- **process liveness** — whether the `tart run` process is alive (`proc:alive`
-  / `proc:-`).
-
-Each supervisor's log is `~/Library/Logs/tart-stacks/supervise.<name>.log`.
-Run it in the foreground to watch it first: `tart-supervise <name>`. The
-LaunchAgent runs with default config paths (`~/.config/tart-stacks`); if you
-relocate config via `TART_STACKS_CONFIG_DIR`, set it in the generated plist
-too.
-
-> **First time:** the LaunchAgent runs `tart run` in your GUI login session.
-> Smoke-test one VM — install it, kill that VM's `tart run`, and confirm the
-> supervisor log shows it come back — before relying on it. `--uninstall`
-> removes the agent cleanly (the VM keeps running).
-
-> **Fewer Touch ID prompts:** if you created the `tart-vm` key in
-> *require-authentication* mode, every login prompts — and frequent restarts mean
-> frequent prompts. To drop the friction, recreate it as *no-auth-while-unlocked*;
-> see the **Touch ID, or not?** trade-off in [Setup](#setup) step 1 (switching
-> modes means a new key, not a toggle).
+Recovery is deliberately manual. A VM does nothing useful without a shell or a
+VNC viewer attached to it, and the forwarded ports that make it useful are
+`RemoteForward`s riding your SSH session — they die with the session and come
+back when you reconnect, which is also what starts the VM again. Restarting a
+crashed VM in the background would therefore restore an empty machine that
+nobody is talking to.
 
 ## Adding a new stack
 

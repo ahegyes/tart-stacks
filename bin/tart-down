@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
-# tart-down — stop a Tart project VM and keep it stopped. `tart stop` on its own
-# is not enough for a supervised VM: tart-supervise sees only that the VM is no
-# longer alive, and cannot tell a deliberate stop from a crash, so it restarts
-# the VM within one poll interval. No exit status is available to tell the two
-# apart either — tart-up disowns the `tart run` process, and a VM halted by a
-# kernel fault frequently never exits at all — so intent is recorded rather than
-# inferred. The destroy-side sibling is tart-rm; this is the reversible one.
+# tart-down — stop a Tart project VM. A thin, safe wrapper over `tart stop`: it
+# accepts the SSH alias form the rest of the tooling uses, and refuses base
+# images, which are clone sources rather than VMs anyone runs.
 #
 # Usage:
 #   tart-down <vm-name>
-#
-# Nothing needs re-arming afterwards: tart-up clears the mark whenever it starts
-# the VM, so an ordinary `ssh tart-<vm>` or `tart-up <vm>` resumes supervision.
 set -euo pipefail
 
 prog="${0##*/}"
@@ -33,9 +26,7 @@ STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
 DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
 
-usage() {
-  echo "usage: $prog <vm-name>" >&2
-}
+usage() { echo "usage: $prog <vm-name>" >&2; }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 [ $# -eq 1 ] || { usage; exit 64; }
@@ -43,38 +34,26 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
 tart_need_cmd jq   "Install: brew install jq"
 
-VM="$1"
+VM=$(tart_resolve_vm "$1") || exit 1
 
-VM=$(tart_resolve_vm "$VM") || exit 1
-
-# Base images are clone sources that are never run as dev VMs, so stopping one
-# is always a mistaken name rather than an intent worth recording.
 if tart_is_base_image "$VM" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to stop it." >&2
   exit 1
 fi
 
-# The mark precedes the stop, and that order is the whole point: a supervisor
-# polls on an interval, so marking afterwards leaves a window in which it sees a
-# dead VM with no recorded intent and restarts it. Marking a VM that is already
-# down narrows that window but cannot close it — the supervisor reads the mark
-# once per recovery attempt, so one landing mid-attempt is still honored only
-# from its next poll (tart-supervise re-reads it before recovering, which is
-# what keeps the loss to a spurious start rather than a discarded mark).
-tart_mark_stopped "$VM"
-
+# `tart stop` fails on an already-stopped VM, which is the requested end state:
+# report it and succeed rather than making the caller distinguish the two.
 if ! tart stop "$VM" 2>/dev/null; then
-  # A VM that is already stopped makes `tart stop` fail; the mark is still
-  # correct and must stand, so this is not an error. A genuine failure to stop a
-  # running VM is, and is reported by the state re-read below.
   STATE=$(tart_vm_state "$VM") || {
     echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
     exit 1
   }
   if [ "$STATE" = "running" ]; then
-    echo "$prog: '$VM' is still running — 'tart stop' failed; the stop mark stands, so supervision will not restart it." >&2
+    echo "$prog: '$VM' is still running — 'tart stop' failed." >&2
     exit 1
   fi
+  echo "$prog: '$VM' was already stopped." >&2
+  exit 0
 fi
 
-echo "$prog: '$VM' stopped and marked — supervision will not restart it. Starting it (ssh tart-${VM#tart-}, or tart-up $VM) clears the mark." >&2
+echo "$prog: '$VM' stopped." >&2

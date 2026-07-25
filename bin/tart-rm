@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # tart-rm — delete a Tart project VM, with the teardown `tart delete` lacks:
-# resolves the bare or `tart-`-prefixed name, refuses stack base images, drops
-# any supervision LaunchAgent before touching the VM (a live supervisor would
-# resurrect it mid-teardown), stops a running VM before the delete, and scrubs
-# the VM's host-key pin from ~/.ssh/known_hosts.tart — the destroy-side mirror
-# of tart-new's guarded create.
+# resolves the bare or `tart-`-prefixed name, refuses stack base images, stops a
+# running VM before the delete, and scrubs the VM's host-key pin from
+# ~/.ssh/known_hosts.tart — the destroy-side mirror of tart-new's guarded create.
 #
 # Usage:
 #   tart-rm <vm-name>
@@ -16,8 +14,7 @@ set -euo pipefail
 prog="${0##*/}"
 
 # Resolve this script's real dir (following the ~/.local/bin symlink that
-# script/setup installs) to source the shared bin/lib helpers — and to invoke
-# the sibling tart-supervise below by real path rather than PATH lookup.
+# script/setup installs) to source the shared bin/lib helpers.
 src="${BASH_SOURCE[0]}"
 while [ -L "$src" ]; do
   dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
@@ -38,9 +35,6 @@ REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
 DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
-# Where tart-supervise keeps its per-VM LaunchAgent plists; the file's
-# presence is the signal that this VM is supervised.
-LAUNCHAGENTS_DIR="${TART_LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
 
 usage() {
   echo "usage: $prog <vm-name>" >&2
@@ -68,26 +62,6 @@ if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FIL
   exit 1
 fi
 
-# Drop supervision FIRST: a live supervisor restarts its VM within one poll,
-# so left in place it would resurrect the VM between the stop and the delete
-# below. The sibling script owns all supervision logic — uninstall goes
-# through it, by real path so teardown works even where setup's PATH symlinks
-# don't. Its uninstall leaves a running VM running (the stop below handles
-# that), and a failed uninstall aborts the whole teardown (set -e): deleting
-# out from under a live supervisor is exactly the race this ordering prevents.
-SUPERVISED=0
-if [ -e "$LAUNCHAGENTS_DIR/$(tart_supervise_label "$VM").plist" ]; then
-  "$SCRIPT_DIR/tart-supervise" --uninstall "$VM"
-  SUPERVISED=1
-fi
-
-# The supervision drop can race the supervisor's own restart cycle — it may
-# have started or stopped the VM after the lookup above. Re-resolve the state
-# it could have changed under us before deciding whether to stop.
-if [ "$SUPERVISED" -eq 1 ]; then
-  STATE=$(tart_vm_state "$VM") || list_failed
-fi
-
 if [ "$STATE" = "running" ]; then
   if tart_vm_alive "$VM"; then
     # Unmasked on purpose: a failed stop of a LIVE VM must abort before the
@@ -107,13 +81,4 @@ tart delete "$VM"
 # future VM reusing this name re-pins fresh instead of tripping accept-new.
 ssh-keygen -R "tart-$VM" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
-# Same reasoning for the deliberate-stop mark: names are reused, and a mark
-# outliving its VM would tell a supervisor to leave the NEXT VM of that name
-# down.
-tart_clear_stop_mark "$VM"
-
-if [ "$SUPERVISED" -eq 1 ]; then
-  echo "$prog: removed '$VM' — supervision dropped, VM deleted, host-key pin cleared" >&2
-else
-  echo "$prog: removed '$VM' — VM deleted, host-key pin cleared" >&2
-fi
+echo "$prog: removed '$VM' — VM deleted, host-key pin cleared" >&2

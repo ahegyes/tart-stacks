@@ -1,7 +1,6 @@
 # shellcheck shell=bash
-# common.sh — leaf helpers shared by tart-up / tart-new / tart-ssh-sync /
-# tart-supervise. Sourced, never on PATH / executable; bash-3.2-safe (macOS
-# system bash). Pulls in the config-path resolver so a script sourcing this
+# common.sh — leaf helpers shared by the bin/ commands. Sourced, never on PATH
+# / executable; bash-3.2-safe (macOS system bash). Pulls in the config-path resolver so a script sourcing this
 # gets both. Helpers here take everything as arguments; the config-line
 # parsers read script globals and stay in their owning scripts.
 
@@ -39,47 +38,6 @@ tart_resolve_vm() {
     return 1
   }
   printf '%s' "$vm"
-}
-
-# tart_supervise_label <vm> — the per-VM supervision LaunchAgent label.
-# tart-supervise owns the agent lifecycle; tart-rm probes the same label to
-# drop supervision before deleting a VM.
-tart_supervise_label() { printf 'com.tart-stacks.supervise.%s' "$1"; }
-
-# Host-side runtime state, deliberately NOT under tart_config_dir: the files
-# there are a format contract with external tooling, while this is ours alone.
-tart_state_dir() { printf '%s' "${TART_STATE_DIR:-$HOME/.local/state/tart-stacks}"; }
-
-# tart_stop_mark <vm> — the marker recording that an operator stopped <vm> on
-# purpose. Supervision cannot infer this: the `tart run` process is disowned
-# (tart-up), so no exit status survives to distinguish a deliberate stop from a
-# crash, and a halted kernel often never exits at all. Intent is therefore
-# recorded rather than deduced. tart-down writes it, tart-up clears it on a
-# start, and tart-supervise declines to restart while it exists.
-tart_stop_mark() { printf '%s/stopped/%s' "$(tart_state_dir)" "$1"; }
-
-# tart_stop_marked <vm> — 0 iff <vm> is marked as deliberately stopped.
-tart_stop_marked() { [ -e "$(tart_stop_mark "$1")" ]; }
-
-# tart_mark_stopped <vm> — record the deliberate stop. Hard failure by design:
-# the caller stops the VM immediately after, and a stop whose mark never landed
-# is precisely what supervision would undo. Failing here leaves the VM running,
-# which is the safe half of the pair.
-tart_mark_stopped() {
-  local mark; mark=$(tart_stop_mark "$1")
-  mkdir -p "${mark%/*}" 2>/dev/null && : > "$mark" 2>/dev/null && return 0
-  echo "${prog:-${0##*/}}: cannot record the stop mark at '$mark' — refusing to stop '$1', since supervision would restart it." >&2
-  exit 1
-}
-
-# tart_clear_stop_mark <vm> — retract a deliberate stop. Best-effort by design:
-# a failure here must never stop a VM from starting. It is still reported, since
-# `rm -f` succeeds on an absent file — so a failure is real, and it leaves
-# supervision declining to restart a VM the operator just asked for.
-tart_clear_stop_mark() {
-  local mark; mark=$(tart_stop_mark "$1")
-  rm -f "$mark" 2>/dev/null && return 0
-  echo "${prog:-${0##*/}}: warning: could not clear the stop mark at '$mark'; supervision will not restart '$1'." >&2
 }
 
 # tart_valid_vm_name <name> — 0 iff the name is a token every consumer can
@@ -178,14 +136,13 @@ tart_resolve_pattern() {
 
 # tart_vm_alive <vm> — 0 if a `tart run <vm>` process exists. Matches <vm> as the
 # argument immediately after `tart run` — the shape tart-up always launches
-# (`tart run <vm> --no-graphics ...`). Anchoring to that position, rather than
-# scanning every argument, is what stops a token inside a LATER argument (e.g.
-# some other VM's `--dir=/path with <vm> in it`) from being mistaken for this VM
-# running. The process — not `tart list` state — is the signal: a crash removes
-# the process but can leave the listed state wedged at "running". (A manual
-# option-first `tart run --opt <vm>` reads as down — the supervisor then
-# restarts it into the canonical shape — fine, since tart-up is the only
-# launcher in play.)
+# (`tart run <vm> …`). Anchoring to that position, rather than scanning every
+# argument, is what stops a token inside a LATER argument (e.g. some other VM's
+# `--dir=/path with <vm> in it`) from being mistaken for this VM running. The
+# process — not `tart list` state — is the signal: a crash removes the process
+# but can leave the listed state wedged at "running", which is what tart-up
+# fail-fasts on. (A hand-run option-first `tart run --opt <vm>` reads as down;
+# tart-up is the only launcher in play, so that shape does not occur here.)
 tart_vm_alive() {
   ps -axo args= 2>/dev/null | awk -v vm="$1" '
     {

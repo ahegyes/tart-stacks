@@ -209,15 +209,6 @@ cat > "$TART_LIST_JSON" <<'JSON'
  {"Name":"fedora-jvm","Source":"oci"}]
 JSON
 
-# A mark surviving a raw `tart delete` would hold a brand-new VM of the same
-# name down. The collision gate has already proven the name free, so any mark
-# still on disk belongs to a VM that no longer exists.
-NEW_MARKS="$WORK/home/.local/state/tart-stacks/stopped"
-mkdir -p "$NEW_MARKS"; : > "$NEW_MARKS/fresh"
-run_new fresh php fedora
-assert_eq      "create over a stale mark exits 0" 0 "$rc"
-assert_no_path "create scrubs the stale stop mark" "$NEW_MARKS/fresh"
-
 # --display parses in both forms and is validated before anything is cloned:
 # `tart set` runs after `tart clone`, so a bad geometry would strand a VM.
 cat > "$TART_LIST_JSON" <<'JSON'

@@ -79,13 +79,13 @@ for factor 1.
 line in `~/.config/tart-stacks/gui` (`<bare-vm-name> headless|vnc|window`).
 The file fails closed on malformed or duplicate entries; an absent line means
 headless. Every `tart-up` path honors it, including the `ssh tart-<vm>`
-auto-start and `tart-supervise` restarts. An engine such as workbench renders
+auto-start. An engine such as workbench renders
 this file from its own config.
 
 **Window mode needs a windowed launch.** `tart-up --gui=window` omits
 `--no-graphics`, then drives the in-guest activation. Closing the VM window
 kills the VM. Opening one also needs a GUI login session, so a
-`tart-supervise` daemon context may be unable to open it; stop the VM and start
+daemon context may be unable to open it; stop the VM and start
 it from a terminal to recover a visible window. VNC has no windowed-launch
 dependency and stays behind the loopback-only SSH tunnel.
 
