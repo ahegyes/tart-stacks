@@ -90,6 +90,17 @@ gui_agent_packages() {
   esac
 }
 
+# gui_browser_packages — the conventional browser for this package family,
+# independent of the desktop. Debian publishes Firefox as firefox-esr, while
+# Ubuntu's firefox deb is a snap transition stub and firefox-esr is absent;
+# gui.sh therefore sends this row through the optional package path.
+gui_browser_packages() {
+  case "$_DISTRO_FAMILY" in
+    dnf) echo "firefox" ;;
+    apt) echo "firefox-esr" ;;
+  esac
+}
+
 # gui_scale_packages <de> — runtime needed by the pre-session scale applier.
 # KDE and GNOME already carry their native config tools with the desktop;
 # XFCE's XML must be changed structurally while xfconfd is not running.

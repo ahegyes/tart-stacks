@@ -57,6 +57,8 @@ assert_eq "dnf/xfce apps" "Thunar mousepad xarchiver ristretto xfce4-screenshoot
 assert_eq "apt/xfce apps" "thunar mousepad xarchiver ristretto xfce4-screenshooter" "$(with_family apt gui_app_packages xfce)"
 assert_eq "dnf agent"     "spice-vdagent"                                           "$(with_family dnf gui_agent_packages)"
 assert_eq "apt agent"     "spice-vdagent"                                           "$(with_family apt gui_agent_packages)"
+assert_eq "dnf browser"   "firefox"                                                 "$(with_family dnf gui_browser_packages)"
+assert_eq "apt browser"   "firefox-esr"                                             "$(with_family apt gui_browser_packages)"
 
 echo "gui-lib — gui_require_de gate:"
 with_family dnf gui_require_de kde; rc=$?

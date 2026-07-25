@@ -35,6 +35,17 @@ Package names for these diverge across families in two places that read like
 typos but are not: Fedora keeps Thunar's upstream capitalization (`Thunar`), and
 the apt family namespaces Spectacle as `kde-spectacle`.
 
+A conventional browser is a DE-independent, optional capability: Firefox on the
+dnf family and Firefox ESR on the apt family where the distro publishes it.
+Ubuntu's `firefox` deb is a snap transition stub and `firefox-esr` is absent, so
+Ubuntu GUI images record `firefox-esr` under `skipped-optional-packages` in the
+manifest instead of pulling snapd or failing the build.
+
+KDE's fresh-session panel pins the installed browser when present, then Dolphin,
+Konsole, and Kate. Discover is deliberately absent: no software-center package
+is installed, and its package operations are incompatible with confined guest
+egress.
+
 `spice-vdagent` is installed on every GUI image. It is what host↔guest clipboard
 sharing depends on in a native VM window (`tart run --help` names the package).
 Its udev rule starts the daemon only once the host exposes the channel device, so
