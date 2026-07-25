@@ -201,20 +201,41 @@ desktop that can't start.
 
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
-| `kde` (default) | ✅ image verified | ⚠️ | ❌ no `plasma-x11-session` package — see below | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
-| `gnome` | ✅ image verified | ⚠️ built to contract, not live-verified | ⚠️ | `gnome-xorg` / `gnome` |
-| `xfce` | ✅ image verified | ⚠️ | ⚠️ | `xfce` |
+| `kde` (default) | ✅ image verified | ✅ image verified | ❌ no `plasma-x11-session` package — see below | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
+| `gnome` | ✅ image verified | ✅ image verified | ✅ image verified | `gnome-xorg` / `gnome` |
+| `xfce` | ✅ image verified | ✅ image verified | ✅ image verified | `xfce` |
 
-✅ image verified = a full `GUI=1` image build was booted and the whole
-contract exercised (VNC session over an SSH tunnel, loopback-only bind,
-parallel SSH, egress posture). ⚠️ = package
-sets and session names were verified against the live distro repos, but no
+✅ image verified = a full `GUI=1` build was booted and its desktop contract
+asserted in a live session: the applied scale (`Xft.dpi` 96 → 192 → unscaled),
+the manifest's baked `gui:` line, the browser — or, on ubuntu, the recorded
+`firefox-esr` gap — and for KDE the panel's pinned launchers. ⚠️ = package sets
+and session names were checked against the live distro repos, but no
 end-to-end boot has been run — the build's own asserts are the gate.
 Re-verify a cell after building it the first time, and after a change to the
 contract it vouches for — a status earned before a new code path does not cover
-it. The fedora column was re-earned by building each DE and asserting the
-applied scale in a live session (`Xft.dpi` 96 → 192 → 96) and, for KDE, the
-panel's pinned launchers.
+it.
+
+The ✅ deliberately does not span the network posture above. That is not a
+per-cell property: the VNC bind is loopback-only by the session config this
+layer installs, and `tart-up` fails closed on a non-loopback listener before
+reporting the desktop ready — both covered by the test suite, on every cell at
+once, rather than re-observed per distro.
+
+A reset lands as either `Xft.dpi: 96` or no `Xft.dpi` resource at all, and both
+are correct: resetting removes the override rather than writing a 1x value.
+Which one a cell shows is a property of the distro's xfce packaging — debian
+ships a populated `xsettings` channel whose packaged default republishes 96,
+while on ubuntu that file does not exist until the applier creates it, so there
+is nothing left to republish. Assert "unscaled", never the literal 96.
+
+Known issue, ubuntu only: `xfconfd` writes its channel by truncating in place,
+with no fsync and no atomic rename, and it outlives the VNC unit it served
+(alive ~5 s after `systemctl stop`, gone by ~15 s). Powering the VM off inside
+that window leaves `xsettings.xml` at zero bytes — reproduced 3/3 on ubuntu
+(xfconf 4.18.1) and 0/3 on debian (4.20.0, which writes durably). The applier
+treats an empty file as an absent one, so scaling still works and the file is
+rebuilt on the next run; only settings made through the desktop's own tools are
+lost. Waiting ~20 s between stopping the desktop and stopping the VM avoids it.
 
 On debian/kde specifically: the preflight refuses the cell because Debian's
 `plasma-workspace` has no companion `plasma-x11-session` package to probe for.
