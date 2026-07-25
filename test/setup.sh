@@ -53,7 +53,15 @@ if ! printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/de
 fi
 
 INC='Include ~/.ssh/config.d/tart-vms'
-CMDS=(tart-up tart-ssh-sync tart-new tart-rm tart-supervise)
+# Derived, not restated: every executable in bin/ must be installed and removed
+# again. bin/lib/* is sourced, never executable, so -f -x selects exactly the
+# commands — and a new command added to bin/ but forgotten in script/setup fails
+# here instead of shipping uninstalled.
+CMDS=()
+for _c in "$REPO"/bin/*; do
+  [ -f "$_c" ] && [ -x "$_c" ] && CMDS+=("${_c##*/}")
+done
+[ "${#CMDS[@]}" -gt 0 ] || { echo "no executables found in $REPO/bin" >&2; exit 1; }
 
 # sandbox <name> — point every env seam at a fresh $WORK/<name> tree, so no
 # scenario can leak state into a later one's asserts.

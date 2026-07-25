@@ -21,6 +21,8 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
+assert_path()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
+assert_no_path()  { if [ -e "$2" ]; then bad "$1" "should not exist: $2"; else ok "$1"; fi; }
 assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
@@ -149,6 +151,14 @@ assert_contains "unknown alias → error names the stored form" "$(cat "$ERR")" 
 assert_absent   "unknown alias → claims no second form" "$(cat "$ERR")" "also tried"
 assert_absent   "unknown alias → no tart stop"   "$(cat "$CALLS")" "tart stop"
 assert_absent   "unknown alias → no tart delete" "$(cat "$CALLS")" "tart delete"
+
+# VM names get reused, so a mark outliving its VM would hold the NEXT VM of that
+# name down. Cleared alongside the host-key pin, for the same reason.
+RM_MARKS="$WORK/home/.local/state/tart-stacks/stopped"
+mkdir -p "$RM_MARKS"; : > "$RM_MARKS/app-b"
+run_rm app-b
+assert_rc      "marked VM removes cleanly" 0
+assert_no_path "delete clears the stop mark" "$RM_MARKS/app-b"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
 # with tart's own stderr surfaced, and no destructive call.

@@ -14,6 +14,8 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         expected | %s\n         actual   | %s\n' "$1" "$2" "$3"; }
 assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "contains » $3" "$2" ;; esac; }
+assert_path()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
+assert_no_path()  { if [ -e "$2" ]; then bad "$1" "should not exist: $2"; else ok "$1"; fi; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "absent » $3" "$2" ;; *) ok "$1" ;; esac; }
 check() { # label expected-rc cmd...
   local label="$1" want="$2"; shift 2
@@ -199,6 +201,42 @@ assert_contains "GUI clone sizes its display" "$(<"$TART_CALLS")" "set deskvm --
 : > "$TART_CALLS"
 run_new deskvm2 php fedora kde --display 2560x1440
 assert_contains "explicit --display overrides the GUI default" "$(<"$TART_CALLS")" "set deskvm2 --display 2560x1440 --display-refit"
+
+# Restore the shared fixture list for the cases below.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"fedora-php","Source":"local"},
+ {"Name":"app-a","Source":"local"},
+ {"Name":"fedora-jvm","Source":"oci"}]
+JSON
+
+# A mark surviving a raw `tart delete` would hold a brand-new VM of the same
+# name down. The collision gate has already proven the name free, so any mark
+# still on disk belongs to a VM that no longer exists.
+NEW_MARKS="$WORK/home/.local/state/tart-stacks/stopped"
+mkdir -p "$NEW_MARKS"; : > "$NEW_MARKS/fresh"
+run_new fresh php fedora
+assert_eq      "create over a stale mark exits 0" 0 "$rc"
+assert_no_path "create scrubs the stale stop mark" "$NEW_MARKS/fresh"
+
+# --display parses in both forms and is validated before anything is cloned:
+# `tart set` runs after `tart clone`, so a bad geometry would strand a VM.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"fedora-php","Source":"local"},
+ {"Name":"fedora-php-kde","Source":"local"}]
+JSON
+: > "$TART_CALLS"
+run_new deskvm4 php fedora kde --display=2560x1440
+assert_contains "equals-form display folds into the same tart set" "$(<"$TART_CALLS")" \
+  "set deskvm4 --display 2560x1440 --display-refit"
+
+: > "$TART_CALLS"
+run_new deskvm5 php fedora kde --display 1920X1080
+assert_eq     "capital-X geometry → exit 64" 64 "$rc"
+assert_absent "invalid geometry clones nothing" "$(<"$TART_CALLS")" "clone"
+
+: > "$TART_CALLS"
+run_new deskvm6 php fedora kde --display
+assert_eq "--display with no value → exit 64" 64 "$rc"
 
 # Restore the shared fixture list for the cases below.
 cat > "$TART_LIST_JSON" <<'JSON'

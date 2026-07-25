@@ -20,6 +20,7 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
+assert_file()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing file: $2"; fi; }
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
 
@@ -58,7 +59,9 @@ exit 0
 M
 cat > "$MOCKBIN/tart-up"   <<'M'
 #!/usr/bin/env bash
-echo "tart-up $*" >> "$CALLS"
+# Record the keep-mark env alongside argv: whether supervision retracts an
+# operator's stop is carried there, not in the arguments.
+echo "tart-up $* KEEP=${TART_UP_KEEP_STOP_MARK:-}" >> "$CALLS"
 exit 0
 M
 cat > "$MOCKBIN/launchctl" <<'M'
@@ -69,6 +72,17 @@ M
 cat > "$MOCKBIN/ps"        <<'M'
 #!/usr/bin/env bash
 # tart_vm_alive runs `ps -axo args=`; emit a `tart run` cmdline for it to scan.
+# MOCK_MARK_ON_CALL simulates `tart-down` landing mid-recovery: the mark appears
+# on the Nth liveness probe, i.e. between ensure_up's first mark read and the
+# re-read before it recovers. Nothing else can place it in that window.
+if [ -n "${MOCK_MARK_ON_CALL:-}" ] && [ -n "${MOCK_PS_COUNT_FILE:-}" ]; then
+  n=$(( $(cat "$MOCK_PS_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$MOCK_PS_COUNT_FILE"
+  if [ "$n" -eq "$MOCK_MARK_ON_CALL" ]; then
+    mkdir -p "${TART_STATE_DIR:?}/stopped"
+    : > "${TART_STATE_DIR}/stopped/${MOCK_VM:-app-a}"
+  fi
+fi
 if [ -n "${MOCK_PS_LINE:-}" ]; then
   printf '%s\n' "$MOCK_PS_LINE"
 elif [ "${MOCK_ALIVE:-0}" = "1" ]; then
@@ -97,6 +111,7 @@ run_sup() { # <MOCK_ALIVE> <args...>
   PATH="$MOCKBIN:$PATH" MOCK_ALIVE="$alive" \
     MOCK_TART_LIST_JSON="${MOCK_TART_LIST_JSON:-$LIST_DEFAULT}" \
     MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC:-0}" \
+    MOCK_MARK_ON_CALL="${MOCK_MARK_ON_CALL:-}" MOCK_PS_COUNT_FILE="$WORK/ps-count" \
     TART_LAUNCHAGENTS_DIR="$LA" TART_LOG_DIR="$LOGS" \
     TART_STATE_DIR="$WORK/state" \
     TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" TART_DESKTOPS="$WORK/desktops" \
@@ -133,6 +148,25 @@ assert_absent "marked down → no tart stop" "$calls" "tart stop"
 rm -f "$WORK/state/stopped/app-a"
 run_sup 0 --once app-a >/dev/null 2>&1
 assert_contains "mark cleared → restarts again" "$(cat "$CALLS")" "tart-up app-a"
+
+# A mark landing DURING a recovery attempt. ensure_up reads the mark, finds the
+# VM down, and only then stops and restarts it; a mark read once would be
+# recovered straight over. The ps mock plants it on the second liveness probe —
+# the re-read before recovery is the only thing that can still catch it.
+rm -f "$WORK/state/stopped/app-a" "$WORK/ps-count"
+MOCK_MARK_ON_CALL=2 run_sup 0 --once app-a >/dev/null 2>&1
+calls="$(cat "$CALLS")"
+assert_absent "mark landing mid-recovery → no tart-up" "$calls" "tart-up"
+assert_absent "mark landing mid-recovery → no tart stop" "$calls" "tart stop"
+assert_file   "mark landing mid-recovery → mark survives" "$WORK/state/stopped/app-a"
+
+# Supervision restarts crashes; it must never retract intent it did not record.
+# An unmarked recovery still passes the keep flag, since the operator's mark can
+# land between the last check and tart-up's own clear.
+rm -f "$WORK/state/stopped/app-a" "$WORK/ps-count"
+run_sup 0 --once app-a >/dev/null 2>&1
+assert_contains "recovery invokes tart-up with the keep-mark flag" "$(cat "$CALLS")" \
+  "tart-up app-a KEEP=1"
 
 # prefix form is accepted and normalized to the bare name
 run_sup 0 --once tart-app-a >/dev/null 2>&1
@@ -205,6 +239,15 @@ assert_contains "status names the supervised vm" "$(cat "$WORK/status.out")" "ap
 # One row per supervised VM: agent state, VM presence from one shared
 # `tart list`, process liveness. ghost has an agent but no VM → vm:MISSING.
 printf 'seed\n' > "$LA/com.tart-stacks.supervise.ghost.plist"
+# A deliberately-stopped VM otherwise reads exactly like a supervisor that is
+# failing to restart one: same agent, same vm:stopped, same proc:-.
+mkdir -p "$WORK/state/stopped"; : > "$WORK/state/stopped/app-a"
+out_marked="$(run_sup 0 --status app-a 2>&1)"
+assert_contains "--status names a deliberate stop" "$out_marked" "stop:marked"
+rm -f "$WORK/state/stopped/app-a"
+out_unmarked="$(run_sup 0 --status app-a 2>&1)"
+assert_contains "--status shows no mark when there is none" "$out_unmarked" "stop:-"
+
 run_sup 1 --status > "$WORK/status2.out" 2>/dev/null
 row_a=$(grep '^app-a' "$WORK/status2.out")
 row_g=$(grep '^ghost' "$WORK/status2.out")

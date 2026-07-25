@@ -22,6 +22,8 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
 assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
+assert_path()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
+assert_no_path()  { if [ -e "$2" ]; then bad "$1" "should not exist: $2"; else ok "$1"; fi; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
@@ -204,6 +206,29 @@ assert_contains "unknown prefixed VM → diagnostic names the stored form" "$(ca
 assert_absent   "unknown prefixed VM → claims no second form" "$(cat "$ERR")" "also tried"
 assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <distro>"
 assert_eq       "unknown prefixed VM → one list query" 1 "$(grep -c 'tart list' "$CALLS")"
+
+# ── the deliberate-stop mark ────────────────────────────────────────────────
+# Being asked to bring a VM up retracts an operator's stop. Clearing only on the
+# `stopped` branch left a marked-but-running VM holding its mark forever, with
+# supervision silently declining to restart it and nothing to show for it.
+mkdir -p "$MARKS"
+
+: > "$MARKS/app-a"
+runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc      "stopped + marked → exit 0" 0
+assert_no_path "stopped + marked → mark cleared" "$MARKS/app-a"
+
+: > "$MARKS/app-a"
+runup running app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc      "running + marked → exit 0" 0
+assert_no_path "running + marked → mark cleared" "$MARKS/app-a"
+
+# Supervision restarts crashes; it never retracts intent it did not record.
+: > "$MARKS/app-a"
+TART_UP_KEEP_STOP_MARK=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc   "keep-mark set → exit 0" 0
+assert_path "keep-mark set → mark survives" "$MARKS/app-a"
+rm -f "$MARKS/app-a"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
 # with tart's own stderr surfaced, no stripped-name retry, and no VM start.
