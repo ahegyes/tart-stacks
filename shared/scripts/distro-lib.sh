@@ -56,49 +56,35 @@ pkg_installed() {
   esac
 }
 
-# _pkg_unskip <pkg> — drop a skip recorded by an earlier attempt in the same
-# build. The manifest describes the image, not the history of arriving at it, so
-# a package that was unavailable on one pass and installed on a later one must
-# not still be listed as skipped. Clean rebuilds start from a fresh base and are
-# unaffected; this only matters when a build is re-run over an existing guest.
-_pkg_unskip() {
-  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" tmp
-  [ -f "$skipfile" ] || return 0
-  tmp="$skipfile.$$"
-  grep -vxF "$1" "$skipfile" > "$tmp" 2>/dev/null
-  mv -f "$tmp" "$skipfile" 2>/dev/null || rm -f "$tmp"
-}
-
 pkg_install_optional() {
-  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p
+  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p policy
   case "$_DISTRO_FAMILY" in
     dnf) dnf install -y --skip-unavailable "$@"
          for p in "$@"; do
-           if rpm -q "$p" >/dev/null 2>&1; then
-             _pkg_unskip "$p"
-           else
+           rpm -q "$p" >/dev/null 2>&1 || {
              echo "distro-lib: optional package '$p' unavailable — skipped." >&2
              echo "$p" >> "$skipfile"
-           fi
+           }
          done ;;
     apt) export DEBIAN_FRONTEND=noninteractive
          for p in "$@"; do
            # Absence and failure are different outcomes, and only absence is a
-           # droppable capability. Treating any nonzero apt-get as "unavailable"
-           # turned a mirror outage, dependency conflict or full disk into a
-           # manifest line claiming the package does not exist — provenance that
-           # lies precisely where it is most trusted. Resolve the candidate
-           # first; anything past that point is a broken build, not a skip.
-           if [ -z "$(apt-cache policy "$p" 2>/dev/null | awk '/Candidate:/ && $2 != "(none)" { print $2 }')" ]; then
+           # droppable capability: a mirror outage, dependency conflict or full
+           # disk recorded as "the archive does not carry this" is provenance
+           # that lies precisely where it is most trusted. So the query's own
+           # exit status is checked too — an apt-cache that FAILS says nothing
+           # about availability, and treating its empty output as "no candidate"
+           # would reintroduce the same lie one layer up.
+           policy=$(apt-cache policy "$p") || return 1
+           if [ -z "$(printf '%s\n' "$policy" | awk '/Candidate:/ && $2 != "(none)" { print $2 }')" ]; then
              echo "distro-lib: optional package '$p' unavailable — skipped." >&2
              echo "$p" >> "$skipfile"
              continue
            fi
            # Propagate explicitly rather than leaning on the caller's `set -e`:
-           # the whole point of resolving the candidate above is that reaching
-           # here means the archive has it, so a failure now is a broken build.
+           # reaching here means the archive has it, so a failure now is a
+           # broken build, not a capability to drop.
            apt-get install -y --no-install-recommends "$p" || return 1
-           _pkg_unskip "$p"
          done ;;
   esac
 }

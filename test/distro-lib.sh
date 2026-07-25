@@ -34,6 +34,7 @@ exit 0
 M
 cat > "$MOCKBIN/apt-cache" <<'M'
 #!/usr/bin/env bash
+[ "${MOCK_APT_CACHE_RC:-0}" -eq 0 ] || exit "$MOCK_APT_CACHE_RC"
 # `apt-cache policy <pkg>`: a package the archive does not carry reports
 # Candidate: (none), which is the only thing that counts as unavailable.
 if [ "${MOCK_APT_ABSENT:-}" = "${2:-}" ]; then
@@ -79,16 +80,23 @@ else
   bad "apt: a failing install surfaces its failure" "nonzero" "$apt_fail_rc"
 fi
 
-# A package skipped by an earlier attempt must not outlive a later success:
-# the manifest describes the image, not the history of arriving at it.
-SKIP_RERUN="$WORK/skipped-rerun"
-printf 'kept-pkg\n' > "$SKIP_RERUN"
+
+# A FAILING apt-cache says nothing about availability. Recording its empty
+# output as "unavailable" would put the same lie one layer up from the apt-get
+# failure this path exists to stop trusting.
+SKIP_QFAIL="$WORK/skipped-queryfail"
+qfail_rc=0
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
-( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_RERUN"
+( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_QFAIL" MOCK_APT_CACHE_RC=100
   # shellcheck source=/dev/null
   source "$REPO/shared/scripts/distro-lib.sh"
-  pkg_install_optional kept-pkg ) >/dev/null 2>&1
-assert_eq "apt: a later success clears the stale skip" "" "$(cat "$SKIP_RERUN" 2>/dev/null)"
+  pkg_install_optional anypkg ) >/dev/null 2>&1 || qfail_rc=$?
+assert_eq "apt: a failing query is not recorded as unavailable" "" "$(cat "$SKIP_QFAIL" 2>/dev/null)"
+if [ "$qfail_rc" -ne 0 ]; then
+  ok "apt: a failing query surfaces its failure"
+else
+  bad "apt: a failing query surfaces its failure" "nonzero" "$qfail_rc"
+fi
 
 SKIP2="$WORK/skipped-dnf"
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
