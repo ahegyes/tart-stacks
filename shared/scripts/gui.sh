@@ -240,11 +240,16 @@ EOF
     done
 
     install -d -m 755 "${kde_panel_target}/contents"
+    # Name is not decoration: KPackage deduplicates templates by plugin id and this copy wins the
+    # data-root search, so it is the only metadata Plasma sees. The Add Panel menu labels its entry
+    # from the plugin name with no id fallback, and an omitted name renders exactly the blank,
+    # clickable row this whole block exists to remove.
     cat > "${kde_panel_target}/metadata.json" <<'EOF'
 {
   "KPackageStructure": "Plasma/LayoutTemplate",
   "KPlugin": {
-    "Id": "org.kde.plasma.desktop.defaultPanel"
+    "Id": "org.kde.plasma.desktop.defaultPanel",
+    "Name": "Default Panel"
   },
   "X-Plasma-ContainmentCategories": ["panel"],
   "X-Plasma-Shell": "plasmashell"
