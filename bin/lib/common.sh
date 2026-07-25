@@ -10,12 +10,15 @@
 # tart_need_cmd <tool> [install-hint] — preflight; exit 1 if the tool is missing.
 tart_need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "${prog:-${0##*/}}: '$1' not on PATH. ${2:-}" >&2; exit 1; }; }
 
-# tart_vm_state <name> — print the VM's `tart list` State by exact name; empty
-# output = no such VM. stderr stays attached so tart's (or jq's) real error
+# tart_vm_state <name> — print the local VM's `tart list` State by exact name;
+# empty output = no such VM. Local only: `tart list` also shows the OCI images
+# the build pulls, and running or deleting one of those would mutate the
+# pristine cache copy rather than a dev VM (tart-new's image_built applies the
+# same filter). stderr stays attached so tart's (or jq's) real error
 # reaches the terminal. A nonzero exit means the tool itself failed — callers
 # must keep "broken tool" and "VM missing" distinct.
 tart_vm_state() {
-  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
+  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name and .Source=="local") | .State'
 }
 
 # tart_resolve_vm <name> [not-found-hint] — print the stored VM name for a bare

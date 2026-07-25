@@ -11,16 +11,16 @@ BIN="$REPO/bin"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         expected | %s\n         actual   | %s\n' "$1" "$2" "$3"; }
-assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
-assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "contains » $3" "$2" ;; esac; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
+assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
+assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » contains » $3 « got » $2 «" ;; esac; }
 assert_path()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
 assert_no_path()  { if [ -e "$2" ]; then bad "$1" "should not exist: $2"; else ok "$1"; fi; }
-assert_absent()   { case "$2" in *"$3"*) bad "$1" "absent » $3" "$2" ;; *) ok "$1" ;; esac; }
+assert_absent()   { case "$2" in *"$3"*) bad "$1" "want » absent » $3 « got » $2 «" ;; *) ok "$1" ;; esac; }
 check() { # label expected-rc cmd...
   local label="$1" want="$2"; shift 2
   local got=0; "$@" || got=$?
-  if [ "$got" -eq "$want" ]; then ok "$label"; else bad "$label" "rc $want" "rc $got"; fi
+  if [ "$got" -eq "$want" ]; then ok "$label"; else bad "$label" "want » rc $want « got » rc $got «"; fi
 }
 
 WORK=$(mktemp -d)
@@ -59,8 +59,8 @@ assert_eq "image_for_stack ubuntu variant"     "ubuntu-jvm" "$(image_for_stack j
 assert_eq "image_for_stack GUI flavor"         "fedora-php-kde" "$(image_for_stack php fedora kde)"
 assert_eq "image_for_stack empty de = no suffix" "fedora-php" "$(image_for_stack php fedora '')"
 assert_eq "list_stacks lists short tokens sorted" "jvm php" "$(list_stacks | sort | paste -sd' ' -)"
-if stack_exists php; then ok "stack_exists true for present stack"; else bad "stack_exists true for present stack" "rc 0" "rc 1"; fi
-if stack_exists rust; then bad "stack_exists false for absent stack" "rc 1" "rc 0"; else ok "stack_exists false for absent stack"; fi
+if stack_exists php; then ok "stack_exists true for present stack"; else bad "stack_exists true for present stack" "want » rc 0 « got » rc 1 «"; fi
+if stack_exists rust; then bad "stack_exists false for absent stack" "want » rc 1 « got » rc 0 «"; else ok "stack_exists false for absent stack"; fi
 
 # Mock `tart` so list output is deterministic and clone/set are recorded.
 # Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
@@ -95,10 +95,10 @@ JSON
 source "$WORK/q.sh"
 
 echo "bin/tart-new — tart-querying helpers:"
-if PATH="$WORK/bin:$PATH" image_built php fedora; then ok "image_built true when local image present"; else bad "image_built true when local image present" "rc 0" "rc 1"; fi
-if PATH="$WORK/bin:$PATH" image_built jvm fedora; then bad "image_built false when only OCI present" "rc 1" "rc 0"; else ok "image_built false when only OCI present"; fi
-if PATH="$WORK/bin:$PATH" vm_exists app-a; then ok "vm_exists true for present VM"; else bad "vm_exists true for present VM" "rc 0" "rc 1"; fi
-if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent VM" "rc 1" "rc 0"; else ok "vm_exists false for absent VM"; fi
+if PATH="$WORK/bin:$PATH" image_built php fedora; then ok "image_built true when local image present"; else bad "image_built true when local image present" "want » rc 0 « got » rc 1 «"; fi
+if PATH="$WORK/bin:$PATH" image_built jvm fedora; then bad "image_built false when only OCI present" "want » rc 1 « got » rc 0 «"; else ok "image_built false when only OCI present"; fi
+if PATH="$WORK/bin:$PATH" vm_exists app-a; then ok "vm_exists true for present VM"; else bad "vm_exists true for present VM" "want » rc 0 « got » rc 1 «"; fi
+if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent VM" "want » rc 1 « got » rc 0 «"; else ok "vm_exists false for absent VM"; fi
 
 # End-to-end: run the whole script with mocked tart + fixture stacks. Assert on
 # exit code, stderr message, and the recorded tart calls.

@@ -16,21 +16,21 @@ BIN="$REPO/bin"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         expected | %s\n         actual   | %s\n' "$1" "$2" "$3"; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 
 assert_eq() { # label expected actual
-  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi
+  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi
 }
 assert_contains() { # label haystack needle
-  case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "contains » $3" "$2" ;; esac
+  case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » contains » $3 « got » $2 «" ;; esac
 }
 assert_absent() { # label haystack needle
-  case "$2" in *"$3"*) bad "$1" "absent » $3" "$2" ;; *) ok "$1" ;; esac
+  case "$2" in *"$3"*) bad "$1" "want » absent » $3 « got » $2 «" ;; *) ok "$1" ;; esac
 }
 check() { # label expected-rc cmd...
   local label="$1" want="$2"; shift 2
   local got=0; "$@" || got=$?
-  if [ "$got" -eq "$want" ]; then ok "$label"; else bad "$label" "rc $want" "rc $got"; fi
+  if [ "$got" -eq "$want" ]; then ok "$label"; else bad "$label" "want » rc $want « got » rc $got «"; fi
 }
 
 WORK=$(mktemp -d)

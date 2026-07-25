@@ -6,8 +6,8 @@ set -uo pipefail
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd); REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
 pass=0 fail=0
 ok(){ pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
-bad(){ fail=$((fail+1)); printf '  FAIL %s\n    exp|%s\n    got|%s\n' "$1" "$2" "$3"; }
-assert_eq(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
+assert_eq(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 # Extract _detect_family and source it (same technique parsing.sh uses for tart-up fns).
 awk 'index($0,"_detect_family() {")==1{p=1} p{print} p&&$0=="}"{exit}' "$REPO/shared/scripts/distro-lib.sh" > "$WORK/fn.sh"
@@ -77,7 +77,7 @@ assert_eq "apt: a failing install is not recorded as unavailable" "" "$(cat "$SK
 if [ "$apt_fail_rc" -ne 0 ]; then
   ok "apt: a failing install surfaces its failure"
 else
-  bad "apt: a failing install surfaces its failure" "nonzero" "$apt_fail_rc"
+  bad "apt: a failing install surfaces its failure" "want » nonzero « got » $apt_fail_rc «"
 fi
 
 
@@ -95,7 +95,7 @@ assert_eq "apt: a failing query is not recorded as unavailable" "" "$(cat "$SKIP
 if [ "$qfail_rc" -ne 0 ]; then
   ok "apt: a failing query surfaces its failure"
 else
-  bad "apt: a failing query surfaces its failure" "nonzero" "$qfail_rc"
+  bad "apt: a failing query surfaces its failure" "want » nonzero « got » $qfail_rc «"
 fi
 
 SKIP2="$WORK/skipped-dnf"

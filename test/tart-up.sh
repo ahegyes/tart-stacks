@@ -19,7 +19,7 @@ BIN="$REPO/bin"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_path()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
@@ -67,7 +67,7 @@ case "$1" in
       echo "MOCK_TART_LIST_STDERR_MARKER" >&2
       exit "${MOCK_TART_LIST_RC}"
     fi
-    printf '[{"Name":"%s","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
+    printf '[{"Name":"%s","Source":"local","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
   ip)   printf '%s\n' "${MOCK_IP:-10.0.0.9}" ;;
   exec)
     shift 2
