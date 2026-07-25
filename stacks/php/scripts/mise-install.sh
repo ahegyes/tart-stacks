@@ -36,6 +36,14 @@ mise_runtime_setup
 # "Unable to load dynamic library" warnings on every PHP startup.
 echo ""
 echo "==> Installing PECL extensions (pcov, xdebug, imagick, redis, memcached)..."
+# PEAR refreshes its channel metadata lazily, racing the first install: that one
+# can fail with "does not have REST dependency information available" while the
+# refresh it triggers leaves every later extension fine. The casualty is always
+# whichever runs first, so it reads as pcov being flaky rather than as ordering.
+# Best-effort on purpose — an unreachable channel leaves the bundled metadata in
+# place, which is the behaviour without this line, and the gate below still rules.
+pecl channel-update pecl.php.net \
+  || echo "WARNING: pecl channel-update failed; continuing with bundled channel metadata." >&2
 declare -A pecl_ok=()
 for ext in pcov xdebug imagick redis memcached; do
   # Subshell disables pipefail just for this pipeline: `yes` exits 141 on
