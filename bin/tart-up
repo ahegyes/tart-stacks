@@ -88,35 +88,13 @@ tart_need_cmd jq   "Install: brew install jq"
 # 30 silent probe failures and a misleading ":22 timeout" diagnosis.
 [ -x "$NC_BIN" ] || { echo "$prog: SSH probe binary '$NC_BIN' not found or not executable." >&2; exit 1; }
 
-# A nonzero tart_vm_state means the tool is broken, not that the name missed —
-# bail instead of retrying the stripped alias name against the same broken tool.
+VM=$(tart_resolve_vm "$VM" " Or create it: tart-new ${VM#tart-} <stack> <distro>.") || exit 1
+# A nonzero tart_vm_state means the tool is broken, not that the name missed.
 list_failed() {
   echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
   exit 1
 }
-
-# The SSH alias is `tart-<name>` (so `%n` arrives prefixed), while Tart stores
-# tart-stacks VMs bare. Try the name as given; only a missed alias has a second,
-# stripped form to resolve. A bare miss is final because `tart-` is reserved
-# for aliases, not stored VMs.
 STATE=$(tart_vm_state "$VM") || list_failed
-if [ -z "$STATE" ]; then
-  case "$VM" in
-    tart-*)
-      ALT="${VM#tart-}"
-      STATE=$(tart_vm_state "$ALT") || list_failed
-      if [ -z "$STATE" ]; then
-        echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list' or 'tart-new $ALT <stack> <distro>'." >&2
-        exit 1
-      fi
-      VM="$ALT"
-      ;;
-    *)
-      echo "$prog: VM '$VM' not found. Try 'tart list' or 'tart-new $VM <stack> <distro>'." >&2
-      exit 1
-      ;;
-  esac
-fi
 
 # Base images (the `<distro>-base` bootstrap intermediate + every
 # <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — but
@@ -433,6 +411,15 @@ GUI_MODE="${GUI_OVERRIDE:-$GUI_FILE_MODE}"
 # `tart run` would miss host-key regen until its next tart-up-driven start.)
 STARTED=0
 
+# Being asked to bring this VM up is what retracts an operator's deliberate
+# stop — the invocation, not whichever branch the VM's state happens to take.
+# Clearing only on the `stopped` branch left a marked-but-running VM (started
+# out of band, or left running by a tart-down whose `tart stop` failed) holding
+# a mark forever, silently disabling supervision with nothing to show for it.
+# TART_UP_KEEP_STOP_MARK is set by tart-supervise: supervision restarts crashes
+# and must never retract intent it did not record.
+[ "${TART_UP_KEEP_STOP_MARK:-}" = 1 ] || tart_clear_stop_mark "$VM"
+
 if [ "$STATE" = "running" ]; then
   # A Tart crash can leave the listed state wedged at "running" with no live
   # `tart run` process — polling :22 against that ghost burns the full timeout
@@ -455,11 +442,6 @@ if [ "$STATE" = "running" ]; then
   fi
 elif [ "$STATE" = "stopped" ]; then
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
-  # Starting the VM is what retracts an operator's deliberate stop, so the mark
-  # tart-down left is cleared here rather than by a separate re-arm step. It is
-  # dropped before the launch: a supervisor that wakes mid-start must not find a
-  # stale mark and decline to watch the instance now coming up.
-  rm -f "$(tart_stop_mark "$VM")" 2>/dev/null || true
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
   # tart's --net-* family is mutually exclusive, so keep them visually adjacent.

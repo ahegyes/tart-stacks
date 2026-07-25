@@ -89,12 +89,19 @@ ensure_up() {
   # to start the VM in the gap, and we must not tear that down. `tart stop` on a
   # genuinely-dead VM only clears the wedged "running" state a crash leaves.
   tart_vm_alive "$vm" && return 0
+  # The mark gets the same treatment for the same reason: `tart-down` on a VM
+  # that is already down can land between the check above and this point, and a
+  # mark read only once would be recovered straight over.
+  tart_stop_marked "$vm" && return 0
   tart stop "$vm" >/dev/null 2>&1 || true
-  tart-up "$vm"
+  # Supervision restarts crashes; it never retracts an operator's deliberate
+  # stop. Without this, a mark landing inside the remaining window would be
+  # deleted by the very tart-up sent to undo it.
+  TART_UP_KEEP_STOP_MARK=1 tart-up "$vm"
 }
 
 supervise_loop() {
-  local vm="$1" backoff="$BACKOFF_BASE" up_start up state absent=0 label
+  local vm="$1" backoff="$BACKOFF_BASE" up_start up state absent=0 label idling=0
   label=$(tart_supervise_label "$vm")
   while :; do
     ensure_up "$vm" || log "'$vm' did not come up; will retry"
@@ -134,12 +141,22 @@ supervise_loop() {
     # not double it.)
     [ "$up" -ge "$HEALTHY" ] && backoff="$BACKOFF_BASE"
     # A marked VM reaches here every poll without anything having exited, so the
-    # restart narration would be both false and endless. Idle quietly instead;
-    # the absent-VM check above still runs, so a deleted VM is still noticed.
+    # restart narration would be both false and endless. Narrate the transitions
+    # only — "why is it not coming back" is the question this log has to answer,
+    # and per-poll repetition would bury it. The absent-VM check above still
+    # runs, so a deleted VM is still noticed.
     if tart_stop_marked "$vm"; then
+      [ "$idling" -eq 1 ] || {
+        log "'$vm' has a deliberate stop mark — idling, not restarting ('tart-up $vm' clears it and resumes)"
+        idling=1
+      }
       sleep "$POLL"
       continue
     fi
+    [ "$idling" -eq 0 ] || {
+      log "'$vm' stop mark cleared — resuming supervision"
+      idling=0
+    }
     log "'$vm' exited after ${up}s — restarting in ${backoff}s (no stop mark recorded; 'tart-down $vm' stops it and keeps it down)"
     sleep "$backoff"
     if [ "$up" -lt "$HEALTHY" ]; then
@@ -243,7 +260,7 @@ uninstall_agent() {
 
 status_agents() {
   local want="${1:-}"; want="${want#tart-}"
-  local found=0 plist label vm agent state proc
+  local found=0 plist label vm agent state proc mark
   # One `tart list` serves every row. If it fails, the vm column degrades to
   # `?` behind one stderr note — a broken tart must not hide which agents
   # exist or whether their processes are alive.
@@ -272,7 +289,11 @@ status_agents() {
       [ -n "$state" ] || state="MISSING"
     fi
     if tart_vm_alive "$vm"; then proc="alive"; else proc="-"; fi
-    printf '%-24s %-23s vm:%-8s proc:%s\n' "$vm" "$agent" "$state" "$proc"
+    # Without this column a deliberately-stopped VM reads exactly like a
+    # supervisor that is failing to restart one — same agent, same vm:stopped,
+    # same proc:-. The mark is the only thing that tells them apart.
+    if tart_stop_marked "$vm"; then mark="marked"; else mark="-"; fi
+    printf '%-24s %-23s vm:%-8s proc:%-6s stop:%s\n' "$vm" "$agent" "$state" "$proc" "$mark"
   done
   if [ "$found" -ne 1 ]; then
     if [ -n "$want" ]; then

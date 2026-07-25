@@ -51,34 +51,13 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
 VM="$1"
 
-# A nonzero tart_vm_state means the tool is broken, not that the name missed —
-# bail instead of retrying the stripped alias name against the same broken tool.
+VM=$(tart_resolve_vm "$VM") || exit 1
+# A nonzero tart_vm_state means the tool is broken, not that the name missed.
 list_failed() {
   echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
   exit 1
 }
-
-# The SSH alias is `tart-<name>`, while Tart stores tart-stacks VMs bare. Try
-# the name as given; only a missed alias has a second, stripped form to resolve.
-# A bare miss is final because `tart-` is reserved for aliases, not stored VMs.
 STATE=$(tart_vm_state "$VM") || list_failed
-if [ -z "$STATE" ]; then
-  case "$VM" in
-    tart-*)
-      ALT="${VM#tart-}"
-      STATE=$(tart_vm_state "$ALT") || list_failed
-      if [ -z "$STATE" ]; then
-        echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list'." >&2
-        exit 1
-      fi
-      VM="$ALT"
-      ;;
-    *)
-      echo "$prog: VM '$VM' not found. Try 'tart list'." >&2
-      exit 1
-      ;;
-  esac
-fi
 
 # Base images (the `<distro>-base` bootstrap intermediate + every
 # <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — losing
@@ -131,7 +110,7 @@ ssh-keygen -R "tart-$VM" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || tru
 # Same reasoning for the deliberate-stop mark: names are reused, and a mark
 # outliving its VM would tell a supervisor to leave the NEXT VM of that name
 # down.
-rm -f "$(tart_stop_mark "$VM")" 2>/dev/null || true
+tart_clear_stop_mark "$VM"
 
 if [ "$SUPERVISED" -eq 1 ]; then
   echo "$prog: removed '$VM' — supervision dropped, VM deleted, host-key pin cleared" >&2

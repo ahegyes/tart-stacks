@@ -141,10 +141,12 @@ assert_eq       "bare miss → one as-given state probe" 1 "$(grep -c '^tart lis
 assert_absent   "bare miss → does not stop literal tart-prefixed VM"   "$(cat "$CALLS")" "tart stop tart-ghost"
 assert_absent   "bare miss → does not delete literal tart-prefixed VM" "$(cat "$CALLS")" "tart delete tart-ghost"
 
-# A missed SSH alias still tries its stripped VM name and reports both forms.
+# The prefix is stripped before the only lookup, so the diagnostic names the
+# stored form that was actually checked — there is no second form to report.
 run_rm tart-nope
 assert_rc       "unknown alias → exit 1" 1
-assert_contains "unknown alias → error names stripped form" "$(cat "$ERR")" "also tried 'nope'"
+assert_contains "unknown alias → error names the stored form" "$(cat "$ERR")" "VM 'nope' not found."
+assert_absent   "unknown alias → claims no second form" "$(cat "$ERR")" "also tried"
 assert_absent   "unknown alias → no tart stop"   "$(cat "$CALLS")" "tart stop"
 assert_absent   "unknown alias → no tart delete" "$(cat "$CALLS")" "tart delete"
 

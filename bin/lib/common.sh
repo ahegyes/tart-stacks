@@ -19,6 +19,28 @@ tart_vm_state() {
   tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
 }
 
+# tart_resolve_vm <name> [not-found-hint] — print the stored VM name for a bare
+# name or a `tart-<name>` SSH alias. The prefix is stripped unconditionally:
+# tart_valid_vm_name refuses it at create time, so no tart-stacks VM can hold a
+# `tart-*` name, and probing that form first would only ever match a VM made out
+# of band with raw tart — never the one the caller meant. (The generated
+# ProxyCommand strips it the same way, so honoring a literal match here would
+# have ssh start one VM and connect to another.) Returns 1 on a miss or a broken
+# `tart list`, having named which; callers exit on it rather than continuing with
+# an empty name. Not usable as `local vm=$(...)` — `local` swallows the status.
+tart_resolve_vm() {
+  local vm="${1#tart-}" hint="${2:-}" state
+  state=$(tart_vm_state "$vm") || {
+    echo "${prog:-${0##*/}}: 'tart list' failed — cannot read VM states; see the error above." >&2
+    return 1
+  }
+  [ -n "$state" ] || {
+    echo "${prog:-${0##*/}}: VM '$vm' not found. Try 'tart list'.${hint}" >&2
+    return 1
+  }
+  printf '%s' "$vm"
+}
+
 # tart_supervise_label <vm> — the per-VM supervision LaunchAgent label.
 # tart-supervise owns the agent lifecycle; tart-rm probes the same label to
 # drop supervision before deleting a VM.
@@ -38,6 +60,27 @@ tart_stop_mark() { printf '%s/stopped/%s' "$(tart_state_dir)" "$1"; }
 
 # tart_stop_marked <vm> — 0 iff <vm> is marked as deliberately stopped.
 tart_stop_marked() { [ -e "$(tart_stop_mark "$1")" ]; }
+
+# tart_mark_stopped <vm> — record the deliberate stop. Hard failure by design:
+# the caller stops the VM immediately after, and a stop whose mark never landed
+# is precisely what supervision would undo. Failing here leaves the VM running,
+# which is the safe half of the pair.
+tart_mark_stopped() {
+  local mark; mark=$(tart_stop_mark "$1")
+  mkdir -p "${mark%/*}" 2>/dev/null && : > "$mark" 2>/dev/null && return 0
+  echo "${prog:-${0##*/}}: cannot record the stop mark at '$mark' — refusing to stop '$1', since supervision would restart it." >&2
+  exit 1
+}
+
+# tart_clear_stop_mark <vm> — retract a deliberate stop. Best-effort by design:
+# a failure here must never stop a VM from starting. It is still reported, since
+# `rm -f` succeeds on an absent file — so a failure is real, and it leaves
+# supervision declining to restart a VM the operator just asked for.
+tart_clear_stop_mark() {
+  local mark; mark=$(tart_stop_mark "$1")
+  rm -f "$mark" 2>/dev/null && return 0
+  echo "${prog:-${0##*/}}: warning: could not clear the stop mark at '$mark'; supervision will not restart '$1'." >&2
+}
 
 # tart_valid_vm_name <name> — 0 iff the name is a token every consumer can
 # carry: the ssh alias (tart-<name>), the guest hostname (`hostname -s` must

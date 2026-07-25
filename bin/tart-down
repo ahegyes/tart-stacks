@@ -45,55 +45,32 @@ tart_need_cmd jq   "Install: brew install jq"
 
 VM="$1"
 
-# A nonzero tart_vm_state means the tool is broken, not that the name missed —
-# bail instead of retrying the stripped alias name against the same broken tool.
-list_failed() {
-  echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
-  exit 1
-}
-
-# The SSH alias is `tart-<name>`, while Tart stores tart-stacks VMs bare. Try
-# the name as given; only a missed alias has a second, stripped form to resolve.
-# A bare miss is final because `tart-` is reserved for aliases, not stored VMs.
-STATE=$(tart_vm_state "$VM") || list_failed
-if [ -z "$STATE" ]; then
-  case "$VM" in
-    tart-*)
-      ALT="${VM#tart-}"
-      STATE=$(tart_vm_state "$ALT") || list_failed
-      if [ -z "$STATE" ]; then
-        echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list'." >&2
-        exit 1
-      fi
-      VM="$ALT"
-      ;;
-    *)
-      echo "$prog: VM '$VM' not found. Try 'tart list'." >&2
-      exit 1
-      ;;
-  esac
-fi
+VM=$(tart_resolve_vm "$VM") || exit 1
 
 # Base images are clone sources that are never run as dev VMs, so stopping one
 # is always a mistaken name rather than an intent worth recording.
-if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
+if tart_is_base_image "$VM" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to stop it." >&2
   exit 1
 fi
 
 # The mark precedes the stop, and that order is the whole point: a supervisor
 # polls on an interval, so marking afterwards leaves a window in which it sees a
-# dead VM with no recorded intent and restarts it. Marking an already-stopped VM
-# is meaningful too — it holds down a VM whose supervisor is between polls.
-MARK=$(tart_stop_mark "$VM")
-mkdir -p "$(dirname "$MARK")"
-: > "$MARK"
+# dead VM with no recorded intent and restarts it. Marking a VM that is already
+# down narrows that window but cannot close it — the supervisor reads the mark
+# once per recovery attempt, so one landing mid-attempt is still honored only
+# from its next poll (tart-supervise re-reads it before recovering, which is
+# what keeps the loss to a spurious start rather than a discarded mark).
+tart_mark_stopped "$VM"
 
 if ! tart stop "$VM" 2>/dev/null; then
   # A VM that is already stopped makes `tart stop` fail; the mark is still
   # correct and must stand, so this is not an error. A genuine failure to stop a
   # running VM is, and is reported by the state re-read below.
-  STATE=$(tart_vm_state "$VM") || list_failed
+  STATE=$(tart_vm_state "$VM") || {
+    echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
+    exit 1
+  }
   if [ "$STATE" = "running" ]; then
     echo "$prog: '$VM' is still running — 'tart stop' failed; the stop mark stands, so supervision will not restart it." >&2
     exit 1

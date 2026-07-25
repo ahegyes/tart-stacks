@@ -37,6 +37,12 @@ assert_order() { # label earlier-needle later-needle — both in $CALLS, in that
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
+# tart-up deletes the stop mark under $HOME. Sandboxing HOME rather than just
+# TART_STATE_DIR contains every $HOME-derived path at once — the state dir, the
+# config dir, and anything added later — so a real `tart-down` mark on the
+# developer's machine cannot be destroyed by running the suite.
+SANDBOX_HOME="$WORK/home"; mkdir -p "$SANDBOX_HOME"
+MARKS="$SANDBOX_HOME/.local/state/tart-stacks/stopped"
 CALLS="$WORK/calls"; export CALLS
 ERR="$WORK/stderr"
 EMPTY="$WORK/empty"; : > "$EMPTY"
@@ -153,7 +159,7 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
   local state="$1" hostname="$2" netpolicy="$3" mounts="$4" gui="$5"
   shift 5
   : > "$CALLS"; : > "$SS_COUNT"; rc=0
-  PATH="$MOCKBIN:$PATH" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$hostname" \
+  PATH="$MOCKBIN:$PATH" HOME="$SANDBOX_HOME" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$hostname" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_NC_RC="${MOCK_NC_RC-0}" \
     MOCK_SS_OUTPUT="${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_SS_SEQUENCE_FILE="${MOCK_SS_SEQUENCE_FILE-}" MOCK_SS_COUNT_FILE="$SS_COUNT" \
@@ -190,13 +196,14 @@ assert_rc       "bare miss with literal tart-app-a present → exit 1" 1
 assert_eq       "bare miss with literal tart-app-a present → no alias probe" 1 "$(grep -c 'tart list' "$CALLS")"
 assert_absent   "bare miss with literal tart-app-a present → no tart run" "$(cat "$CALLS")" "tart run tart-app-a"
 
-# A missing prefixed alias still reports the stripped stored-name form it
-# tried.
+# The prefix is stripped before the only lookup, so a missing alias reports the
+# stored form that was actually checked, in one query.
 MOCK_LIST_VM=other runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a
 assert_rc       "unknown prefixed VM → exit 1" 1
-assert_contains "unknown prefixed VM → diagnostic names stripped try" "$(cat "$ERR")" "also tried 'app-a'"
+assert_contains "unknown prefixed VM → diagnostic names the stored form" "$(cat "$ERR")" "VM 'app-a' not found."
+assert_absent   "unknown prefixed VM → claims no second form" "$(cat "$ERR")" "also tried"
 assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <distro>"
-assert_eq       "unknown prefixed VM → two list queries" 2 "$(grep -c 'tart list' "$CALLS")"
+assert_eq       "unknown prefixed VM → one list query" 1 "$(grep -c 'tart list' "$CALLS")"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
 # with tart's own stderr surfaced, no stripped-name retry, and no VM start.

@@ -124,6 +124,21 @@ if ! tart_valid_vm_name "$NAME"; then
   exit 1
 fi
 
+# 1b. Geometry must be WIDTHxHEIGHT. `tart set` runs after `tart clone`, so a
+#     malformed value rejected there would leave a created-but-unconfigured VM
+#     behind under `set -e`; catching it here costs nothing and never clones.
+if [ -n "$DISPLAY_GEOMETRY" ]; then
+  case "$DISPLAY_GEOMETRY" in
+    *[!0-9x]*|x*|*x|*x*x*) display_ok=0 ;;
+    *x*)                   display_ok=1 ;;
+    *)                     display_ok=0 ;;
+  esac
+  if [ "$display_ok" -ne 1 ]; then
+    echo "$prog: --display expects WIDTHxHEIGHT (e.g. 1920x1080), got '$DISPLAY_GEOMETRY'" >&2
+    exit 64
+  fi
+fi
+
 # 2. Stack must exist in the repo.
 if ! stack_exists "$STACK"; then
   echo "$prog: no stack '$STACK'; available: $(list_stacks | sort | paste -sd, - | sed 's/,/, /g')" >&2
@@ -149,7 +164,10 @@ img="$(image_for_stack "$STACK" "$DISTRO" "$DE")"
 # 4. No clobbering an existing VM. Sits ahead of the build offer so a 15-20 min
 #    build can never end in "already exists".
 if vm_exists "$NAME"; then
-  echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart delete $NAME' first." >&2
+  # tart-rm, not raw `tart delete`: it drops supervision, scrubs the host-key
+  # pin and clears the stop mark. Recommending the raw command is what strands
+  # the name-scoped state this script then has to scrub below.
+  echo "$prog: VM '$NAME' already exists. Use a different name, or 'tart-rm $NAME' first." >&2
   exit 1
 fi
 
@@ -182,6 +200,11 @@ fi
 # can't strand it.
 ssh-keygen -R "tart-$NAME" -f "$HOME/.ssh/known_hosts.tart" >/dev/null 2>&1 || true
 
+# Same stale-by-definition reasoning for the deliberate-stop mark: the collision
+# gate proved this name free, so any surviving mark belongs to a VM that no
+# longer exists — and would tell a supervisor to hold this brand-new one down.
+tart_clear_stop_mark "$NAME"
+
 # 6. Clone, then fold in resources if any were given.
 tart clone "$img" "$NAME"
 set_args=()
@@ -191,13 +214,12 @@ set_args=()
 # A GUI clone gets a workable screen by construction. Tart's own default is
 # 1024x768, which a desktop session has no way to change from inside the guest —
 # the resolution is a property of the virtual display, not of the X session — so
-# a clone left at the default is stuck there for its whole life. --display-refit
-# additionally lets the guest follow the host window as it is resized.
-if [ -n "$DE" ]; then
-  set_args+=(--display "${DISPLAY_GEOMETRY:-$DEFAULT_DISPLAY_GEOMETRY}" --display-refit)
-elif [ -n "$DISPLAY_GEOMETRY" ]; then
-  set_args+=(--display "$DISPLAY_GEOMETRY")
-fi
+# a clone left at the default is stuck there for its whole life. Any clone given
+# a geometry gets --display-refit with it, so the guest follows the host window
+# as it is resized; a clone from a non-GUI image has no desktop to reflow, which
+# makes both flags inert there rather than different.
+display="${DISPLAY_GEOMETRY:-${DE:+$DEFAULT_DISPLAY_GEOMETRY}}"
+[ -n "$display" ] && set_args+=(--display "$display" --display-refit)
 [ "${#set_args[@]}" -gt 0 ] && tart set "$NAME" "${set_args[@]}"
 
 echo "$prog: created '$NAME' from $img — next: ssh tart-$NAME" >&2

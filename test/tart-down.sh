@@ -62,9 +62,13 @@ run_down --help; assert_rc "--help → exit 0"      0 "$rc"
 run_down nope;   assert_rc "unknown vm → exit 1"  1 "$rc"
 assert_contains "unknown bare vm names requested form" "$OUT" "VM 'nope' not found."
 assert_absent   "unknown bare vm claims no second form" "$OUT" "also tried"
+# The prefix is stripped before the only lookup, so the diagnostic names the
+# stored form that was actually checked — there is no second form to report.
 run_down tart-nope
 assert_rc       "unknown prefixed vm → exit 1" 1 "$rc"
-assert_contains "unknown prefixed vm names stripped form" "$OUT" "also tried 'nope'"
+assert_contains "unknown prefixed vm names the stored form" "$OUT" "VM 'nope' not found."
+assert_absent   "unknown prefixed vm claims no second form" "$OUT" "also tried"
+assert_eq       "unknown prefixed vm → one list query" 1 "$(grep -c '^tart list --format json$' "$CALLS")"
 
 # The alias namespace can contain out-of-band VMs created with raw `tart`, but
 # a bare tart-stacks name must never resolve forward into that namespace.
