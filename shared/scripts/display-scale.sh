@@ -110,10 +110,16 @@ from pathlib import Path
 path = Path(sys.argv[1])
 factor = int(sys.argv[2])
 
-if factor == 1 and not path.exists():
+# xfconfd truncates before it rewrites, so a session killed mid-write leaves a
+# zero-byte file behind. It holds no settings to preserve, which makes it the
+# same case as no file at all; parsing it instead would abort the applier on
+# every later boot and strand the desktop at whatever scale it last had.
+existing = path.is_file() and path.stat().st_size > 0
+
+if factor == 1 and not existing:
     raise SystemExit(0)
 
-if path.exists():
+if existing:
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
     try:
         tree = ET.parse(path, parser=parser)

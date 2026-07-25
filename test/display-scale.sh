@@ -281,6 +281,28 @@ xfce_xml="$(cat "$XFCE_EMPTY_FILE")"
 assert_absent "XFCE reset removes empty Gdk parent" "$xfce_xml" 'name="Gdk"'
 assert_absent "XFCE reset removes empty Xft parent" "$xfce_xml" 'name="Xft"'
 
+# xfconfd truncates before it rewrites, so a session killed mid-write leaves a
+# zero-byte file. Both factors must treat it as the no-settings case they
+# already handle for an absent file: parsing it aborts the applier, and since
+# tart-up runs this on every window-mode boot, the desktop would stay stuck at
+# whatever scale it last had for the life of the VM.
+XFCE_TRUNC_HOME="$WORK/xfce-trunc-home"
+XFCE_TRUNC_FILE="$XFCE_TRUNC_HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+XFCE_TRUNC_SCRIPT="$WORK/xfce-trunc-scale"
+instantiate xfce "$CURRENT_USER" "$XFCE_TRUNC_HOME" "$XFCE_TRUNC_SCRIPT"
+mkdir -p "${XFCE_TRUNC_FILE%/*}"
+
+: > "$XFCE_TRUNC_FILE"
+run_scale "$XFCE_TRUNC_SCRIPT" "$PATH" 1
+assert_rc "XFCE factor 1 over a zero-byte xsettings → exit 0" 0
+
+: > "$XFCE_TRUNC_FILE"
+run_scale "$XFCE_TRUNC_SCRIPT" "$PATH" 2
+assert_rc "XFCE factor 2 over a zero-byte xsettings → exit 0" 0
+xfce_xml="$(cat "$XFCE_TRUNC_FILE")"
+assert_contains "XFCE rebuilds the channel from a zero-byte file" "$xfce_xml" 'name="xsettings"'
+assert_contains "XFCE zero-byte rebuild carries DPI" "$xfce_xml" 'name="DPI" type="int" value="192"'
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
