@@ -39,7 +39,7 @@ apt-family (Debian/Ubuntu) sources:
 - `github.com/zellij-org/zellij/releases/latest` — the zellij static-musl release tarball (no apt package exists).
 
 Runtime sources fetched at build time (a class, not an exhaustive list — the exact set follows each stack's `files/mise.toml`):
-- Everything mise resolves and downloads for the tools declared in the per-stack `files/mise.toml` — e.g. php-src (compiled via the asdf-php plugin), the Node dist tarballs, Temurin JDK via the Adoptium API, the Maven/Gradle/sbt/Kotlin/scala-cli release artifacts, uv. Each download's integrity is whatever mise and the respective backend enforce.
+- Everything mise resolves and downloads for the tools declared in the per-stack `files/mise.toml` — e.g. php-src (compiled via the vfox-php plugin), the Node dist tarballs, Temurin JDK via the Adoptium API, the Maven/Gradle/sbt/Kotlin/scala-cli release artifacts, uv. Each download's integrity is whatever mise and the respective backend enforce.
 - `pecl.php.net` — the PECL extensions the php stack's `mise-install.sh` installs.
 
 Stack-specific upstream sources:

@@ -6,7 +6,7 @@
 # Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/).
 #
 # Timing: Node (LTS) is a pre-built binary download (~30 seconds). PHP is
-# compiled from source via the asdf-php plugin and takes 5-10 minutes on
+# compiled from source via the vfox-php plugin and takes 5-10 minutes on
 # Apple Silicon. PHP build dependencies are installed by 00-stack.sh.
 
 set -euo pipefail
@@ -14,12 +14,18 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source /tmp/mise-lib.sh
 
-# PHP_CONFIGURE_OPTIONS *replaces* asdf-php's os_based_configure_options() block
-# (it doesn't append), so we restate the Linux defaults and add what we want on
-# top. Must be exported before mise builds PHP from source.
-export PHP_CONFIGURE_OPTIONS="--with-openssl --with-curl --with-zlib \
---with-readline --with-gettext \
---with-sodium --with-bz2"
+# APPEND to vfox-php's configure line; never set PHP_CONFIGURE_OPTIONS, which
+# that plugin reads as a full replacement — everything it supplies unasked would
+# go with it, including --with-pear (pecl, used below) and the
+# --with-config-file-scan-dir this script writes ini files into. mise.toml pins
+# the plugin so these two variables can't be read by the other one.
+#
+# sodium and bz2 are absent from vfox-php's set. The rest it derives from probes
+# (pkg-config libpng/libzip, pg_config) that a missing build dep turns into a
+# silently smaller PHP; stating them makes configure fail loudly instead. Every
+# flag here backs an extension the smoke gate below requires.
+export PHP_EXTRA_CONFIGURE_OPTIONS="--with-sodium --with-bz2 \
+--with-external-gd --with-pdo-pgsql --with-zip"
 
 echo "==> Node ~30s, PHP ~5-10 min from source compile"
 mise_runtime_setup
