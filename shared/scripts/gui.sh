@@ -25,23 +25,6 @@ gui_require_de "$DE"
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"
 
-# Fast preflight for the one cell this layer refuses: Plasma 6 on the apt
-# family, where no `plasma-x11-session` package exists to pull the X11 session
-# the Xvnc layer needs. (Debian's plasma-workspace does ship an X11 session
-# file, so the cell may be buildable — but nobody has run it end to end, and
-# refusing here beats failing the same way after a multi-minute DE install.)
-# The post-install session assert below stays the general gate.
-if [ "$_DISTRO_FAMILY" = "apt" ] && [ "$DE" = "kde" ]; then
-  plasma_ver="$(apt-cache policy plasma-workspace 2>/dev/null | sed -n 's/^  Candidate: //p')"
-  case "$plasma_ver" in
-    4:6*|4:7*)
-      if ! apt-cache policy plasma-x11-session 2>/dev/null | grep -q '^  Candidate: [0-9]'; then
-        echo "ERROR: no plasma-x11-session package for plasma-workspace ${plasma_ver} on this distro, so the Xvnc-based GUI layer has no X11 session it can rely on. Use de=xfce or de=gnome here, or kde on fedora/ubuntu. See shared/gui/README.md." >&2
-        exit 1
-      fi ;;
-  esac
-fi
-
 echo "==> Installing ${DE} desktop + display manager + applications + agent + TigerVNC..."
 # shellcheck disable=SC2046  # intentional word-split of the package lists
 gui_pkg_install $(gui_packages "$DE") $(gui_app_packages "$DE") $(gui_agent_packages) $(gui_scale_packages "$DE") $(gui_vnc_packages)

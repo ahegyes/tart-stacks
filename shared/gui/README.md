@@ -201,7 +201,7 @@ desktop that can't start.
 
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
-| `kde` (default) | ✅ image verified | ✅ image verified | ❌ no `plasma-x11-session` package — see below | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
+| `kde` (default) | ✅ image verified | ✅ image verified | ✅ image verified | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
 | `gnome` | ✅ image verified | ✅ image verified | ✅ image verified | `gnome-xorg` / `gnome` |
 | `xfce` | ✅ image verified | ✅ image verified | ✅ image verified | `xfce` |
 
@@ -237,12 +237,12 @@ treats an empty file as an absent one, so scaling still works and the file is
 rebuilt on the next run; only settings made through the desktop's own tools are
 lost. Waiting ~20 s between stopping the desktop and stopping the VM avoids it.
 
-On debian/kde specifically: the preflight refuses the cell because Debian's
-`plasma-workspace` has no companion `plasma-x11-session` package to probe for.
-Debian 13's `plasma-workspace` does ship `/usr/share/xsessions/plasmax11.desktop`,
-so the cell may in fact be buildable — nobody has run it end to end. Until
-someone does, it stays ❌: the preflight refusing early beats discovering it
-after a multi-minute desktop install.
+Every distro × DE cell is supported; there is no refused combination. The X
+session assert above is the only gate, and it reads `/usr/share/xsessions/`
+rather than package names — which is what a cell actually needs. Debian's
+`plasma-workspace` ships no `plasma-x11-session` package but does ship
+`plasmax11.desktop`, so a package-name probe refused a cell that builds and
+boots. Add a distro or a DE and the assert covers it without a new special case.
 
 ## Sizing
 
