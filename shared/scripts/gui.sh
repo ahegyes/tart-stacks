@@ -217,7 +217,11 @@ EOF
       esac
     fi
     echo "==> Pinning the KDE panel launchers..."
-    bash /tmp/kde-panel.sh "$kde_browser_desktop"
+    # Launcher pins are cosmetic, and the transform rewrites a template Plasma
+    # owns. Drift there must degrade to the stock panel, not discard a built
+    # image — every other step in this script is load-bearing, this one is not.
+    bash /tmp/kde-panel.sh "$kde_browser_desktop" \
+      || echo "WARNING: KDE panel launchers not pinned; the stock Plasma panel ships instead." >&2
     ;;
   gnome)
     # The local system db only takes effect if the active dconf profile lists
