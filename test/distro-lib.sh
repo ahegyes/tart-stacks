@@ -21,14 +21,26 @@ printf 'ID=rhel\nID_LIKE=fedora\n'   > "$WORK/r"; assert_eq "rhel -> dnf"       
 printf 'ID=arch\n'                   > "$WORK/a"; assert_eq "arch -> empty(rc1)" ""  "$(OS_RELEASE=$WORK/a _detect_family || true)"
 # ── pkg_install_optional: skip recording ────────────────────────────────────
 # Skipped optional packages land in $TART_SKIPPED_FILE for the provenance
-# manifest. Source the whole lib (family comes from the os-release fixture);
-# package managers are PATH mocks. apt's per-package loop knows its failures
-# directly; dnf's --skip-unavailable is silent, so the lib post-checks rpm -q.
+# manifest, which describes the image — so only a package the family genuinely
+# lacks may be recorded. Source the whole lib (family comes from the os-release
+# fixture); package managers are PATH mocks. apt resolves the candidate first,
+# so an install failure is a broken build rather than a skip; dnf's
+# --skip-unavailable is silent, so the lib post-checks rpm -q.
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
 cat > "$MOCKBIN/apt-get" <<'M'
 #!/usr/bin/env bash
 [ "${MOCK_APT_FAIL:-}" = "${4:-}" ] && exit 100
 exit 0
+M
+cat > "$MOCKBIN/apt-cache" <<'M'
+#!/usr/bin/env bash
+# `apt-cache policy <pkg>`: a package the archive does not carry reports
+# Candidate: (none), which is the only thing that counts as unavailable.
+if [ "${MOCK_APT_ABSENT:-}" = "${2:-}" ]; then
+  printf '%s:\n  Candidate: (none)\n' "$2"
+else
+  printf '%s:\n  Candidate: 1.0\n' "$2"
+fi
 M
 cat > "$MOCKBIN/dnf" <<'M'
 #!/usr/bin/env bash
@@ -39,16 +51,44 @@ cat > "$MOCKBIN/rpm" <<'M'
 [ "${MOCK_RPM_MISSING:-}" = "${2:-}" ] && exit 1
 exit 0
 M
-chmod +x "$MOCKBIN/apt-get" "$MOCKBIN/dnf" "$MOCKBIN/rpm"
+chmod +x "$MOCKBIN/apt-get" "$MOCKBIN/apt-cache" "$MOCKBIN/dnf" "$MOCKBIN/rpm"
 
 echo "distro-lib — pkg_install_optional skip recording:"
 SKIP="$WORK/skipped-apt"
 # shellcheck disable=SC2030  # the subshell-scoped env IS the sandbox
-( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP" MOCK_APT_FAIL="gone-pkg"
+( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP" MOCK_APT_ABSENT="gone-pkg"
   # shellcheck source=/dev/null
   source "$REPO/shared/scripts/distro-lib.sh"
   pkg_install_optional kept-pkg gone-pkg ) >/dev/null 2>&1
-assert_eq "apt: only the skipped package is recorded" "gone-pkg" "$(cat "$SKIP" 2>/dev/null)"
+assert_eq "apt: only the absent package is recorded" "gone-pkg" "$(cat "$SKIP" 2>/dev/null)"
+
+# An install that FAILS on a package the archive does carry is a broken build,
+# not a droppable capability: it must not be recorded as unavailable, because
+# the manifest would then claim the archive lacks a package it ships.
+SKIP_FAIL="$WORK/skipped-apt-fail"
+apt_fail_rc=0
+# shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_FAIL" MOCK_APT_FAIL="broken-pkg"
+  # shellcheck source=/dev/null
+  source "$REPO/shared/scripts/distro-lib.sh"
+  pkg_install_optional broken-pkg ) >/dev/null 2>&1 || apt_fail_rc=$?
+assert_eq "apt: a failing install is not recorded as unavailable" "" "$(cat "$SKIP_FAIL" 2>/dev/null)"
+if [ "$apt_fail_rc" -ne 0 ]; then
+  ok "apt: a failing install surfaces its failure"
+else
+  bad "apt: a failing install surfaces its failure" "nonzero" "$apt_fail_rc"
+fi
+
+# A package skipped by an earlier attempt must not outlive a later success:
+# the manifest describes the image, not the history of arriving at it.
+SKIP_RERUN="$WORK/skipped-rerun"
+printf 'kept-pkg\n' > "$SKIP_RERUN"
+# shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_RERUN"
+  # shellcheck source=/dev/null
+  source "$REPO/shared/scripts/distro-lib.sh"
+  pkg_install_optional kept-pkg ) >/dev/null 2>&1
+assert_eq "apt: a later success clears the stale skip" "" "$(cat "$SKIP_RERUN" 2>/dev/null)"
 
 SKIP2="$WORK/skipped-dnf"
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox

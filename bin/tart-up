@@ -65,7 +65,8 @@ Window mode opens Tart's VM window. Closing that window kills the VM, and a
 windowed launch needs a GUI login session; a daemon context may not be able to
 open the window. Before starting that boot's desktop session, tart-up applies
 the main host display's integer backing scale (native pixels / logical points).
-Set TART_DISPLAY_SCALE to force an integer value; invalid values warn and use 1.
+Set TART_DISPLAY_SCALE to force a scale: non-integers warn and use 1, and values
+outside 1-3 are clamped into that range with a warning.
 Detection failures use 1, and guest application failures warn but continue.
 EOF
 }
@@ -271,10 +272,18 @@ normalize_display_scale() {
 # so every missing-tool, query, parse, or validation failure returns 1 and never
 # prevents a VM start.
 main_display_scale() {
-  local raw scale
+  local raw scale stripped
   if [ "${TART_DISPLAY_SCALE+x}" = x ]; then
     raw="$TART_DISPLAY_SCALE"
     if scale=$(normalize_display_scale "$raw"); then
+      # An override states intent, so silently substituting a different number
+      # is the one place quiet is wrong here — the probe path clamps without
+      # comment because no intent is involved. Compare against the zero-stripped
+      # form so a padded "02" is not reported as out of range.
+      stripped="$raw"
+      while [ "${stripped#0}" != "$stripped" ]; do stripped="${stripped#0}"; done
+      [ "$scale" = "${stripped:-0}" ] || [ "$scale" = "$raw" ] || \
+        echo "${prog:-tart-up}: warning: TART_DISPLAY_SCALE '$raw' is outside the supported 1-3 range; using $scale." >&2
       printf '%s' "$scale"
     else
       echo "${prog:-tart-up}: warning: invalid TART_DISPLAY_SCALE '$raw' (expected an integer); using 1." >&2
@@ -527,8 +536,14 @@ for _ in $(seq 1 30); do
         # creates the first session. VNC deliberately has no equivalent: it has
         # no host window whose backing scale the guest inherits.
         display_scale=$(main_display_scale)
-        if ! tart exec "$VM" /usr/local/bin/tart-stacks-display-scale "$display_scale" >/dev/null 2>&1; then
+        # `2>&1 >/dev/null` captures stderr only. The guest names WHICH step
+        # failed — wrong user, unsupported DE, missing python3 or dbus, an
+        # unparseable XFCE settings file — and discarding that left every cause
+        # looking identical from here, for a symptom ("my desktop is the wrong
+        # size") whose whole diagnosis is that reason.
+        if ! scale_err=$(tart exec "$VM" /usr/local/bin/tart-stacks-display-scale "$display_scale" 2>&1 >/dev/null); then
           echo "$prog: warning: could not apply display scale '$display_scale' in '$VM'; continuing with window gui activation." >&2
+          [ -n "$scale_err" ] && printf '  %s\n' "$scale_err" >&2
         fi
         if ! tart exec "$VM" sudo systemctl isolate graphical.target >/dev/null; then
           echo "$prog: '$VM' window gui activation failed: 'systemctl isolate graphical.target' did not succeed; the VM remains running and headless-usable." >&2

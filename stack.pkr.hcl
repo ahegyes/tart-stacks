@@ -134,6 +134,13 @@ build {
     destination = "/tmp/display-scale.sh"
   }
 
+  # Plasma default-panel launcher pinning, run by gui.sh for the kde DE only.
+  # Standalone so its template transform is testable without a desktop.
+  provisioner "file" {
+    source      = "shared/scripts/kde-panel.sh"
+    destination = "/tmp/kde-panel.sh"
+  }
+
   # Per-stack, per-family package lists, read by 00-stack.sh.
   provisioner "file" {
     source      = "stacks/${var.stack}/packages.dnf"

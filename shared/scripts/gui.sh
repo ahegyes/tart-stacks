@@ -202,82 +202,20 @@ Autolock=false
 LockOnResume=false
 EOF
 
-    # Plasma's unconfigured icon-tasks widget falls back to built-in launchers
-    # that include Discover even when no software center is installed. The
-    # session resolves /usr/local/share before /usr/share, so this template
-    # shadows the packaged default without modifying a package-owned file.
-    kde_panel_source="/usr/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel/contents/layout.js"
-    kde_panel_target="/usr/local/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel"
-    kde_panel_anchor='^[[:space:]]*panel\.addWidget\("org\.kde\.plasma\.icontasks"\)[[:space:]]*$'
-    [ -f "$kde_panel_source" ] || {
-      echo "ERROR: KDE default-panel layout is missing at ${kde_panel_source}." >&2
-      exit 1
-    }
-    kde_panel_anchor_count="$(grep -Ec "$kde_panel_anchor" "$kde_panel_source" || true)"
-    [ "$kde_panel_anchor_count" -eq 1 ] || {
-      echo "ERROR: KDE default-panel layout must contain exactly one unconfigured icon-tasks anchor; found ${kde_panel_anchor_count} in ${kde_panel_source}." >&2
-      exit 1
-    }
-
-    case "$_DISTRO_FAMILY" in
-      dnf) kde_browser_desktop="org.mozilla.firefox.desktop" ;;
-      apt) kde_browser_desktop="firefox-esr.desktop" ;;
-    esac
-    kde_panel_launchers=""
-    if [ -f "/usr/share/applications/${kde_browser_desktop}" ]; then
-      kde_panel_launchers="applications:${kde_browser_desktop}"
+    # Pin the panel launchers to what this image installs. The browser id is
+    # passed empty only when the browser is genuinely absent for this family —
+    # decided by what the optional install actually left behind, not by probing
+    # for the desktop file, so a package present under an unexpected name fails
+    # loudly instead of silently shipping an unpinned browser.
+    kde_browser_desktop=""
+    if pkg_installed "$(gui_browser_packages)"; then
+      case "$_DISTRO_FAMILY" in
+        dnf) kde_browser_desktop="org.mozilla.firefox.desktop" ;;
+        apt) kde_browser_desktop="firefox-esr.desktop" ;;
+      esac
     fi
-    # The browser is optional on Ubuntu; the other launchers correspond to
-    # fail-loud KDE packages, so a missing desktop file is a broken panel
-    # contract rather than an entry to omit silently.
-    for kde_desktop_id in org.kde.dolphin.desktop org.kde.konsole.desktop org.kde.kate.desktop; do
-      [ -f "/usr/share/applications/${kde_desktop_id}" ] || {
-        echo "ERROR: KDE launcher desktop file '${kde_desktop_id}' is missing." >&2
-        exit 1
-      }
-      [ -n "$kde_panel_launchers" ] && kde_panel_launchers="${kde_panel_launchers},"
-      kde_panel_launchers="${kde_panel_launchers}applications:${kde_desktop_id}"
-    done
-
-    install -d -m 755 "${kde_panel_target}/contents"
-    # Name is not decoration: KPackage deduplicates templates by plugin id and this copy wins the
-    # data-root search, so it is the only metadata Plasma sees. The Add Panel menu labels its entry
-    # from the plugin name with no id fallback, and an omitted name renders exactly the blank,
-    # clickable row this whole block exists to remove.
-    cat > "${kde_panel_target}/metadata.json" <<'EOF'
-{
-  "KPackageStructure": "Plasma/LayoutTemplate",
-  "KPlugin": {
-    "Id": "org.kde.plasma.desktop.defaultPanel",
-    "Name": "Default Panel"
-  },
-  "X-Plasma-ContainmentCategories": ["panel"],
-  "X-Plasma-Shell": "plasmashell"
-}
-EOF
-    # Only the launcher anchor changes; the distro template keeps ownership of
-    # panel height, aspect-ratio clamping, and input-method behavior.
-    awk -v launchers="$kde_panel_launchers" '
-      /^[[:space:]]*panel\.addWidget\("org\.kde\.plasma\.icontasks"\)[[:space:]]*$/ {
-        match($0, /^[[:space:]]*/)
-        indent = substr($0, RSTART, RLENGTH)
-        print indent "var tasks = panel.addWidget(\"org.kde.plasma.icontasks\")"
-        print indent "tasks.currentConfigGroup = [\"General\"]"
-        print indent "tasks.writeConfig(\"launchers\", \"" launchers "\")"
-        next
-      }
-      { print }
-    ' "$kde_panel_source" > "${kde_panel_target}/contents/layout.js"
-    # The anchor is spelled twice — once for the count check above, once inside the
-    # awk program — so a future edit could satisfy the first and miss the second,
-    # shadowing the packaged template with an unpatched copy that silently restores
-    # the built-in launchers. Assert the transform actually landed.
-    grep -q "tasks.writeConfig(\"launchers\", \"${kde_panel_launchers}\")" \
-      "${kde_panel_target}/contents/layout.js" || {
-      echo "ERROR: KDE panel launcher transform produced no launchers line in ${kde_panel_target}/contents/layout.js." >&2
-      exit 1
-    }
-    chmod 644 "${kde_panel_target}/metadata.json" "${kde_panel_target}/contents/layout.js"
+    echo "==> Pinning the KDE panel launchers..."
+    bash /tmp/kde-panel.sh "$kde_browser_desktop"
     ;;
   gnome)
     # The local system db only takes effect if the active dconf profile lists

@@ -304,3 +304,14 @@ case "$DE" in
     exit 1
     ;;
 esac
+
+# This is a pre-session tool: tart-up runs it before the display manager creates
+# a session, which is what makes the settings authoritative. A session already
+# running holds these values in memory and rewrites its own config on exit, so a
+# hand-run inside a live desktop writes correctly and changes nothing visible —
+# and exits 0 doing it. Say so rather than look like it worked.
+if pgrep -u "$TARGET_USER" -x xfconfd    >/dev/null 2>&1 ||
+   pgrep -u "$TARGET_USER" -x plasmashell >/dev/null 2>&1 ||
+   pgrep -u "$TARGET_USER" -x gnome-shell >/dev/null 2>&1; then
+  echo "$prog: a desktop session is already running; the new scale applies to the next session." >&2
+fi
