@@ -19,54 +19,17 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 
 ```
 .
-├── README.md  AGENTS.md  CLAUDE.md  SECURITY.md  CONTRIBUTING.md  LICENSE
-├── bin/
-│   ├── tart-new                      # Creates a project VM by cloning a stack base image (GUI flavors via the optional <de> arg), with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size`/`--display` pass-through
-│   ├── tart-rm                       # Deletes a project VM with the teardown `tart delete` lacks (base-image refusal, stop, host-key-pin scrub)
-│   ├── tart-down                     # Stops a VM: resolves the `tart-` alias form and refuses base images, then `tart stop`
-│   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start), `ssh -G`-validated before it goes live
-│   ├── tart-up                       # Starts a stopped VM (+ mounts + net-policy) and waits for SSH — the hook an interactive `ssh tart-<name>` fires; also runnable directly to pre-warm a VM
-│   └── lib/                          # config.sh + common.sh — sourced helpers (config paths, VM state/liveness, name-pattern matching); never on PATH
-├── script/
-│   ├── setup                         # Host install (run via `make setup`): symlinks commands, completion, SSH Include, forwards + mounts scaffold, closing tart-ssh-sync run; --uninstall (= `make uninstall`) is the inverse
-│   ├── smoke                         # End-to-end proof of a built image (run via `make smoke`): clone → boot → ssh → hostname assert → teardown; an optional <de> arg smokes a GUI flavor and asserts its VNC surface
-│   └── test                          # Runs the test suite (test/*.sh) via `make test` / CI
-├── completions/
-│   └── _tart-new                     # zsh completion for tart-new; installed by make setup
-├── test/
-│   ├── tart-new.sh                   # Characterization tests for tart-new (validation gates + clone/set wiring; mocks tart, fixture stacks/)
-│   ├── tart-rm.sh                    # Characterization tests for tart-rm (refusal gates, stop → delete ordering, known-hosts scrub)
-│   ├── tart-up.sh                    # Characterization tests for tart-up's runtime flow (resolve/prefix, base-image refusal, stopped→run w/ netpolicy + mounts, hostname; mocks tart + nc + ps)
-│   ├── setup.sh                      # Characterization tests for script/setup — install + --uninstall, fully sandboxed
-│   ├── smoke.sh                      # Characterization tests for script/smoke (stage ordering, teardown trap; mocked — no real VM)
-│   ├── kde-panel.sh                  # Behavioral tests for the KDE panel launcher pinning (synthetic Plasma 5/6 templates)
-│   ├── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
-│   ├── mise-lib.sh                   # Characterization tests for mise-lib's smoke_gate helper
-│   ├── gui-lib.sh                    # Characterization tests for gui-lib's DE × family selectors + the shared/desktops lockstep
-│   └── distro-lib.sh                 # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt)
-├── shared/
-│   ├── scripts/                      # Provisioners shared across all stacks (00-base, mise, user-config, terminfo, 99-finalize, gui + gui-lib)
-│   ├── gui/README.md                 # GUI-flavor image contract: what a GUI=1 image exposes and how a boot activates it
-│   └── files/
-│       ├── xterm-ghostty.terminfo    # Ghostty terminfo, compiled into the image by terminfo.sh
-│       └── zshrc                     # Baseline in-VM shell config
-├── stacks/
-│   ├── php/                          # A stack = per-stack content only (no per-stack Packer file)
-│   │   ├── scripts/                  # Stack-specific: 00-stack.sh (build deps), mise-install.sh (runtimes + smoke test)
-│   │   ├── files/
-│   │   │   └── mise.toml             # Stack-specific tool versions
-│   │   ├── packages.dnf              # Native build deps, dnf-family names; every entry pairs with a smoke-gate check
-│   │   ├── packages.apt              # Same capabilities, apt-family names
-│   │   └── README.md                 # Stack-specific details (what's installed, customization, troubleshooting)
-│   └── jvm/                          # Same shape; JVM runtimes (Temurin 25, Maven/Gradle/sbt/Kotlin/scala-cli, uv, Node)
-├── stack.pkr.hcl                     # ONE parameterized Packer template (`-var stack=<name> -var distro=<distro>` [+ `-var gui=true -var de=<de>`])
-├── shared/distros                    # Supported distro list (one token per line); consumed by Makefile, tart-new, CI
-├── shared/desktops                   # Desktop environments the GUI layer can bake (one token per line); consumed by Makefile, tart-new (+ completion), and the base-image guard
-├── templates/stack/                  # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/
-├── Makefile                          # Single top-level Makefile; commands take STACK=<name> DISTRO=<distro> [GUI=1 DE=<de>]
-├── .shellcheckrc  .gitignore         # shellcheck follows sources into bin/lib; Packer artifacts stay uncommitted
-└── .github/                          # CI (workflows/validate.yml: packer validate + shellcheck + tests; matrix is stack × distro) + dependabot.yml
+├── bin/          host commands, symlinked onto PATH by `make setup`
+├── script/       host dev-tasks run via `make` (setup, smoke, test)
+├── shared/       stack-agnostic in-VM provisioning + the GUI layer
+├── stacks/       one directory per stack (php, jvm): packages + install scripts
+├── templates/    skeleton `make scaffold` stamps into a new stack
+└── test/         the mocked suite `make test` runs
 ```
+
+[`AGENTS.md`](./AGENTS.md) carries the annotated version — every file with a
+one-line description of what it is. It is the single map; this list is only an
+orientation.
 
 `script/` (singular) is the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`; `scripts/` (plural, under `shared/` and `stacks/*/`) are in-VM provisioner collections. Different roles, hence the different names.
 
@@ -98,6 +61,15 @@ Open Secretive, create a key (**+**), and name it `Tart VM`. **Choose its authen
 grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub   # expect ONE file
 ln -sf "$(grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub)" ~/.ssh/tart-vm.pub
 ```
+
+**Using a different agent?** Secretive is a recommendation, not a requirement. `tart-ssh-sync` writes whatever socket `TART_IDENTITY_AGENT` names into the generated config — set it before running `make setup` (which ends with a sync) or before any later `tart-ssh-sync`:
+
+```sh
+TART_IDENTITY_AGENT=~/.1password/agent.sock make setup   # 1Password
+TART_IDENTITY_AGENT='$SSH_AUTH_SOCK' make setup          # whatever agent your shell already has
+```
+
+The literal string `$SSH_AUTH_SOCK` is meaningful to OpenSSH's `IdentityAgent` — quote it so your shell passes it through. Either way, point `~/.ssh/tart-vm.pub` at the public half of the key you want VMs to trust; the rest of this section is Secretive-specific detail.
 
 If the first command lists **more than one** file, you have duplicate-named keys — tell them apart with `ssh-keygen -lf <file>` and symlink the specific one by hand. (An extra key in Secretive is harmless: `IdentitiesOnly yes` in the generated config means SSH only ever offers the pinned `~/.ssh/tart-vm.pub`.)
 
@@ -337,7 +309,7 @@ nobody is talking to.
 
 1. Add the distro token (one line) to `shared/distros`.
 2. Confirm a `ghcr.io/cirruslabs/<distro>` Tart image exists (Cirrus must publish it).
-3. If the distro belongs to a new package family (neither dnf nor apt), add a branch to `shared/scripts/distro-lib.sh` that exports `_DISTRO_FAMILY` and implements `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean`, and the relevant `repo_add_*` functions.
+3. A distro in an existing family (dnf or apt) needs nothing further — `rocky` works with the steps above. A **new package family** is a code change, not configuration: add a branch to `shared/scripts/distro-lib.sh` exporting `_DISTRO_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `stack.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
 4. For each stack that has native build deps, add the equivalent packages to `packages.<new-family>` in that stack's directory.
 5. CI picks up the new distro automatically (matrix is `stacks/*` × `shared/distros`).
 

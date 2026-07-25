@@ -173,6 +173,25 @@ fights or bypasses it:
   `cups-browsed`) are disabled.
 - No firewall is added or reconfigured.
 
+## Adding a desktop
+
+The DE token is the axis this layer varies on, so a new one touches every
+selector rather than a config file:
+
+1. Add the token to `shared/desktops` (that is what `tart-new`, the Makefile's
+   `check-de`, and the base-image guard read).
+2. Add a row to each family branch of `gui_packages`, `gui_app_packages`,
+   `gui_scale_packages`, `gui_dm_unit` and `gui_session_candidates` in
+   `shared/scripts/gui-lib.sh` — dnf and apt both.
+3. Add a `apply_<de>` branch to `shared/scripts/display-scale.sh`, using the
+   desktop's own config tool. Scale is per-DE; there is no generic path.
+4. If the desktop needs anything baked beyond packages (a panel layout, an
+   autologin stanza), add it to the `case "$DE"` in `shared/scripts/gui.sh`.
+5. Extend `test/gui-lib.sh` (the selectors are asserted in lockstep with
+   `shared/desktops`, so an unlisted token fails there) and
+   `test/display-scale.sh`.
+6. Build the cell and add it to the matrix below with an honest status.
+
 ## Support matrix
 
 `DE` must be a line in `shared/desktops`; the layer is Xvnc-based, so a cell
@@ -182,15 +201,13 @@ desktop that can't start.
 
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
-| `kde` (default) | ✅ image verified | ⚠️ layer verified before the panel path | ❌ unsupported — Plasma 6 on Debian 13 is Wayland-only | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
+| `kde` (default) | ✅ image verified | ⚠️ | ❌ no `plasma-x11-session` package — see below | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
 | `gnome` | ✅ image verified | ⚠️ built to contract, not live-verified | ⚠️ | `gnome-xorg` / `gnome` |
 | `xfce` | ✅ image verified | ⚠️ | ⚠️ | `xfce` |
 
 ✅ image verified = a full `GUI=1` image build was booted and the whole
 contract exercised (VNC session over an SSH tunnel, loopback-only bind,
-parallel SSH, egress posture). ✅ layer verified = the provisioning layer was
-exercised on a live VM of that distro (VNC session up, loopback bind,
-NetworkManager pinned unmanaged), without a full image build. ⚠️ = package
+parallel SSH, egress posture). ⚠️ = package
 sets and session names were verified against the live distro repos, but no
 end-to-end boot has been run — the build's own asserts are the gate.
 Re-verify a cell after building it the first time, and after a change to the
@@ -198,6 +215,13 @@ contract it vouches for — a status earned before a new code path does not cove
 it. The fedora column was re-earned by building each DE and asserting the
 applied scale in a live session (`Xft.dpi` 96 → 192 → 96) and, for KDE, the
 panel's pinned launchers.
+
+On debian/kde specifically: the preflight refuses the cell because Debian's
+`plasma-workspace` has no companion `plasma-x11-session` package to probe for.
+Debian 13's `plasma-workspace` does ship `/usr/share/xsessions/plasmax11.desktop`,
+so the cell may in fact be buildable — nobody has run it end to end. Until
+someone does, it stays ❌: the preflight refusing early beats discovering it
+after a multi-minute desktop install.
 
 ## Sizing
 

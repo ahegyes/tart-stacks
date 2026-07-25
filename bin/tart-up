@@ -527,11 +527,11 @@ for _ in $(seq 1 30); do
         # creates the first session. VNC deliberately has no equivalent: it has
         # no host window whose backing scale the guest inherits.
         display_scale=$(main_display_scale)
-        # `2>&1 >/dev/null` captures stderr only. The guest names WHICH step
+        # `2>&1 >/dev/null` captures stderr only: the guest names WHICH step
         # failed — wrong user, unsupported DE, missing python3 or dbus, an
-        # unparseable XFCE settings file — and discarding that left every cause
-        # looking identical from here, for a symptom ("my desktop is the wrong
-        # size") whose whole diagnosis is that reason.
+        # unparseable XFCE settings file — and that reason is the whole
+        # diagnosis of a symptom ("my desktop is the wrong size") that looks
+        # identical from here whatever caused it.
         if ! scale_err=$(tart exec "$VM" /usr/local/bin/tart-stacks-display-scale "$display_scale" 2>&1 >/dev/null); then
           echo "$prog: warning: could not apply display scale '$display_scale' in '$VM'; continuing with window gui activation." >&2
           [ -n "$scale_err" ] && printf '  %s\n' "$scale_err" >&2

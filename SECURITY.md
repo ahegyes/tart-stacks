@@ -17,9 +17,10 @@ Please do not open a public issue for security reports.
 Every stack inherits the same hardened SSH posture from `shared/scripts/99-finalize.sh`:
 
 - **No password authentication.** `99-finalize.sh` writes `/etc/ssh/sshd_config.d/00-vm-hardening.conf` with `PasswordAuthentication no`, `PermitRootLogin no`, and `KbdInteractiveAuthentication no`. The `00-` prefix is load-bearing — it wins over cloud-init's `50-cloud-init.conf` which re-enables password auth.
-- **Admin password locked.** `99-finalize.sh` runs `passwd -l admin`, setting the hash to `!`. Password login, `su`, and password-based `sudo` are all impossible. Only the SSH key authorized by `99-finalize.sh` (same script) grants access.
+- **Admin password locked.** `99-finalize.sh` runs `passwd -l admin`, setting the hash to `!`. Password login, `su`, and password-based `sudo` are all impossible. Only the SSH key authorized by `99-finalize.sh` (same script) grants access — except on GUI images, where a display-manager autologin also opens a console session (next bullet).
 - **NOPASSWD sudo for admin.** A `/etc/sudoers.d/admin-nopasswd` drop-in (validated with `visudo -cf` before landing on disk) ensures interactive `sudo` still works inside clones, since the password is locked.
 - **The base images are intended only as clone sources.** They should never be booted directly or exposed to a network on their own. Clones get the hardened sshd config on first boot.
+- **GUI images add a console and a loopback VNC surface.** A `GUI=1` build bakes display-manager autologin for the `admin` account and a TigerVNC session with `SecurityTypes=None`, bound to `127.0.0.1` only — reached over an SSH tunnel, so the SSH key remains the authentication. Anyone who can see the VM's window or reach that tunnel has the account, NOPASSWD sudo included. Full contract: [`shared/gui/README.md`](./shared/gui/README.md).
 - **Optional network egress confinement.** `~/.config/tart-stacks/netpolicy` (consumed by `tart-up`, applied at VM start — not baked into the image) passes Tart `--net-*` flags to restrict a VM's outbound network; see the [README](./README.md#5-network-egress-policy-optional). Absent ⇒ default unfiltered NAT.
 
 ## Out of scope (inherited trust)
