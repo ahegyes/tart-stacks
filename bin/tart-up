@@ -31,13 +31,7 @@ prog="${0##*/}"
 
 # Resolve this script's real dir (following the ~/.local/bin symlink that
 # script/setup installs) to source the shared bin/lib helpers.
-src="${BASH_SOURCE[0]}"
-while [ -L "$src" ]; do
-  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
-  src=$(readlink "$src")
-  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
-done
-SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 # shellcheck source=bin/lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
@@ -65,7 +59,8 @@ Window mode opens Tart's VM window. Closing that window kills the VM, and a
 windowed launch needs a GUI login session; a daemon context may not be able to
 open the window. Before starting that boot's desktop session, tart-up applies
 the main host display's integer backing scale (native pixels / logical points).
-Set TART_DISPLAY_SCALE to force an integer value; invalid values warn and use 1.
+Set TART_DISPLAY_SCALE to force a scale: non-integers warn and use 1, and values
+outside 1-3 are clamped into that range with a warning.
 Detection failures use 1, and guest application failures warn but continue.
 EOF
 }
@@ -88,40 +83,18 @@ tart_need_cmd jq   "Install: brew install jq"
 # 30 silent probe failures and a misleading ":22 timeout" diagnosis.
 [ -x "$NC_BIN" ] || { echo "$prog: SSH probe binary '$NC_BIN' not found or not executable." >&2; exit 1; }
 
-# A nonzero tart_vm_state means the tool is broken, not that the name missed —
-# bail instead of retrying the stripped alias name against the same broken tool.
+VM=$(tart_resolve_vm "$VM" " Or create it: tart-new ${VM#tart-} <stack> <distro>.") || exit 1
+# A nonzero tart_vm_state means the tool is broken, not that the name missed.
 list_failed() {
   echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
   exit 1
 }
-
-# The SSH alias is `tart-<name>` (so `%n` arrives prefixed), while Tart stores
-# tart-stacks VMs bare. Try the name as given; only a missed alias has a second,
-# stripped form to resolve. A bare miss is final because `tart-` is reserved
-# for aliases, not stored VMs.
 STATE=$(tart_vm_state "$VM") || list_failed
-if [ -z "$STATE" ]; then
-  case "$VM" in
-    tart-*)
-      ALT="${VM#tart-}"
-      STATE=$(tart_vm_state "$ALT") || list_failed
-      if [ -z "$STATE" ]; then
-        echo "$prog: VM '$VM' not found (also tried '$ALT'). Try 'tart list' or 'tart-new $ALT <stack> <distro>'." >&2
-        exit 1
-      fi
-      VM="$ALT"
-      ;;
-    *)
-      echo "$prog: VM '$VM' not found. Try 'tart list' or 'tart-new $VM <stack> <distro>'." >&2
-      exit 1
-      ;;
-  esac
-fi
 
 # Base images (the `<distro>-base` bootstrap intermediate + every
 # <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — but
 # the `tart-*` SSH wildcard matches them too. Refuse.
-if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
+if tart_is_base_image "$VM" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <distro>'." >&2
   exit 1
 fi
@@ -293,10 +266,18 @@ normalize_display_scale() {
 # so every missing-tool, query, parse, or validation failure returns 1 and never
 # prevents a VM start.
 main_display_scale() {
-  local raw scale
+  local raw scale stripped
   if [ "${TART_DISPLAY_SCALE+x}" = x ]; then
     raw="$TART_DISPLAY_SCALE"
     if scale=$(normalize_display_scale "$raw"); then
+      # An override states intent, so silently substituting a different number
+      # is the one place quiet is wrong here — the probe path clamps without
+      # comment because no intent is involved. Compare against the zero-stripped
+      # form so a padded "02" is not reported as out of range.
+      stripped="$raw"
+      while [ "${stripped#0}" != "$stripped" ]; do stripped="${stripped#0}"; done
+      [ "$scale" = "${stripped:-0}" ] || [ "$scale" = "$raw" ] || \
+        echo "${prog:-tart-up}: warning: TART_DISPLAY_SCALE '$raw' is outside the supported 1-3 range; using $scale." >&2
       printf '%s' "$scale"
     else
       echo "${prog:-tart-up}: warning: invalid TART_DISPLAY_SCALE '$raw' (expected an integer); using 1." >&2
@@ -338,12 +319,12 @@ vnc_listener_state() {
   local table local_addr found_v4=0
   VNC_VERIFY_STATE="read-failure"
   VNC_VERIFY_ERROR=""
+  # The sudo retry is not redundant: ss lives in /usr/sbin on some guests, off
+  # the login PATH but on sudo's secure_path.
   if ! table=$(tart exec "$VM" ss -tln 2>/dev/null); then
-    if ! table=$(tart exec "$VM" ss -ltn 2>/dev/null); then
-      if ! table=$(tart exec "$VM" sudo ss -tln 2>/dev/null); then
-        VNC_VERIFY_ERROR="could not read the guest TCP listener table with ss"
-        return 0
-      fi
+    if ! table=$(tart exec "$VM" sudo ss -tln 2>/dev/null); then
+      VNC_VERIFY_ERROR="could not read the guest TCP listener table with ss"
+      return 0
     fi
   fi
   while IFS=$' \t' read -r _ _ _ local_addr _; do
@@ -418,9 +399,9 @@ fi
 DIR_ARGS=()
 while IFS= read -r d; do
   [ -n "$d" ] && DIR_ARGS+=("$d")
-done < <(dir_args "${VM#tart-}")
+done < <(dir_args "$VM")
 
-GUI_FILE_MODE=$(gui_file_mode "${VM#tart-}")
+GUI_FILE_MODE=$(gui_file_mode "$VM")
 GUI_MODE="${GUI_OVERRIDE:-$GUI_FILE_MODE}"
 
 # Guest-agent provisioning (hostname + host-key regen, below) runs only on a
@@ -441,7 +422,7 @@ if [ "$STATE" = "running" ]; then
   # a nonstandard `tart run` invocation, so stopping is the operator's call.
   if ! tart_vm_alive "$VM"; then
     echo "$prog: '$VM' is listed as running, but no 'tart run $VM' process exists — likely crashed or wedged (or started by a nonstandard 'tart run' invocation)." >&2
-    echo "$prog: run 'tart stop $VM' then retry ssh, or 'tart-supervise --install $VM' to auto-recover crashes." >&2
+    echo "$prog: run 'tart stop $VM' then retry ssh." >&2
     exit 1
   fi
   if [ "${#DIR_ARGS[@]}" -gt 0 ]; then
@@ -455,11 +436,6 @@ if [ "$STATE" = "running" ]; then
   fi
 elif [ "$STATE" = "stopped" ]; then
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
-  # Starting the VM is what retracts an operator's deliberate stop, so the mark
-  # tart-down left is cleared here rather than by a separate re-arm step. It is
-  # dropped before the launch: a supervisor that wakes mid-start must not find a
-  # stale mark and decline to watch the instance now coming up.
-  rm -f "$(tart_stop_mark "$VM")" 2>/dev/null || true
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
   # tart's --net-* family is mutually exclusive, so keep them visually adjacent.
@@ -545,8 +521,14 @@ for _ in $(seq 1 30); do
         # creates the first session. VNC deliberately has no equivalent: it has
         # no host window whose backing scale the guest inherits.
         display_scale=$(main_display_scale)
-        if ! tart exec "$VM" /usr/local/bin/tart-stacks-display-scale "$display_scale" >/dev/null 2>&1; then
+        # `2>&1 >/dev/null` captures stderr only: the guest names WHICH step
+        # failed — wrong user, unsupported DE, missing python3 or dbus, an
+        # unparseable XFCE settings file — and that reason is the whole
+        # diagnosis of a symptom ("my desktop is the wrong size") that looks
+        # identical from here whatever caused it.
+        if ! scale_err=$(tart exec "$VM" /usr/local/bin/tart-stacks-display-scale "$display_scale" 2>&1 >/dev/null); then
           echo "$prog: warning: could not apply display scale '$display_scale' in '$VM'; continuing with window gui activation." >&2
+          [ -n "$scale_err" ] && printf '  %s\n' "$scale_err" >&2
         fi
         if ! tart exec "$VM" sudo systemctl isolate graphical.target >/dev/null; then
           echo "$prog: '$VM' window gui activation failed: 'systemctl isolate graphical.target' did not succeed; the VM remains running and headless-usable." >&2
@@ -577,7 +559,7 @@ for _ in $(seq 1 30); do
           vnc_fail_closed
           exit 1
         fi
-        echo "$prog: VNC ready for '$VM'. Tunnel with: ssh -L 5901:127.0.0.1:5901 tart-${VM#tart-} ; then point a VNC client at localhost:5901." >&2 ;;
+        echo "$prog: VNC ready for '$VM'. Tunnel with: ssh -L 5901:127.0.0.1:5901 tart-$VM ; then point a VNC client at localhost:5901." >&2 ;;
     esac
     exit 0
   fi

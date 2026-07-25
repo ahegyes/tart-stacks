@@ -39,7 +39,9 @@ A conventional browser is a DE-independent, optional capability: Firefox on the
 dnf family and Firefox ESR on the apt family where the distro publishes it.
 Ubuntu's `firefox` deb is a snap transition stub and `firefox-esr` is absent, so
 Ubuntu GUI images record `firefox-esr` under `skipped-optional-packages` in the
-manifest instead of pulling snapd or failing the build.
+manifest instead of pulling snapd or failing the build. On dnf/GNOME the browser
+arrives anyway as a weak dependency of the desktop set — the explicit row is
+what guarantees one on KDE and XFCE, and on the apt family.
 
 KDE's fresh-session panel pins the installed browser when present, then Dolphin,
 Konsole, and Kate. Discover is deliberately absent: no software-center package
@@ -77,13 +79,13 @@ for factor 1.
 line in `~/.config/tart-stacks/gui` (`<bare-vm-name> headless|vnc|window`).
 The file fails closed on malformed or duplicate entries; an absent line means
 headless. Every `tart-up` path honors it, including the `ssh tart-<vm>`
-auto-start and `tart-supervise` restarts. An engine such as workbench renders
+auto-start. An engine such as workbench renders
 this file from its own config.
 
 **Window mode needs a windowed launch.** `tart-up --gui=window` omits
 `--no-graphics`, then drives the in-guest activation. Closing the VM window
 kills the VM. Opening one also needs a GUI login session, so a
-`tart-supervise` daemon context may be unable to open it; stop the VM and start
+daemon context may be unable to open it; stop the VM and start
 it from a terminal to recover a visible window. VNC has no windowed-launch
 dependency and stays behind the loopback-only SSH tunnel.
 
@@ -134,14 +136,21 @@ dependency and stays behind the loopback-only SSH tunnel.
   `/usr/local/bin/tart-stacks-display-scale <factor>` as the dev user **before**
   isolating `graphical.target`. This ordering makes the scale visible to the
   first desktop session. `TART_DISPLAY_SCALE=<integer>` forces the host value;
-  invalid overrides warn and use 1. Scale-probe failures also yield 1, and a
+  non-integers warn and use 1, and values outside 1–3 are clamped with a
+  warning. The probe runs before the window exists, so it can only read the
+  *main* display: on a mixed-scale setup a window dragged to a display with a
+  different backing scale is sized for the main one, and `TART_DISPLAY_SCALE`
+  is the override for that. Scale-probe failures also yield 1, and a
   guest-application failure warns but does not block the VM or desktop.
 - **The scale applier owns only each DE's scale keys.** KDE writes
   `forceFontDPI`, `ScaleFactor`, and `ScreenScaleFactors`; GNOME writes its
   interface window scale while keeping the independent text multiplier at its
   default; XFCE writes its GDK window scale and Xft DPI. Reapplying a different
   factor replaces those values, and factor 1 removes/resets them so a VM moved
-  to a non-HiDPI host does not retain an earlier scale.
+  to a non-HiDPI host does not retain an earlier scale. It is a *pre-session*
+  tool: a running desktop holds these values in memory and rewrites its own
+  config on exit, so running it by hand inside a live session applies to the
+  next session, and says so.
 
 Scale detection is intentionally window-only. VNC has no host window whose
 device-pixel framebuffer inherits a backing scale, so its 1920×1080/RandR
@@ -164,6 +173,25 @@ fights or bypasses it:
   `cups-browsed`) are disabled.
 - No firewall is added or reconfigured.
 
+## Adding a desktop
+
+The DE token is the axis this layer varies on, so a new one touches every
+selector rather than a config file:
+
+1. Add the token to `shared/desktops` (that is what `tart-new`, the Makefile's
+   `check-de`, and the base-image guard read).
+2. Add a row to each family branch of `gui_packages`, `gui_app_packages`,
+   `gui_scale_packages`, `gui_dm_unit` and `gui_session_candidates` in
+   `shared/scripts/gui-lib.sh` — dnf and apt both.
+3. Add a `apply_<de>` branch to `shared/scripts/display-scale.sh`, using the
+   desktop's own config tool. Scale is per-DE; there is no generic path.
+4. If the desktop needs anything baked beyond packages (a panel layout, an
+   autologin stanza), add it to the `case "$DE"` in `shared/scripts/gui.sh`.
+5. Extend `test/gui-lib.sh` (the selectors are asserted in lockstep with
+   `shared/desktops`, so an unlisted token fails there) and
+   `test/display-scale.sh`.
+6. Build the cell and add it to the matrix below with an honest status.
+
 ## Support matrix
 
 `DE` must be a line in `shared/desktops`; the layer is Xvnc-based, so a cell
@@ -173,21 +201,52 @@ desktop that can't start.
 
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
-| `kde` (default) | ✅ image verified | ✅ layer verified | ❌ unsupported — Plasma 6 on Debian 13 is Wayland-only | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
-| `gnome` | ⚠️ built to contract, not live-verified | ⚠️ | ⚠️ | `gnome-xorg` / `gnome` |
-| `xfce` | ⚠️ | ⚠️ | ⚠️ | `xfce` |
+| `kde` (default) | ✅ image verified | ✅ image verified | ✅ image verified | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
+| `gnome` | ✅ image verified | ✅ image verified | ✅ image verified | `gnome-xorg` / `gnome` |
+| `xfce` | ✅ image verified | ✅ image verified | ✅ image verified | `xfce` |
 
-✅ image verified = a full `GUI=1` image build was booted and the whole
-contract exercised (VNC session over an SSH tunnel, loopback-only bind,
-parallel SSH, egress posture). ✅ layer verified = the provisioning layer was
-exercised on a live VM of that distro (VNC session up, loopback bind,
-NetworkManager pinned unmanaged), without a full image build. ⚠️ = package
-sets and session names were verified against the live distro repos, but no
+✅ image verified = a full `GUI=1` build was booted and its desktop contract
+asserted in a live session: the applied scale (`Xft.dpi` 96 → 192 → unscaled),
+the manifest's baked `gui:` line, the browser — or, on ubuntu, the recorded
+`firefox-esr` gap — and for KDE the panel's pinned launchers. ⚠️ = package sets
+and session names were checked against the live distro repos, but no
 end-to-end boot has been run — the build's own asserts are the gate.
-Re-verify a cell after building it the first time.
+Re-verify a cell after building it the first time, and after a change to the
+contract it vouches for — a status earned before a new code path does not cover
+it.
+
+The ✅ deliberately does not span the network posture above. That is not a
+per-cell property: the VNC bind is loopback-only by the session config this
+layer installs, and `tart-up` fails closed on a non-loopback listener before
+reporting the desktop ready — both covered by the test suite, on every cell at
+once, rather than re-observed per distro.
+
+A reset lands as either `Xft.dpi: 96` or no `Xft.dpi` resource at all, and both
+are correct: resetting removes the override rather than writing a 1x value.
+Which one a cell shows is a property of the distro's xfce packaging — debian
+ships a populated `xsettings` channel whose packaged default republishes 96,
+while on ubuntu that file does not exist until the applier creates it, so there
+is nothing left to republish. Assert "unscaled", never the literal 96.
+
+Known issue, ubuntu only: `xfconfd` writes its channel by truncating in place,
+with no fsync and no atomic rename, and it outlives the VNC unit it served
+(alive ~5 s after `systemctl stop`, gone by ~15 s). Powering the VM off inside
+that window leaves `xsettings.xml` at zero bytes — reproduced 3/3 on ubuntu
+(xfconf 4.18.1) and 0/3 on debian (4.20.0, which writes durably). The applier
+treats an empty file as an absent one, so scaling still works and the file is
+rebuilt on the next run; only settings made through the desktop's own tools are
+lost. Waiting ~20 s between stopping the desktop and stopping the VM avoids it.
+
+Every distro × DE cell is supported; there is no refused combination. The X
+session assert above is the only gate, and it reads `/usr/share/xsessions/`
+rather than package names — which is what a cell actually needs. Debian's
+`plasma-workspace` ships no `plasma-x11-session` package but does ship
+`plasmax11.desktop`, so a package-name probe refused a cell that builds and
+boots. Add a distro or a DE and the assert covers it without a new special case.
 
 ## Sizing
 
-A DE adds roughly 1.5–2.5 GB to the image and ~1 GB RAM to a boot that
+A DE adds roughly 1.8–2.8 GB to the image (the browser alone is ~320 MB) and
+~1 GB RAM to a boot that
 activates it. Give GUI clones headroom: `tart-new <name> <stack> <distro>`
 resources or `tart set` (`--memory 8192` is comfortable for KDE).

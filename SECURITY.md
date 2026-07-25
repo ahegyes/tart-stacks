@@ -17,9 +17,10 @@ Please do not open a public issue for security reports.
 Every stack inherits the same hardened SSH posture from `shared/scripts/99-finalize.sh`:
 
 - **No password authentication.** `99-finalize.sh` writes `/etc/ssh/sshd_config.d/00-vm-hardening.conf` with `PasswordAuthentication no`, `PermitRootLogin no`, and `KbdInteractiveAuthentication no`. The `00-` prefix is load-bearing — it wins over cloud-init's `50-cloud-init.conf` which re-enables password auth.
-- **Admin password locked.** `99-finalize.sh` runs `passwd -l admin`, setting the hash to `!`. Password login, `su`, and password-based `sudo` are all impossible. Only the SSH key authorized by `99-finalize.sh` (same script) grants access.
+- **Admin password locked.** `99-finalize.sh` runs `passwd -l admin`, setting the hash to `!`. Password login, `su`, and password-based `sudo` are all impossible. Only the SSH key authorized by `99-finalize.sh` (same script) grants access — except on GUI images, where a display-manager autologin also opens a console session (next bullet).
 - **NOPASSWD sudo for admin.** A `/etc/sudoers.d/admin-nopasswd` drop-in (validated with `visudo -cf` before landing on disk) ensures interactive `sudo` still works inside clones, since the password is locked.
 - **The base images are intended only as clone sources.** They should never be booted directly or exposed to a network on their own. Clones get the hardened sshd config on first boot.
+- **GUI images add a console and a loopback VNC surface.** A `GUI=1` build bakes display-manager autologin for the `admin` account and a TigerVNC session with `SecurityTypes=None`, bound to `127.0.0.1` only — reached over an SSH tunnel, so the SSH key remains the authentication. Anyone who can see the VM's window or reach that tunnel has the account, NOPASSWD sudo included. Full contract: [`shared/gui/README.md`](./shared/gui/README.md).
 - **Optional network egress confinement.** `~/.config/tart-stacks/netpolicy` (consumed by `tart-up`, applied at VM start — not baked into the image) passes Tart `--net-*` flags to restrict a VM's outbound network; see the [README](./README.md#5-network-egress-policy-optional). Absent ⇒ default unfiltered NAT.
 
 ## Out of scope (inherited trust)
@@ -38,7 +39,7 @@ apt-family (Debian/Ubuntu) sources:
 - `github.com/zellij-org/zellij/releases/latest` — the zellij static-musl release tarball (no apt package exists).
 
 Runtime sources fetched at build time (a class, not an exhaustive list — the exact set follows each stack's `files/mise.toml`):
-- Everything mise resolves and downloads for the tools declared in the per-stack `files/mise.toml` — e.g. php-src (compiled via the asdf-php plugin), the Node dist tarballs, Temurin JDK via the Adoptium API, the Maven/Gradle/sbt/Kotlin/scala-cli release artifacts, uv. Each download's integrity is whatever mise and the respective backend enforce.
+- Everything mise resolves and downloads for the tools declared in the per-stack `files/mise.toml` — e.g. php-src (compiled via the vfox-php plugin), the Node dist tarballs, Temurin JDK via the Adoptium API, the Maven/Gradle/sbt/Kotlin/scala-cli release artifacts, uv. Each download's integrity is whatever mise and the respective backend enforce.
 - `pecl.php.net` — the PECL extensions the php stack's `mise-install.sh` installs.
 
 Stack-specific upstream sources:

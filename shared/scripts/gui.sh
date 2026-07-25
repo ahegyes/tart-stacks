@@ -25,21 +25,6 @@ gui_require_de "$DE"
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"
 
-# Fast preflight for the one cell known unsupported: Plasma 6 on the apt
-# family ships no X11 session (Debian 13 is Wayland-only), and the VNC layer
-# is Xvnc-based. Failing here beats failing the same way after a multi-minute
-# DE install; the post-install session assert below stays the general gate.
-if [ "$_DISTRO_FAMILY" = "apt" ] && [ "$DE" = "kde" ]; then
-  plasma_ver="$(apt-cache policy plasma-workspace 2>/dev/null | sed -n 's/^  Candidate: //p')"
-  case "$plasma_ver" in
-    4:6*|4:7*)
-      if ! apt-cache policy plasma-x11-session 2>/dev/null | grep -q '^  Candidate: [0-9]'; then
-        echo "ERROR: kde on this distro is Wayland-only (plasma-workspace ${plasma_ver}, no plasma-x11-session) — the Xvnc-based GUI layer cannot drive it. Use de=xfce or de=gnome here, or kde on fedora/ubuntu. See shared/gui/README.md." >&2
-        exit 1
-      fi ;;
-  esac
-fi
-
 echo "==> Installing ${DE} desktop + display manager + applications + agent + TigerVNC..."
 # shellcheck disable=SC2046  # intentional word-split of the package lists
 gui_pkg_install $(gui_packages "$DE") $(gui_app_packages "$DE") $(gui_agent_packages) $(gui_scale_packages "$DE") $(gui_vnc_packages)
@@ -202,82 +187,24 @@ Autolock=false
 LockOnResume=false
 EOF
 
-    # Plasma's unconfigured icon-tasks widget falls back to built-in launchers
-    # that include Discover even when no software center is installed. The
-    # session resolves /usr/local/share before /usr/share, so this template
-    # shadows the packaged default without modifying a package-owned file.
-    kde_panel_source="/usr/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel/contents/layout.js"
-    kde_panel_target="/usr/local/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel"
-    kde_panel_anchor='^[[:space:]]*panel\.addWidget\("org\.kde\.plasma\.icontasks"\)[[:space:]]*$'
-    [ -f "$kde_panel_source" ] || {
-      echo "ERROR: KDE default-panel layout is missing at ${kde_panel_source}." >&2
-      exit 1
-    }
-    kde_panel_anchor_count="$(grep -Ec "$kde_panel_anchor" "$kde_panel_source" || true)"
-    [ "$kde_panel_anchor_count" -eq 1 ] || {
-      echo "ERROR: KDE default-panel layout must contain exactly one unconfigured icon-tasks anchor; found ${kde_panel_anchor_count} in ${kde_panel_source}." >&2
-      exit 1
-    }
-
-    case "$_DISTRO_FAMILY" in
-      dnf) kde_browser_desktop="org.mozilla.firefox.desktop" ;;
-      apt) kde_browser_desktop="firefox-esr.desktop" ;;
-    esac
-    kde_panel_launchers=""
-    if [ -f "/usr/share/applications/${kde_browser_desktop}" ]; then
-      kde_panel_launchers="applications:${kde_browser_desktop}"
+    # Pin the panel launchers to what this image installs. The browser id is
+    # passed empty only when the browser is genuinely absent for this family —
+    # decided by what the optional install actually left behind, not by probing
+    # for the desktop file, so a package present under an unexpected name fails
+    # loudly instead of silently shipping an unpinned browser.
+    kde_browser_desktop=""
+    if pkg_installed "$(gui_browser_packages)"; then
+      case "$_DISTRO_FAMILY" in
+        dnf) kde_browser_desktop="org.mozilla.firefox.desktop" ;;
+        apt) kde_browser_desktop="firefox-esr.desktop" ;;
+      esac
     fi
-    # The browser is optional on Ubuntu; the other launchers correspond to
-    # fail-loud KDE packages, so a missing desktop file is a broken panel
-    # contract rather than an entry to omit silently.
-    for kde_desktop_id in org.kde.dolphin.desktop org.kde.konsole.desktop org.kde.kate.desktop; do
-      [ -f "/usr/share/applications/${kde_desktop_id}" ] || {
-        echo "ERROR: KDE launcher desktop file '${kde_desktop_id}' is missing." >&2
-        exit 1
-      }
-      [ -n "$kde_panel_launchers" ] && kde_panel_launchers="${kde_panel_launchers},"
-      kde_panel_launchers="${kde_panel_launchers}applications:${kde_desktop_id}"
-    done
-
-    install -d -m 755 "${kde_panel_target}/contents"
-    # Name is not decoration: KPackage deduplicates templates by plugin id and this copy wins the
-    # data-root search, so it is the only metadata Plasma sees. The Add Panel menu labels its entry
-    # from the plugin name with no id fallback, and an omitted name renders exactly the blank,
-    # clickable row this whole block exists to remove.
-    cat > "${kde_panel_target}/metadata.json" <<'EOF'
-{
-  "KPackageStructure": "Plasma/LayoutTemplate",
-  "KPlugin": {
-    "Id": "org.kde.plasma.desktop.defaultPanel",
-    "Name": "Default Panel"
-  },
-  "X-Plasma-ContainmentCategories": ["panel"],
-  "X-Plasma-Shell": "plasmashell"
-}
-EOF
-    # Only the launcher anchor changes; the distro template keeps ownership of
-    # panel height, aspect-ratio clamping, and input-method behavior.
-    awk -v launchers="$kde_panel_launchers" '
-      /^[[:space:]]*panel\.addWidget\("org\.kde\.plasma\.icontasks"\)[[:space:]]*$/ {
-        match($0, /^[[:space:]]*/)
-        indent = substr($0, RSTART, RLENGTH)
-        print indent "var tasks = panel.addWidget(\"org.kde.plasma.icontasks\")"
-        print indent "tasks.currentConfigGroup = [\"General\"]"
-        print indent "tasks.writeConfig(\"launchers\", \"" launchers "\")"
-        next
-      }
-      { print }
-    ' "$kde_panel_source" > "${kde_panel_target}/contents/layout.js"
-    # The anchor is spelled twice — once for the count check above, once inside the
-    # awk program — so a future edit could satisfy the first and miss the second,
-    # shadowing the packaged template with an unpatched copy that silently restores
-    # the built-in launchers. Assert the transform actually landed.
-    grep -q "tasks.writeConfig(\"launchers\", \"${kde_panel_launchers}\")" \
-      "${kde_panel_target}/contents/layout.js" || {
-      echo "ERROR: KDE panel launcher transform produced no launchers line in ${kde_panel_target}/contents/layout.js." >&2
-      exit 1
-    }
-    chmod 644 "${kde_panel_target}/metadata.json" "${kde_panel_target}/contents/layout.js"
+    echo "==> Pinning the KDE panel launchers..."
+    # Launcher pins are cosmetic, and the transform rewrites a template Plasma
+    # owns. Drift there must degrade to the stock panel, not discard a built
+    # image — every other step in this script is load-bearing, this one is not.
+    bash /tmp/kde-panel.sh "$kde_browser_desktop" \
+      || echo "WARNING: KDE panel launchers not pinned; the stock Plasma panel ships instead." >&2
     ;;
   gnome)
     # The local system db only takes effect if the active dconf profile lists

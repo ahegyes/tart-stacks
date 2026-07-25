@@ -11,7 +11,7 @@ You'll need a macOS host (Apple Silicon, M1 or later, macOS 13+) and:
 - [jq](https://jqlang.org/): `brew install jq` — the host commands and the test suite parse JSON with it
 - [ShellCheck](https://www.shellcheck.net/): `brew install shellcheck` — to mirror the CI lint locally
 
-See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup (steps 1-3 of the Setup section). Each stack's Packer build authorizes whatever key you point `var.ssh_pubkey_path` at — without it the build won't run.
+See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup (steps 1-3 of the Setup section). Each stack's Packer build authorizes whatever key you point `var.ssh_pubkey_path` at (the generated SSH config pins `~/.ssh/tart-vm.pub`, so symlink your key there rather than overriding the var — README Setup step 1) — without it the build won't run.
 
 ## Making changes
 

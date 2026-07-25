@@ -6,8 +6,8 @@ set -uo pipefail
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd); REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
 pass=0 fail=0
 ok(){ pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
-bad(){ fail=$((fail+1)); printf '  FAIL %s\n    exp|%s\n    got|%s\n' "$1" "$2" "$3"; }
-assert_eq(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
+assert_eq(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 printf 'ID=fedora\n' > "$WORK/os-dnf"
 printf 'ID=debian\n' > "$WORK/os-apt"
@@ -27,17 +27,17 @@ echo "gui-lib — every shared/desktops DE resolves on both families:"
 while IFS= read -r de; do
   for fam in dnf apt; do
     pkgs="$(with_family "$fam" gui_packages "$de")"
-    if [ -n "$pkgs" ]; then ok "$fam/$de packages non-empty"; else bad "$fam/$de packages non-empty" "packages" "(empty)"; fi
+    if [ -n "$pkgs" ]; then ok "$fam/$de packages non-empty"; else bad "$fam/$de packages non-empty" "want » packages « got » (empty) «"; fi
     dm="$(with_family "$fam" gui_dm_unit "$de")"
-    case "$dm" in *.service) ok "$fam/$de dm unit is a unit name ($dm)" ;; *) bad "$fam/$de dm unit is a unit name" "*.service" "$dm" ;; esac
+    case "$dm" in *.service) ok "$fam/$de dm unit is a unit name ($dm)" ;; *) bad "$fam/$de dm unit is a unit name" "want » *.service « got » $dm «" ;; esac
     # Every cell must name a file manager. A desktop that boots without one is
     # the specific gap this row exists to close, so an empty cell is a failure
     # rather than a merely thinner desktop.
     apps="$(with_family "$fam" gui_app_packages "$de")"
-    if [ -n "$apps" ]; then ok "$fam/$de apps non-empty"; else bad "$fam/$de apps non-empty" "packages" "(empty)"; fi
+    if [ -n "$apps" ]; then ok "$fam/$de apps non-empty"; else bad "$fam/$de apps non-empty" "want » packages « got » (empty) «"; fi
   done
   sess="$(with_family dnf gui_session_candidates "$de")"
-  if [ -n "$sess" ]; then ok "$de session candidates non-empty"; else bad "$de session candidates non-empty" "candidates" "(empty)"; fi
+  if [ -n "$sess" ]; then ok "$de session candidates non-empty"; else bad "$de session candidates non-empty" "want » candidates « got » (empty) «"; fi
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
 
 echo "gui-lib — family-keyed VNC machinery:"
@@ -64,7 +64,7 @@ echo "gui-lib — gui_require_de gate:"
 with_family dnf gui_require_de kde; rc=$?
 assert_eq "kde accepted" 0 "$rc"
 with_family dnf gui_require_de cinnamon; rc=$?
-if [ "$rc" -ne 0 ]; then ok "unknown de hard-fails"; else bad "unknown de hard-fails" "rc!=0" "rc=0"; fi
+if [ "$rc" -ne 0 ]; then ok "unknown de hard-fails"; else bad "unknown de hard-fails" "want » rc!=0 « got » rc=0 «"; fi
 
 # The lib's supported set and shared/desktops must not drift apart: the
 # Makefile validates against the file, the lib is the in-VM backstop.

@@ -15,93 +15,30 @@ usage() {
   exit 64
 }
 
-ini_key() { # <file> <section> <key> <set|delete> [value]
-  local file="$1" section="$2" key="$3" action="$4" value="${5:-}"
-  local dir source tmp
-
-  if [ "$action" = "delete" ] && [ ! -f "$file" ]; then
-    return 0
-  fi
-
-  dir="${file%/*}"
-  mkdir -p "$dir"
-  tmp="$(mktemp "${file}.tmp.XXXXXX")"
-  source="/dev/null"
-  [ -f "$file" ] && source="$file"
-
-  if ! awk \
-    -v wanted_section="$section" \
-    -v wanted_key="$key" \
-    -v action="$action" \
-    -v wanted_value="$value" '
-      function emit_key() {
-        print wanted_key "=" wanted_value
-        emitted = 1
-      }
-      BEGIN {
-        in_section = 0
-        found_section = 0
-        emitted = 0
-      }
-      /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
-        if (in_section && action == "set" && !emitted)
-          emit_key()
-
-        name = $0
-        sub(/^[[:space:]]*\[/, "", name)
-        sub(/\][[:space:]]*$/, "", name)
-        in_section = (name == wanted_section)
-        if (in_section)
-          found_section = 1
-        print
-        next
-      }
-      {
-        if (in_section && index($0, "=") != 0) {
-          name = $0
-          sub(/=.*/, "", name)
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
-          if (name == wanted_key) {
-            if (action == "set" && !emitted)
-              emit_key()
-            next
-          }
-        }
-        print
-      }
-      END {
-        if (in_section && action == "set" && !emitted)
-          emit_key()
-        if (!found_section && action == "set") {
-          if (NR != 0)
-            print ""
-          print "[" wanted_section "]"
-          emit_key()
-        }
-      }
-    ' "$source" > "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-
-  mv -f "$tmp" "$file"
-}
-
+# KConfig's own tool does the writing: its files are not plain INI — group
+# headers nest as [Group][Subgroup] — and a hand-rolled parser silently edits
+# the wrong group. Plasma 6 ships kwriteconfig6, Plasma 5 kwriteconfig5, with
+# the same CLI; a KDE image has one of them by construction.
 kde_key() { # <file> <section> <key> <set|delete> [value]
-  local file="$1" section="$2" key="$3" action="$4" value="${5:-}"
+  local file="$1" section="$2" key="$3" action="$4" value="${5:-}" tool
 
   if [ "$action" = "delete" ] && [ ! -f "$file" ]; then
     return 0
   fi
 
   if command -v kwriteconfig6 >/dev/null 2>&1; then
-    if [ "$action" = "delete" ]; then
-      kwriteconfig6 --file "$file" --group "$section" --key "$key" --delete
-    else
-      kwriteconfig6 --file "$file" --group "$section" --key "$key" "$value"
-    fi
+    tool=kwriteconfig6
+  elif command -v kwriteconfig5 >/dev/null 2>&1; then
+    tool=kwriteconfig5
   else
-    ini_key "$file" "$section" "$key" "$action" "$value"
+    echo "$prog: neither kwriteconfig6 nor kwriteconfig5 is installed; cannot write KDE scale settings." >&2
+    return 1
+  fi
+
+  if [ "$action" = "delete" ]; then
+    "$tool" --file "$file" --group "$section" --key "$key" --delete
+  else
+    "$tool" --file "$file" --group "$section" --key "$key" "$value"
   fi
 }
 
@@ -173,10 +110,16 @@ from pathlib import Path
 path = Path(sys.argv[1])
 factor = int(sys.argv[2])
 
-if factor == 1 and not path.exists():
+# xfconfd truncates before it rewrites, so a session killed mid-write leaves a
+# zero-byte file behind. It holds no settings to preserve, which makes it the
+# same case as no file at all; parsing it instead would abort the applier on
+# every later boot and strand the desktop at whatever scale it last had.
+existing = path.is_file() and path.stat().st_size > 0
+
+if factor == 1 and not existing:
     raise SystemExit(0)
 
-if path.exists():
+if existing:
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
     try:
         tree = ET.parse(path, parser=parser)
@@ -304,3 +247,14 @@ case "$DE" in
     exit 1
     ;;
 esac
+
+# This is a pre-session tool: tart-up runs it before the display manager creates
+# a session, which is what makes the settings authoritative. A session already
+# running holds these values in memory and rewrites its own config on exit, so a
+# hand-run inside a live desktop writes correctly and changes nothing visible —
+# and exits 0 doing it. Say so rather than look like it worked.
+if pgrep -u "$TARGET_USER" -x xfconfd    >/dev/null 2>&1 ||
+   pgrep -u "$TARGET_USER" -x plasmashell >/dev/null 2>&1 ||
+   pgrep -u "$TARGET_USER" -x gnome-shell >/dev/null 2>&1; then
+  echo "$prog: a desktop session is already running; the new scale applies to the next session." >&2
+fi

@@ -2,12 +2,12 @@
 # Characterization tests for script/setup — the install and its --uninstall
 # inverse. Everything is sandboxed: HOME and every TART_* seam point into a
 # tmpdir and `tart` is a PATH mock, so no run can touch the real ~/.ssh,
-# ~/.local/bin, LaunchAgents, or the live VMs on the machine running the
+# ~/.local/bin or the live VMs on the machine running the
 # suite. Covers the install surface (symlinks, completion, Include placement,
 # scaffolds, the closing tart-ssh-sync run, the pubkey preflight warning,
 # idempotent re-run), the tart-less install (warned, exit 0, nothing
 # generated), the catch-all ordering warning, the uninstall inverse
-# (supervised-VM gate, ownership-checked removal, byte-preserved user config,
+# (ownership-checked removal, byte-preserved user config,
 # unmarked-Include refusal, kept config files), and argument handling. Plain
 # bash, no framework. Run via script/test or directly.
 set -uo pipefail
@@ -17,7 +17,7 @@ REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
 assert_rc() { # label want — checks $rc from the last run_setup
@@ -53,7 +53,15 @@ if ! printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/de
 fi
 
 INC='Include ~/.ssh/config.d/tart-vms'
-CMDS=(tart-up tart-ssh-sync tart-new tart-rm tart-supervise)
+# Derived, not restated: every executable in bin/ must be installed and removed
+# again. bin/lib/* is sourced, never executable, so -f -x selects exactly the
+# commands — and a new command added to bin/ but forgotten in script/setup fails
+# here instead of shipping uninstalled.
+CMDS=()
+for _c in "$REPO"/bin/*; do
+  [ -f "$_c" ] && [ -x "$_c" ] && CMDS+=("${_c##*/}")
+done
+[ "${#CMDS[@]}" -gt 0 ] || { echo "no executables found in $REPO/bin" >&2; exit 1; }
 
 # sandbox <name> — point every env seam at a fresh $WORK/<name> tree, so no
 # scenario can leak state into a later one's asserts.
@@ -187,19 +195,6 @@ run_setup --uninstall
 assert_rc "drifted block → uninstall exit 0" 0
 assert_contains "drifted block → warned about the drift" "$(cat "$ERR")" "drifted"
 assert_same "drifted block → ssh config untouched" "$SSHCFG" "$WORK/s5b.orig"
-
-# uninstall: supervised-VM gate refuses before removing anything
-sandbox s6
-run_setup
-printf 'seed\n' > "$LA/com.tart-stacks.supervise.app-a.plist"
-run_setup --uninstall
-assert_rc "supervised gate → refuses with exit 1" 1
-assert_contains "supervised gate → names the exact unsupervise command" "$(cat "$ERR")" "tart-supervise --uninstall app-a"
-assert_contains "supervised gate → states nothing was removed" "$(cat "$ERR")" "nothing was removed"
-assert_link "supervised gate → symlinks untouched" "$LB/tart-up" "$REPO/bin/tart-up"
-assert_link "supervised gate → completion untouched" "$COMP/_tart-new" "$REPO/completions/_tart-new"
-assert_path "supervised gate → generated config untouched" "$GEN"
-assert_eq "supervised gate → Include block untouched" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 
 # argument handling
 run_setup --help

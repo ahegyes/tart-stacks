@@ -11,14 +11,16 @@ BIN="$REPO/bin"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         expected | %s\n         actual   | %s\n' "$1" "$2" "$3"; }
-assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
-assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "contains » $3" "$2" ;; esac; }
-assert_absent()   { case "$2" in *"$3"*) bad "$1" "absent » $3" "$2" ;; *) ok "$1" ;; esac; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
+assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
+assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » contains » $3 « got » $2 «" ;; esac; }
+assert_path()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
+assert_no_path()  { if [ -e "$2" ]; then bad "$1" "should not exist: $2"; else ok "$1"; fi; }
+assert_absent()   { case "$2" in *"$3"*) bad "$1" "want » absent » $3 « got » $2 «" ;; *) ok "$1" ;; esac; }
 check() { # label expected-rc cmd...
   local label="$1" want="$2"; shift 2
   local got=0; "$@" || got=$?
-  if [ "$got" -eq "$want" ]; then ok "$label"; else bad "$label" "rc $want" "rc $got"; fi
+  if [ "$got" -eq "$want" ]; then ok "$label"; else bad "$label" "want » rc $want « got » rc $got «"; fi
 }
 
 WORK=$(mktemp -d)
@@ -36,29 +38,6 @@ printf 'fedora\n' > "$WORK/distros"
 printf 'fedora\nubuntu\n' > "$WORK/distros2"
 # Desktop tokens for the GUI-flavor arm of tart_is_base_image.
 printf 'kde\nxfce\n' > "$WORK/desktops"
-
-# Extract the pure helpers from the source and exercise them directly (same
-# technique parsing.sh uses for tart-up's parser fns — re-extracts each run so it
-# tracks the real source through refactors).
-extract_fn() { awk -v fn="$1" 'index($0, fn "() {")==1{p=1} p{print} p && $0=="}"{exit}' "$2"; }
-{ extract_fn image_for_stack "$BIN/tart-new"
-  echo
-  extract_fn list_stacks "$BIN/tart-new"
-  echo
-  extract_fn stack_exists "$BIN/tart-new"; } > "$WORK/fns.sh"
-# shellcheck disable=SC2034  # read as a global by the sourced helpers below
-STACKS_DIR="$WORK/stacks"   # list_stacks/stack_exists read this global
-# shellcheck source=/dev/null
-source "$WORK/fns.sh"
-
-echo "bin/tart-new — pure helpers:"
-assert_eq "image_for_stack joins distro-stack" "fedora-php" "$(image_for_stack php fedora)"
-assert_eq "image_for_stack ubuntu variant"     "ubuntu-jvm" "$(image_for_stack jvm ubuntu)"
-assert_eq "image_for_stack GUI flavor"         "fedora-php-kde" "$(image_for_stack php fedora kde)"
-assert_eq "image_for_stack empty de = no suffix" "fedora-php" "$(image_for_stack php fedora '')"
-assert_eq "list_stacks lists short tokens sorted" "jvm php" "$(list_stacks | sort | paste -sd' ' -)"
-if stack_exists php; then ok "stack_exists true for present stack"; else bad "stack_exists true for present stack" "rc 0" "rc 1"; fi
-if stack_exists rust; then bad "stack_exists false for absent stack" "rc 1" "rc 0"; else ok "stack_exists false for absent stack"; fi
 
 # Mock `tart` so list output is deterministic and clone/set are recorded.
 # Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
@@ -87,16 +66,6 @@ cat > "$TART_LIST_JSON" <<'JSON'
  {"Name":"app-a","Source":"local"},
  {"Name":"fedora-jvm","Source":"oci"}]
 JSON
-
-{ extract_fn image_built "$BIN/tart-new"; echo; extract_fn vm_exists "$BIN/tart-new"; } > "$WORK/q.sh"
-# shellcheck source=/dev/null
-source "$WORK/q.sh"
-
-echo "bin/tart-new — tart-querying helpers:"
-if PATH="$WORK/bin:$PATH" image_built php fedora; then ok "image_built true when local image present"; else bad "image_built true when local image present" "rc 0" "rc 1"; fi
-if PATH="$WORK/bin:$PATH" image_built jvm fedora; then bad "image_built false when only OCI present" "rc 1" "rc 0"; else ok "image_built false when only OCI present"; fi
-if PATH="$WORK/bin:$PATH" vm_exists app-a; then ok "vm_exists true for present VM"; else bad "vm_exists true for present VM" "rc 0" "rc 1"; fi
-if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent VM" "rc 1" "rc 0"; else ok "vm_exists false for absent VM"; fi
 
 # End-to-end: run the whole script with mocked tart + fixture stacks. Assert on
 # exit code, stderr message, and the recorded tart calls.
@@ -199,6 +168,47 @@ assert_contains "GUI clone sizes its display" "$(<"$TART_CALLS")" "set deskvm --
 : > "$TART_CALLS"
 run_new deskvm2 php fedora kde --display 2560x1440
 assert_contains "explicit --display overrides the GUI default" "$(<"$TART_CALLS")" "set deskvm2 --display 2560x1440 --display-refit"
+
+# Restore the shared fixture list for the cases below.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"fedora-php","Source":"local"},
+ {"Name":"app-a","Source":"local"},
+ {"Name":"fedora-jvm","Source":"oci"}]
+JSON
+
+# --display parses in both forms and is validated before anything is cloned:
+# `tart set` runs after `tart clone`, so a bad geometry would strand a VM.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"fedora-php","Source":"local"},
+ {"Name":"fedora-php-kde","Source":"local"}]
+JSON
+: > "$TART_CALLS"
+run_new deskvm4 php fedora kde --display=2560x1440
+assert_contains "equals-form display folds into the same tart set" "$(<"$TART_CALLS")" \
+  "set deskvm4 --display 2560x1440 --display-refit"
+
+: > "$TART_CALLS"
+run_new deskvm5 php fedora kde --display 1920X1080
+assert_eq     "capital-X geometry → exit 64" 64 "$rc"
+assert_absent "invalid geometry clones nothing" "$(<"$TART_CALLS")" "clone"
+
+: > "$TART_CALLS"
+run_new deskvm6 php fedora kde --display
+assert_eq "--display with no value → exit 64" 64 "$rc"
+
+# An empty value is not the same as an absent flag: the GUI default substitutes
+# for it, so both spellings must be refused rather than clone at 1920x1080.
+# `--display="$GEOM"` with GEOM unset is the way a caller reaches this.
+: > "$TART_CALLS"
+run_new deskvm7 php fedora kde --display=
+assert_eq       "--display= (empty, equals form) → exit 64" 64 "$rc"
+assert_contains "empty display names the bad value" "$(<"$WORK/err")" "--display expects WIDTHxHEIGHT"
+assert_absent   "empty display clones nothing" "$(<"$TART_CALLS")" "clone"
+
+: > "$TART_CALLS"
+run_new deskvm8 php fedora kde --display ''
+assert_eq       "--display '' (empty, space form) → exit 64" 64 "$rc"
+assert_absent   "empty space-form display clones nothing" "$(<"$TART_CALLS")" "clone"
 
 # Restore the shared fixture list for the cases below.
 cat > "$TART_LIST_JSON" <<'JSON'

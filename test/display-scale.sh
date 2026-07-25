@@ -10,7 +10,7 @@ TEMPLATE="$REPO/shared/scripts/display-scale.sh"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
@@ -83,73 +83,15 @@ assert_rc "KDE factor 1 with no prior config → exit 0" 0
 assert_file_absent "KDE factor 1 does not create kcmfonts" "$RESET_HOME/.config/kcmfonts"
 assert_file_absent "KDE factor 1 does not create kdeglobals" "$RESET_HOME/.config/kdeglobals"
 
-echo "display-scale — KDE safe INI fallback:"
-mkdir -p "$KDE_HOME/.config"
-cat > "$KDE_HOME/.config/kcmfonts" <<'EOF'
-# font comment survives
-   [General]
-otherFontKey=keep
-forceFontDPI=120
-
-[Unrelated]
-forceFontDPI=333
-EOF
-cat > "$KDE_HOME/.config/kdeglobals" <<'EOF'
-[General]
-ColorScheme=BreezeDark
-
-[KScreen]
-UnrelatedKScreenKey=keep
-ScaleFactor=9
-ScreenScaleFactors=Old-1=9;
-
-[Other]
-ScaleFactor=untouched
-EOF
-
+# With no KConfig tool on PATH there is nothing to write with. KDE images ship
+# one by construction, so this is the "wrong image" case: fail loudly rather
+# than hand-roll a parser for a format whose group headers nest.
+echo "display-scale — KDE without a KConfig tool:"
 run_scale "$KDE_SCRIPT" "$FALLBACK_BIN" 2
-assert_rc "KDE fallback factor 2 → exit 0" 0
-fonts="$(cat "$KDE_HOME/.config/kcmfonts")"
-globals="$(cat "$KDE_HOME/.config/kdeglobals")"
-assert_contains "KDE fallback writes forceFontDPI=192" "$fonts" "forceFontDPI=192"
-assert_contains "KDE fallback writes ScaleFactor=2" "$globals" "ScaleFactor=2"
-assert_contains "KDE fallback writes connector widget scale" "$globals" "ScreenScaleFactors=Virtual-1=2;"
-assert_contains "KDE fallback preserves unrelated font key" "$fonts" "otherFontKey=keep"
-assert_contains "KDE fallback preserves unrelated KScreen key" "$globals" "UnrelatedKScreenKey=keep"
-assert_contains "KDE fallback preserves other-section same-name key" "$globals" "ScaleFactor=untouched"
-assert_eq "KDE fallback replaces target without duplicating other-section key" 2 \
-  "$(line_count "$KDE_HOME/.config/kcmfonts" '^forceFontDPI=')"
-assert_eq "KDE fallback leaves one KScreen ScreenScaleFactors" 1 \
-  "$(line_count "$KDE_HOME/.config/kdeglobals" '^ScreenScaleFactors=')"
+assert_rc       "no kwriteconfig → nonzero" 1
+assert_contains "no kwriteconfig → names both tools" "$(cat "$ERR")" "kwriteconfig6 nor kwriteconfig5"
 
-run_scale "$KDE_SCRIPT" "$FALLBACK_BIN" 3
-assert_rc "KDE fallback rerun at factor 3 → exit 0" 0
-fonts="$(cat "$KDE_HOME/.config/kcmfonts")"
-globals="$(cat "$KDE_HOME/.config/kdeglobals")"
-assert_contains "KDE rerun replaces font DPI" "$fonts" "forceFontDPI=288"
-assert_absent "KDE rerun removes prior font DPI" "$fonts" "forceFontDPI=192"
-assert_contains "KDE rerun replaces global scale" "$globals" "ScaleFactor=3"
-assert_contains "KDE rerun replaces connector scale" "$globals" "ScreenScaleFactors=Virtual-1=3;"
-assert_absent "KDE rerun removes prior connector scale" "$globals" "Virtual-1=2;"
-
-run_scale "$KDE_SCRIPT" "$FALLBACK_BIN" 1
-assert_rc "KDE fallback factor 1 reset → exit 0" 0
-fonts="$(cat "$KDE_HOME/.config/kcmfonts")"
-globals="$(cat "$KDE_HOME/.config/kdeglobals")"
-assert_absent "KDE reset removes forceFontDPI" "$fonts" "forceFontDPI=288"
-assert_absent "KDE reset removes KScreen ScaleFactor" "$globals" $'ScaleFactor=3'
-assert_absent "KDE reset removes ScreenScaleFactors" "$globals" "ScreenScaleFactors=Virtual-1"
-assert_contains "KDE reset preserves font comment" "$fonts" "# font comment survives"
-assert_contains "KDE reset preserves unrelated section value" "$globals" "ScaleFactor=untouched"
-kde_reset_fonts="$fonts"
-kde_reset_globals="$globals"
-run_scale "$KDE_SCRIPT" "$FALLBACK_BIN" 1
-assert_eq "KDE repeated reset is content-idempotent (kcmfonts)" "$kde_reset_fonts" \
-  "$(cat "$KDE_HOME/.config/kcmfonts")"
-assert_eq "KDE repeated reset is content-idempotent (kdeglobals)" "$kde_reset_globals" \
-  "$(cat "$KDE_HOME/.config/kdeglobals")"
-
-echo "display-scale — KDE kwriteconfig6 preferred path:"
+echo "display-scale — KDE writes through the KConfig tool:"
 KWRITE_BIN="$WORK/kwrite-bin"
 mkdir -p "$KWRITE_BIN" "$WORK/kwrite-home/.config"
 KWRITE_CALLS="$WORK/kwrite-calls"
@@ -177,6 +119,41 @@ assert_contains "kwrite writes verified connector key" "$kwrite_calls" "--key Sc
 : > "$KWRITE_CALLS"
 run_scale "$KWRITE_SCRIPT" "$KWRITE_BIN:/usr/bin:/bin" 1
 assert_rc "KDE with kwriteconfig6 factor 1 → exit 0" 0
+kwrite_calls="$(cat "$KWRITE_CALLS")"
+assert_eq "KDE preferred editor receives three deletes" 3 "$(grep -c -- '--delete' "$KWRITE_CALLS")"
+assert_contains "kwrite reset deletes font key" "$kwrite_calls" "--group General --key forceFontDPI --delete"
+assert_contains "kwrite reset deletes global scale key" "$kwrite_calls" "--group KScreen --key ScaleFactor --delete"
+assert_contains "kwrite reset deletes connector key" "$kwrite_calls" "--key ScreenScaleFactors --delete"
+
+# Plasma 5 images carry kwriteconfig5 instead; same CLI, same contract.
+echo "display-scale — KDE falls back to kwriteconfig5:"
+KWRITE5_BIN="$WORK/kwrite-bin"
+mkdir -p "$KWRITE5_BIN" "$WORK/kwrite-home/.config"
+KWRITE_CALLS="$WORK/kwrite-calls"
+export KWRITE_CALLS
+cat > "$KWRITE5_BIN/kwriteconfig5" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$KWRITE_CALLS"
+EOF
+chmod 755 "$KWRITE5_BIN/kwriteconfig5"
+KWRITE_SCRIPT="$WORK/kwrite-scale"
+instantiate kde "$CURRENT_USER" "$WORK/kwrite-home" "$KWRITE_SCRIPT"
+: > "$KWRITE_CALLS"
+run_scale "$KWRITE_SCRIPT" "$KWRITE5_BIN:/usr/bin:/bin" 2
+assert_rc "KDE with kwriteconfig5 factor 2 → exit 0" 0
+kwrite_calls="$(cat "$KWRITE_CALLS")"
+assert_eq "KDE preferred editor receives three writes" 3 "$(wc -l < "$KWRITE_CALLS" | tr -d ' ')"
+assert_contains "kwrite writes verified font key" "$kwrite_calls" "--group General --key forceFontDPI 192"
+assert_contains "kwrite writes verified global scale key" "$kwrite_calls" "--group KScreen --key ScaleFactor 2"
+assert_contains "kwrite writes verified connector key" "$kwrite_calls" "--key ScreenScaleFactors Virtual-1=2;"
+
+# Deletes deliberately require existing files: the applier must not make empty
+# KDE configs merely to reset defaults on a fresh clone.
+: > "$WORK/kwrite-home/.config/kcmfonts"
+: > "$WORK/kwrite-home/.config/kdeglobals"
+: > "$KWRITE_CALLS"
+run_scale "$KWRITE_SCRIPT" "$KWRITE5_BIN:/usr/bin:/bin" 1
+assert_rc "KDE with kwriteconfig5 factor 1 → exit 0" 0
 kwrite_calls="$(cat "$KWRITE_CALLS")"
 assert_eq "KDE preferred editor receives three deletes" 3 "$(grep -c -- '--delete' "$KWRITE_CALLS")"
 assert_contains "kwrite reset deletes font key" "$kwrite_calls" "--group General --key forceFontDPI --delete"
@@ -303,6 +280,28 @@ run_scale "$XFCE_EMPTY_SCRIPT" "$PATH" 1
 xfce_xml="$(cat "$XFCE_EMPTY_FILE")"
 assert_absent "XFCE reset removes empty Gdk parent" "$xfce_xml" 'name="Gdk"'
 assert_absent "XFCE reset removes empty Xft parent" "$xfce_xml" 'name="Xft"'
+
+# xfconfd truncates before it rewrites, so a session killed mid-write leaves a
+# zero-byte file. Both factors must treat it as the no-settings case they
+# already handle for an absent file: parsing it aborts the applier, and since
+# tart-up runs this on every window-mode boot, the desktop would stay stuck at
+# whatever scale it last had for the life of the VM.
+XFCE_TRUNC_HOME="$WORK/xfce-trunc-home"
+XFCE_TRUNC_FILE="$XFCE_TRUNC_HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+XFCE_TRUNC_SCRIPT="$WORK/xfce-trunc-scale"
+instantiate xfce "$CURRENT_USER" "$XFCE_TRUNC_HOME" "$XFCE_TRUNC_SCRIPT"
+mkdir -p "${XFCE_TRUNC_FILE%/*}"
+
+: > "$XFCE_TRUNC_FILE"
+run_scale "$XFCE_TRUNC_SCRIPT" "$PATH" 1
+assert_rc "XFCE factor 1 over a zero-byte xsettings → exit 0" 0
+
+: > "$XFCE_TRUNC_FILE"
+run_scale "$XFCE_TRUNC_SCRIPT" "$PATH" 2
+assert_rc "XFCE factor 2 over a zero-byte xsettings → exit 0" 0
+xfce_xml="$(cat "$XFCE_TRUNC_FILE")"
+assert_contains "XFCE rebuilds the channel from a zero-byte file" "$xfce_xml" 'name="xsettings"'
+assert_contains "XFCE zero-byte rebuild carries DPI" "$xfce_xml" 'name="DPI" type="int" value="192"'
 
 echo
 echo "  $pass passed, $fail failed"

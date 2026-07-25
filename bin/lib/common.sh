@@ -1,7 +1,6 @@
 # shellcheck shell=bash
-# common.sh — leaf helpers shared by tart-up / tart-new / tart-ssh-sync /
-# tart-supervise. Sourced, never on PATH / executable; bash-3.2-safe (macOS
-# system bash). Pulls in the config-path resolver so a script sourcing this
+# common.sh — leaf helpers shared by the bin/ commands. Sourced, never on PATH
+# / executable; bash-3.2-safe (macOS system bash). Pulls in the config-path resolver so a script sourcing this
 # gets both. Helpers here take everything as arguments; the config-line
 # parsers read script globals and stay in their owning scripts.
 
@@ -11,33 +10,38 @@
 # tart_need_cmd <tool> [install-hint] — preflight; exit 1 if the tool is missing.
 tart_need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "${prog:-${0##*/}}: '$1' not on PATH. ${2:-}" >&2; exit 1; }; }
 
-# tart_vm_state <name> — print the VM's `tart list` State by exact name; empty
-# output = no such VM. stderr stays attached so tart's (or jq's) real error
+# tart_vm_state <name> — print the local VM's `tart list` State by exact name;
+# empty output = no such VM. Local only: `tart list` also shows the OCI images
+# the build pulls, and running or deleting one of those would mutate the
+# pristine cache copy rather than a dev VM (tart-new's image_built applies the
+# same filter). stderr stays attached so tart's (or jq's) real error
 # reaches the terminal. A nonzero exit means the tool itself failed — callers
 # must keep "broken tool" and "VM missing" distinct.
 tart_vm_state() {
-  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name) | .State'
+  tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name and .Source=="local") | .State'
 }
 
-# tart_supervise_label <vm> — the per-VM supervision LaunchAgent label.
-# tart-supervise owns the agent lifecycle; tart-rm probes the same label to
-# drop supervision before deleting a VM.
-tart_supervise_label() { printf 'com.tart-stacks.supervise.%s' "$1"; }
-
-# Host-side runtime state, deliberately NOT under tart_config_dir: the files
-# there are a format contract with external tooling, while this is ours alone.
-tart_state_dir() { printf '%s' "${TART_STATE_DIR:-$HOME/.local/state/tart-stacks}"; }
-
-# tart_stop_mark <vm> — the marker recording that an operator stopped <vm> on
-# purpose. Supervision cannot infer this: the `tart run` process is disowned
-# (tart-up), so no exit status survives to distinguish a deliberate stop from a
-# crash, and a halted kernel often never exits at all. Intent is therefore
-# recorded rather than deduced. tart-down writes it, tart-up clears it on a
-# start, and tart-supervise declines to restart while it exists.
-tart_stop_mark() { printf '%s/stopped/%s' "$(tart_state_dir)" "$1"; }
-
-# tart_stop_marked <vm> — 0 iff <vm> is marked as deliberately stopped.
-tart_stop_marked() { [ -e "$(tart_stop_mark "$1")" ]; }
+# tart_resolve_vm <name> [not-found-hint] — print the stored VM name for a bare
+# name or a `tart-<name>` SSH alias. The prefix is stripped unconditionally:
+# tart_valid_vm_name refuses it at create time, so no tart-stacks VM can hold a
+# `tart-*` name, and probing that form first would only ever match a VM made out
+# of band with raw tart — never the one the caller meant. (The generated
+# ProxyCommand strips it the same way, so honoring a literal match here would
+# have ssh start one VM and connect to another.) Returns 1 on a miss or a broken
+# `tart list`, having named which; callers exit on it rather than continuing with
+# an empty name. Not usable as `local vm=$(...)` — `local` swallows the status.
+tart_resolve_vm() {
+  local vm="${1#tart-}" hint="${2:-}" state
+  state=$(tart_vm_state "$vm") || {
+    echo "${prog:-${0##*/}}: 'tart list' failed — cannot read VM states; see the error above." >&2
+    return 1
+  }
+  [ -n "$state" ] || {
+    echo "${prog:-${0##*/}}: VM '$vm' not found. Try 'tart list'.${hint}" >&2
+    return 1
+  }
+  printf '%s' "$vm"
+}
 
 # tart_valid_vm_name <name> — 0 iff the name is a token every consumer can
 # carry: the ssh alias (tart-<name>), the guest hostname (`hostname -s` must
@@ -135,14 +139,13 @@ tart_resolve_pattern() {
 
 # tart_vm_alive <vm> — 0 if a `tart run <vm>` process exists. Matches <vm> as the
 # argument immediately after `tart run` — the shape tart-up always launches
-# (`tart run <vm> --no-graphics ...`). Anchoring to that position, rather than
-# scanning every argument, is what stops a token inside a LATER argument (e.g.
-# some other VM's `--dir=/path with <vm> in it`) from being mistaken for this VM
-# running. The process — not `tart list` state — is the signal: a crash removes
-# the process but can leave the listed state wedged at "running". (A manual
-# option-first `tart run --opt <vm>` reads as down — the supervisor then
-# restarts it into the canonical shape — fine, since tart-up is the only
-# launcher in play.)
+# (`tart run <vm> …`). Anchoring to that position, rather than scanning every
+# argument, is what stops a token inside a LATER argument (e.g. some other VM's
+# `--dir=/path with <vm> in it`) from being mistaken for this VM running. The
+# process — not `tart list` state — is the signal: a crash removes the process
+# but can leave the listed state wedged at "running", which is what tart-up
+# fail-fasts on. (A hand-run option-first `tart run --opt <vm>` reads as down;
+# tart-up is the only launcher in play, so that shape does not occur here.)
 tart_vm_alive() {
   ps -axo args= 2>/dev/null | awk -v vm="$1" '
     {

@@ -46,8 +46,18 @@ pkg_install() {
 # 99-finalize can record them in /etc/tart-stacks-release. dnf's flag is silent
 # about WHICH packages it skipped, so that branch detects skips by post-checking
 # the rpm database; apt's per-package loop knows directly.
+# pkg_installed <pkg> — 0 iff the package is present. Consumers of the optional
+# install path need this to tell "the family does not ship it" from "it is here
+# under a name I did not expect", which look identical from a file probe.
+pkg_installed() {
+  case "$_DISTRO_FAMILY" in
+    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
+    apt) dpkg -s "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
 pkg_install_optional() {
-  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p
+  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p policy
   case "$_DISTRO_FAMILY" in
     dnf) dnf install -y --skip-unavailable "$@"
          for p in "$@"; do
@@ -58,11 +68,23 @@ pkg_install_optional() {
          done ;;
     apt) export DEBIAN_FRONTEND=noninteractive
          for p in "$@"; do
-           apt-get install -y --no-install-recommends "$p" \
-             || {
-               echo "distro-lib: optional package '$p' unavailable — skipped." >&2
-               echo "$p" >> "$skipfile"
-             }
+           # Absence and failure are different outcomes, and only absence is a
+           # droppable capability: a mirror outage, dependency conflict or full
+           # disk recorded as "the archive does not carry this" is provenance
+           # that lies precisely where it is most trusted. So the query's own
+           # exit status is checked too — an apt-cache that FAILS says nothing
+           # about availability, and treating its empty output as "no candidate"
+           # would reintroduce the same lie one layer up.
+           policy=$(apt-cache policy "$p") || return 1
+           if [ -z "$(printf '%s\n' "$policy" | awk '/Candidate:/ && $2 != "(none)" { print $2 }')" ]; then
+             echo "distro-lib: optional package '$p' unavailable — skipped." >&2
+             echo "$p" >> "$skipfile"
+             continue
+           fi
+           # Propagate explicitly rather than leaning on the caller's `set -e`:
+           # reaching here means the archive has it, so a failure now is a
+           # broken build, not a capability to drop.
+           apt-get install -y --no-install-recommends "$p" || return 1
          done ;;
   esac
 }

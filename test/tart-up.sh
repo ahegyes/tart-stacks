@@ -19,9 +19,11 @@ BIN="$REPO/bin"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
+assert_path()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing: $2"; fi; }
+assert_no_path()  { if [ -e "$2" ]; then bad "$1" "should not exist: $2"; else ok "$1"; fi; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
@@ -37,6 +39,9 @@ assert_order() { # label earlier-needle later-needle — both in $CALLS, in that
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
+# HOME is sandboxed so nothing the commands derive from it can reach the
+# developer's real dotfiles when the suite runs.
+SANDBOX_HOME="$WORK/home"; mkdir -p "$SANDBOX_HOME"
 CALLS="$WORK/calls"; export CALLS
 ERR="$WORK/stderr"
 EMPTY="$WORK/empty"; : > "$EMPTY"
@@ -62,8 +67,8 @@ case "$1" in
       echo "MOCK_TART_LIST_STDERR_MARKER" >&2
       exit "${MOCK_TART_LIST_RC}"
     fi
-    printf '[{"Name":"%s","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
-  ip)   printf '%s\n' "${MOCK_IP:-10.0.0.9}" ;;
+    printf '[{"Name":"%s","Source":"local","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
+  ip)   printf '%s\n' "${MOCK_IP-10.0.0.9}" ;;   # set MOCK_IP='' to drive the no-lease path
   exec)
     shift 2
     if [ -n "${MOCK_TART_EXEC_FAIL_MATCH:-}" ] && [ "$*" = "$MOCK_TART_EXEC_FAIL_MATCH" ]; then
@@ -71,7 +76,7 @@ case "$1" in
     fi
     case "$*" in
       "hostname -s") printf '%s\n' "${MOCK_HOSTNAME:-app-a}" ;;
-      "ss -tln"|"ss -ltn"|"sudo ss -tln")
+      "ss -tln"|"sudo ss -tln")
         [ "${MOCK_SS_READ_FAIL:-0}" -eq 0 ] || exit 1
         if [ -n "${MOCK_SS_SEQUENCE_FILE:-}" ]; then
           call=0
@@ -93,8 +98,8 @@ chmod +x "$MOCKBIN/tart"
 
 # Mock `nc` (the :22 probe): records its argv, exits $MOCK_NC_RC. tart-up pins
 # the probe binary to /usr/bin/nc, so tests must hand it in via $TART_NC_BIN —
-# PATH interception never reaches it. (MOCK_NC_RC states the mock's contract;
-# the probe-failure path costs ~30 real seconds, so no test drives it.)
+# PATH interception never reaches it. The mocked `sleep` below keeps the
+# 30-iteration probe loop instant, so the failure path is drivable.
 cat > "$MOCKBIN/nc" <<'NC'
 #!/usr/bin/env bash
 echo "nc $*" >> "$CALLS"
@@ -153,7 +158,7 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
   local state="$1" hostname="$2" netpolicy="$3" mounts="$4" gui="$5"
   shift 5
   : > "$CALLS"; : > "$SS_COUNT"; rc=0
-  PATH="$MOCKBIN:$PATH" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$hostname" \
+  PATH="$MOCKBIN:$PATH" HOME="$SANDBOX_HOME" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP="${MOCK_IP-10.0.0.9}" MOCK_HOSTNAME="$hostname" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_NC_RC="${MOCK_NC_RC-0}" \
     MOCK_SS_OUTPUT="${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_SS_SEQUENCE_FILE="${MOCK_SS_SEQUENCE_FILE-}" MOCK_SS_COUNT_FILE="$SS_COUNT" \
@@ -190,13 +195,14 @@ assert_rc       "bare miss with literal tart-app-a present → exit 1" 1
 assert_eq       "bare miss with literal tart-app-a present → no alias probe" 1 "$(grep -c 'tart list' "$CALLS")"
 assert_absent   "bare miss with literal tart-app-a present → no tart run" "$(cat "$CALLS")" "tart run tart-app-a"
 
-# A missing prefixed alias still reports the stripped stored-name form it
-# tried.
+# The prefix is stripped before the only lookup, so a missing alias reports the
+# stored form that was actually checked, in one query.
 MOCK_LIST_VM=other runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a
 assert_rc       "unknown prefixed VM → exit 1" 1
-assert_contains "unknown prefixed VM → diagnostic names stripped try" "$(cat "$ERR")" "also tried 'app-a'"
+assert_contains "unknown prefixed VM → diagnostic names the stored form" "$(cat "$ERR")" "VM 'app-a' not found."
+assert_absent   "unknown prefixed VM → claims no second form" "$(cat "$ERR")" "also tried"
 assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <distro>"
-assert_eq       "unknown prefixed VM → two list queries" 2 "$(grep -c 'tart list' "$CALLS")"
+assert_eq       "unknown prefixed VM → one list query" 1 "$(grep -c 'tart list' "$CALLS")"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
 # with tart's own stderr surfaced, no stripped-name retry, and no VM start.
@@ -452,7 +458,6 @@ assert_contains "vnc v6-only forever → names the 127.0.0.1:5901 wait" "$(cat "
 MOCK_SS_READ_FAIL=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
 assert_rc       "vnc listener-table read failure → exit 1" 1
 assert_contains "vnc listener-table read failure → named error" "$(cat "$ERR")" "could not read the guest TCP listener table"
-assert_eq       "vnc listener-table read failure → tries all ss fallbacks" 3 "$(grep -Ec 'tart exec app-a (sudo )?ss -(tln|ltn)' "$CALLS")"
 assert_eq       "vnc listener-table read failure → does not wait" 0 "$(grep -c '^sleep 1$' "$CALLS")"
 
 MOCK_SS_OUTPUT="LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*" \
@@ -516,6 +521,20 @@ assert_absent "hostname already correct → no set-hostname" "$(cat "$CALLS")" "
 # prefix lookup: stored bare `app-a`, asked as `tart-app-a`
 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a
 assert_contains "prefix lookup tart-app-a → app-a" "$(cat "$CALLS")" "tart run app-a --no-graphics"
+
+# Boot diagnostics: the two messages an operator actually reads when a start
+# goes wrong. Both sit behind polling loops, so each also pins that the loop ran
+# to its bound rather than falling through early on the first miss.
+MOCK_IP='' runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "no DHCP lease → exit 1" 1
+assert_contains "no-IP diagnostic names the VM and the window" "$(cat "$ERR")" "did not get an IP within 60 s"
+assert_eq       "no-IP path polls its full 60 intervals" 60 "$(grep -c '^sleep 1$' "$CALLS")"
+assert_absent   "no-IP path never probes :22" "$(cat "$CALLS")" "nc "
+
+MOCK_NC_RC=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "sshd never accepts on :22 → exit 1" 1
+assert_contains "ssh-timeout diagnostic names VM and IP" "$(cat "$ERR")" "app-a (10.0.0.9) did not accept SSH on :22 in time"
+assert_eq       "ssh probe retries its full 30 intervals" 30 "$(grep -c '^nc -z -G 3 10.0.0.9 22$' "$CALLS")"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -18,7 +18,7 @@ SMOKE="$REPO/script/smoke"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
+bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
@@ -68,6 +68,10 @@ case "$*" in
   */dev/tcp/127.0.0.1/5901*)
     [ "${MOCK_VNC_BANNER_RC:-0}" -eq 0 ] || exit "${MOCK_VNC_BANNER_RC}"
     printf '%s' "${MOCK_VNC_BANNER:-RFB}" ;;
+  *"ss -tln"*)
+    # Default is the loopback bind the image contract promises; the knob stages
+    # the bind the RFB banner cannot distinguish from it.
+    printf '%s\n' "${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" ;;
   *)
     printf '%s\n' "${MOCK_SSH_HOSTNAME:-smoke-vm}" ;;
 esac
@@ -84,6 +88,7 @@ run_smoke() { # args... — exit code in $rc, stderr in $ERR, recorded calls in 
     MOCK_VNC_START_RC="${MOCK_VNC_START_RC-0}" \
     MOCK_VNC_BANNER="${MOCK_VNC_BANNER-RFB}" \
     MOCK_VNC_BANNER_RC="${MOCK_VNC_BANNER_RC-0}" \
+    MOCK_VNC_LISTENERS="${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     SMOKE_VNC_TRIES=2 SMOKE_VNC_DELAY=0 \
     SMOKE_KEEP="${SMOKE_KEEP-}" \
     bash "$SMOKE" "$@" >"$WORK/out" 2>"$ERR" || rc=$?
@@ -171,6 +176,26 @@ assert_absent   "tart-new failure → no ssh attempted" "$(cat "$CALLS")" "ssh "
 assert_absent   "tart-new failure → no tart-up"       "$(cat "$CALLS")" "tart-up"
 assert_absent   "tart-new failure → no teardown of a VM we don't own" "$(cat "$CALLS")" "tart-rm"
 assert_contains "tart-new's own error surfaces" "$(cat "$ERR")" "already exists"
+
+
+# The RFB probe dials 127.0.0.1, so it answers identically whether Xvnc bound
+# loopback or 0.0.0.0 — it passes in exactly the failure case. The unit ships
+# SecurityTypes=None, so the bind address IS the authentication.
+run_smoke php fedora kde
+assert_rc       "loopback bind → smoke passes" 0
+assert_contains "loopback bind → listener table read" "$(cat "$CALLS")" "ss -tln"
+
+MOCK_VNC_LISTENERS='LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*' run_smoke php fedora kde
+assert_rc       "non-loopback vnc bind → smoke FAILS" 1
+assert_contains "non-loopback bind → names the exposure" "$(cat "$ERR")" "bound beyond loopback"
+assert_contains "non-loopback bind → explains why it matters" "$(cat "$ERR")" "no VNC password"
+
+MOCK_VNC_LISTENERS='LISTEN 0 5 [::]:5901 [::]:*' run_smoke php fedora kde
+assert_rc       "ipv6 wildcard vnc bind → smoke FAILS" 1
+
+MOCK_VNC_LISTENERS='' run_smoke php fedora kde
+assert_rc       "unreadable listener table → smoke FAILS" 1
+assert_contains "unreadable listener table → says so" "$(cat "$ERR")" "could not read the listener table"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
