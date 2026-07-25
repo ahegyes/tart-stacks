@@ -21,6 +21,7 @@ _tart-new() {
     '--cpu[CPU cores]:cores' \
     '--memory[memory in MB]:MB' \
     '--disk-size[disk size in GB]:GB' \
+    '--display[virtual display geometry, WIDTHxHEIGHT]:WxH' \
     '(-h --help)'{-h,--help}'[show usage and exit]' \
     '1:new VM name:' \
     '2:stack:->stack' \

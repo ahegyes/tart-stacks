@@ -39,7 +39,9 @@ A conventional browser is a DE-independent, optional capability: Firefox on the
 dnf family and Firefox ESR on the apt family where the distro publishes it.
 Ubuntu's `firefox` deb is a snap transition stub and `firefox-esr` is absent, so
 Ubuntu GUI images record `firefox-esr` under `skipped-optional-packages` in the
-manifest instead of pulling snapd or failing the build.
+manifest instead of pulling snapd or failing the build. On dnf/GNOME the browser
+arrives anyway as a weak dependency of the desktop set — the explicit row is
+what guarantees one on KDE and XFCE, and on the apt family.
 
 KDE's fresh-session panel pins the installed browser when present, then Dolphin,
 Konsole, and Kate. Discover is deliberately absent: no software-center package
@@ -134,14 +136,21 @@ dependency and stays behind the loopback-only SSH tunnel.
   `/usr/local/bin/tart-stacks-display-scale <factor>` as the dev user **before**
   isolating `graphical.target`. This ordering makes the scale visible to the
   first desktop session. `TART_DISPLAY_SCALE=<integer>` forces the host value;
-  invalid overrides warn and use 1. Scale-probe failures also yield 1, and a
+  non-integers warn and use 1, and values outside 1–3 are clamped with a
+  warning. The probe runs before the window exists, so it can only read the
+  *main* display: on a mixed-scale setup a window dragged to a display with a
+  different backing scale is sized for the main one, and `TART_DISPLAY_SCALE`
+  is the override for that. Scale-probe failures also yield 1, and a
   guest-application failure warns but does not block the VM or desktop.
 - **The scale applier owns only each DE's scale keys.** KDE writes
   `forceFontDPI`, `ScaleFactor`, and `ScreenScaleFactors`; GNOME writes its
   interface window scale while keeping the independent text multiplier at its
   default; XFCE writes its GDK window scale and Xft DPI. Reapplying a different
   factor replaces those values, and factor 1 removes/resets them so a VM moved
-  to a non-HiDPI host does not retain an earlier scale.
+  to a non-HiDPI host does not retain an earlier scale. It is a *pre-session*
+  tool: a running desktop holds these values in memory and rewrites its own
+  config on exit, so running it by hand inside a live session applies to the
+  next session, and says so.
 
 Scale detection is intentionally window-only. VNC has no host window whose
 device-pixel framebuffer inherits a backing scale, so its 1920×1080/RandR
@@ -173,9 +182,9 @@ desktop that can't start.
 
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
-| `kde` (default) | ✅ image verified | ✅ layer verified | ❌ unsupported — Plasma 6 on Debian 13 is Wayland-only | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
-| `gnome` | ⚠️ built to contract, not live-verified | ⚠️ | ⚠️ | `gnome-xorg` / `gnome` |
-| `xfce` | ⚠️ | ⚠️ | ⚠️ | `xfce` |
+| `kde` (default) | ✅ image verified | ⚠️ layer verified before the panel path | ❌ unsupported — Plasma 6 on Debian 13 is Wayland-only | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
+| `gnome` | ✅ image verified | ⚠️ built to contract, not live-verified | ⚠️ | `gnome-xorg` / `gnome` |
+| `xfce` | ✅ image verified | ⚠️ | ⚠️ | `xfce` |
 
 ✅ image verified = a full `GUI=1` image build was booted and the whole
 contract exercised (VNC session over an SSH tunnel, loopback-only bind,
@@ -184,10 +193,15 @@ exercised on a live VM of that distro (VNC session up, loopback bind,
 NetworkManager pinned unmanaged), without a full image build. ⚠️ = package
 sets and session names were verified against the live distro repos, but no
 end-to-end boot has been run — the build's own asserts are the gate.
-Re-verify a cell after building it the first time.
+Re-verify a cell after building it the first time, and after a change to the
+contract it vouches for — a status earned before a new code path does not cover
+it. The fedora column was re-earned by building each DE and asserting the
+applied scale in a live session (`Xft.dpi` 96 → 192 → 96) and, for KDE, the
+panel's pinned launchers.
 
 ## Sizing
 
-A DE adds roughly 1.5–2.5 GB to the image and ~1 GB RAM to a boot that
+A DE adds roughly 1.8–2.8 GB to the image (the browser alone is ~320 MB) and
+~1 GB RAM to a boot that
 activates it. Give GUI clones headroom: `tart-new <name> <stack> <distro>`
 resources or `tart set` (`--memory 8192` is comfortable for KDE).

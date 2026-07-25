@@ -21,7 +21,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 .
 ├── README.md  AGENTS.md  CLAUDE.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── bin/
-│   ├── tart-new                      # Creates a project VM by cloning a stack base image (GUI flavors via the optional <de> arg), with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size` pass-through
+│   ├── tart-new                      # Creates a project VM by cloning a stack base image (GUI flavors via the optional <de> arg), with the validation `tart clone` lacks (stack/image/name checks) + `--cpu`/`--memory`/`--disk-size`/`--display` pass-through
 │   ├── tart-rm                       # Deletes a project VM with the teardown `tart delete` lacks (base-image refusal, supervision drop, stop, host-key-pin scrub)
 │   ├── tart-down                     # Stops a VM and keeps it stopped — records the deliberate-stop mark tart-supervise honours (see "Keep a VM alive across crashes")
 │   ├── tart-ssh-sync                 # Generates ~/.ssh/config.d/tart-vms (a `tart-*` wildcard: per-connect IP resolution + interactive-login auto-start), `ssh -G`-validated before it goes live
@@ -42,6 +42,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 │   ├── tart-supervise.sh             # Characterization tests for tart-supervise (--once cycle, install gates, uninstall semantics, self-retirement, --status columns)
 │   ├── setup.sh                      # Characterization tests for script/setup — install + --uninstall, fully sandboxed
 │   ├── smoke.sh                      # Characterization tests for script/smoke (stage ordering, teardown trap; mocked — no real VM)
+│   ├── kde-panel.sh                  # Behavioral tests for the KDE panel launcher pinning (synthetic Plasma 5/6 templates)
 │   ├── parsing.sh                    # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   ├── mise-lib.sh                   # Characterization tests for mise-lib's smoke_gate helper
 │   ├── gui-lib.sh                    # Characterization tests for gui-lib's DE × family selectors + the shared/desktops lockstep
@@ -79,7 +80,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 - **8 GB RAM minimum**; 16 GB+ recommended for multiple concurrent VMs.
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
-- [jq](https://jqlang.org/): `brew install jq` — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-supervise`) parse `tart list --format json` with it. macOS 15+ ships a system jq, but the floor here is macOS 13, so install it explicitly.
+- [jq](https://jqlang.org/): `brew install jq` — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`, `tart-supervise`) parse `tart list --format json` with it. macOS 15+ ships a system jq, but the floor here is macOS 13, so install it explicitly.
 - **OpenSSH 10.0 or later** (`ssh -V`) — the generated SSH config's auto-start hook uses `Match sessiontype`, which older ssh rejects as a fatal parse error. Current macOS updates ship 10.x; `tart-ssh-sync` checks and refuses to write the config rather than break your ssh.
 
 ## Setup
@@ -123,7 +124,7 @@ Two caveats: **(1)** "no auth while unlocked" is *no prompt*, not *no protection
 make setup
 ```
 
-Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm`, and `tart-supervise` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm`, `tart-down` and `tart-supervise` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
 
 `make uninstall` is the inverse: it removes only what verifiably points into this repo (the command symlinks, the completion, the exact Include block setup wrote, the generated config), keeps every per-VM config file (`forwards`, `mounts`, `gui`, `ssh-agents`, `netpolicy` — they carry your opt-ins), and refuses to run while any `tart-supervise` LaunchAgent exists, since those agents restart VMs through the very tools being removed.
 
@@ -251,7 +252,7 @@ tart-new gui-a php fedora kde   # same, from the GUI flavor fedora-php-kde
 ssh tart-app-a                  # auto-starts the stopped clone and connects
 ```
 
-`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/gui/README.md](./shared/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
+`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) and the virtual display geometry (`--display`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/gui/README.md](./shared/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
 
 **Per-clone tweaks** (no rebuild required):
 
@@ -332,9 +333,11 @@ so intent is recorded rather than inferred:
 tart-down <name>                   # stop it and keep it stopped
 ```
 
-`tart-down` writes a deliberate-stop mark before stopping (marking afterwards
-would lose a race with the supervisor's poll), and the supervisor declines to
-restart a marked VM while idling in place. Nothing needs re-arming: `tart-up`,
+`tart-down` writes a deliberate-stop mark before stopping, and the supervisor
+declines to restart a marked VM while idling in place — logging why, so a VM
+that does not come back explains itself. `tart-supervise --status` shows the
+mark in a `stop:` column, since a deliberately stopped VM otherwise reads
+exactly like a supervisor that is failing to restart one. Nothing needs re-arming: `tart-up`,
 including the `ssh tart-<name>` auto-start, clears the mark whenever it starts
 the VM, and supervision resumes.
 
