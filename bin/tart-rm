@@ -57,7 +57,7 @@ STATE=$(tart_vm_state "$VM") || list_failed
 # <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — losing
 # one costs a 15-20+ min rebuild, so removing one stays a deliberate raw-tart
 # (or make) act. Refuse.
-if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
+if tart_is_base_image "$VM" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to remove it. Delete a base deliberately with 'tart delete $VM', or rebuild it with 'make rebuild STACK=<stack> DISTRO=<distro>'." >&2
   exit 1
 fi

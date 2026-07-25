@@ -101,6 +101,22 @@ if [ -n "$DE" ]; then
     echo "$prog: FAIL — no RFB banner on 127.0.0.1:5901 inside 'tart-$VM' (got '${banner:-nothing}') — the VNC session did not come up (re-run with SMOKE_KEEP=1 to inspect)." >&2
     exit 1
   fi
+  # The banner probe alone cannot see the security boundary: it dials
+  # 127.0.0.1 and so answers identically whether Xvnc bound loopback or
+  # 0.0.0.0 — it passes in exactly the failure case. The unit ships
+  # SecurityTypes=None, so the loopback bind IS the authentication; assert the
+  # listener's actual address, which is the only thing that distinguishes a
+  # confined desktop from one exposed to the VM's network.
+  listeners=$(ssh -o BatchMode=yes "tart-$VM" "ss -tln 2>/dev/null || sudo ss -tln" 2>/dev/null | awk '$4 ~ /:5901$/ { print $4 }')
+  if [ -z "$listeners" ]; then
+    echo "$prog: FAIL — nothing listening on :5901 inside 'tart-$VM' after the RFB banner answered (could not read the listener table)." >&2
+    exit 1
+  fi
+  case "$listeners" in
+    *0.0.0.0:5901*|*'[::]:5901'*|*'*:5901'*)
+      echo "$prog: FAIL — VNC on 'tart-$VM' is bound beyond loopback ($listeners). The unit uses no VNC password, so a non-loopback bind is an unauthenticated desktop on the VM's network." >&2
+      exit 1 ;;
+  esac
 fi
 
 echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, ssh, hostname${DE:+, vnc}." >&2

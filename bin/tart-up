@@ -100,7 +100,7 @@ STATE=$(tart_vm_state "$VM") || list_failed
 # Base images (the `<distro>-base` bootstrap intermediate + every
 # <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — but
 # the `tart-*` SSH wildcard matches them too. Refuse.
-if tart_is_base_image "${VM#tart-}" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
+if tart_is_base_image "$VM" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <distro>'." >&2
   exit 1
 fi
@@ -325,12 +325,12 @@ vnc_listener_state() {
   local table local_addr found_v4=0
   VNC_VERIFY_STATE="read-failure"
   VNC_VERIFY_ERROR=""
+  # The sudo retry is not redundant: ss lives in /usr/sbin on some guests, off
+  # the login PATH but on sudo's secure_path.
   if ! table=$(tart exec "$VM" ss -tln 2>/dev/null); then
-    if ! table=$(tart exec "$VM" ss -ltn 2>/dev/null); then
-      if ! table=$(tart exec "$VM" sudo ss -tln 2>/dev/null); then
-        VNC_VERIFY_ERROR="could not read the guest TCP listener table with ss"
-        return 0
-      fi
+    if ! table=$(tart exec "$VM" sudo ss -tln 2>/dev/null); then
+      VNC_VERIFY_ERROR="could not read the guest TCP listener table with ss"
+      return 0
     fi
   fi
   while IFS=$' \t' read -r _ _ _ local_addr _; do
@@ -405,9 +405,9 @@ fi
 DIR_ARGS=()
 while IFS= read -r d; do
   [ -n "$d" ] && DIR_ARGS+=("$d")
-done < <(dir_args "${VM#tart-}")
+done < <(dir_args "$VM")
 
-GUI_FILE_MODE=$(gui_file_mode "${VM#tart-}")
+GUI_FILE_MODE=$(gui_file_mode "$VM")
 GUI_MODE="${GUI_OVERRIDE:-$GUI_FILE_MODE}"
 
 # Guest-agent provisioning (hostname + host-key regen, below) runs only on a
@@ -565,7 +565,7 @@ for _ in $(seq 1 30); do
           vnc_fail_closed
           exit 1
         fi
-        echo "$prog: VNC ready for '$VM'. Tunnel with: ssh -L 5901:127.0.0.1:5901 tart-${VM#tart-} ; then point a VNC client at localhost:5901." >&2 ;;
+        echo "$prog: VNC ready for '$VM'. Tunnel with: ssh -L 5901:127.0.0.1:5901 tart-$VM ; then point a VNC client at localhost:5901." >&2 ;;
     esac
     exit 0
   fi

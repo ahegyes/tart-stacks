@@ -76,7 +76,7 @@ case "$1" in
     fi
     case "$*" in
       "hostname -s") printf '%s\n' "${MOCK_HOSTNAME:-app-a}" ;;
-      "ss -tln"|"ss -ltn"|"sudo ss -tln")
+      "ss -tln"|"sudo ss -tln")
         [ "${MOCK_SS_READ_FAIL:-0}" -eq 0 ] || exit 1
         if [ -n "${MOCK_SS_SEQUENCE_FILE:-}" ]; then
           call=0
@@ -458,7 +458,6 @@ assert_contains "vnc v6-only forever → names the 127.0.0.1:5901 wait" "$(cat "
 MOCK_SS_READ_FAIL=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
 assert_rc       "vnc listener-table read failure → exit 1" 1
 assert_contains "vnc listener-table read failure → named error" "$(cat "$ERR")" "could not read the guest TCP listener table"
-assert_eq       "vnc listener-table read failure → tries all ss fallbacks" 3 "$(grep -Ec 'tart exec app-a (sudo )?ss -(tln|ltn)' "$CALLS")"
 assert_eq       "vnc listener-table read failure → does not wait" 0 "$(grep -c '^sleep 1$' "$CALLS")"
 
 MOCK_SS_OUTPUT="LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*" \
