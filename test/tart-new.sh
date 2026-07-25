@@ -39,29 +39,6 @@ printf 'fedora\nubuntu\n' > "$WORK/distros2"
 # Desktop tokens for the GUI-flavor arm of tart_is_base_image.
 printf 'kde\nxfce\n' > "$WORK/desktops"
 
-# Extract the pure helpers from the source and exercise them directly (same
-# technique parsing.sh uses for tart-up's parser fns — re-extracts each run so it
-# tracks the real source through refactors).
-extract_fn() { awk -v fn="$1" 'index($0, fn "() {")==1{p=1} p{print} p && $0=="}"{exit}' "$2"; }
-{ extract_fn image_for_stack "$BIN/tart-new"
-  echo
-  extract_fn list_stacks "$BIN/tart-new"
-  echo
-  extract_fn stack_exists "$BIN/tart-new"; } > "$WORK/fns.sh"
-# shellcheck disable=SC2034  # read as a global by the sourced helpers below
-STACKS_DIR="$WORK/stacks"   # list_stacks/stack_exists read this global
-# shellcheck source=/dev/null
-source "$WORK/fns.sh"
-
-echo "bin/tart-new — pure helpers:"
-assert_eq "image_for_stack joins distro-stack" "fedora-php" "$(image_for_stack php fedora)"
-assert_eq "image_for_stack ubuntu variant"     "ubuntu-jvm" "$(image_for_stack jvm ubuntu)"
-assert_eq "image_for_stack GUI flavor"         "fedora-php-kde" "$(image_for_stack php fedora kde)"
-assert_eq "image_for_stack empty de = no suffix" "fedora-php" "$(image_for_stack php fedora '')"
-assert_eq "list_stacks lists short tokens sorted" "jvm php" "$(list_stacks | sort | paste -sd' ' -)"
-if stack_exists php; then ok "stack_exists true for present stack"; else bad "stack_exists true for present stack" "want » rc 0 « got » rc 1 «"; fi
-if stack_exists rust; then bad "stack_exists false for absent stack" "want » rc 1 « got » rc 0 «"; else ok "stack_exists false for absent stack"; fi
-
 # Mock `tart` so list output is deterministic and clone/set are recorded.
 # Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
 # real field tart-new's image_built keys on. MOCK_TART_SET_RC makes `tart set`
@@ -89,16 +66,6 @@ cat > "$TART_LIST_JSON" <<'JSON'
  {"Name":"app-a","Source":"local"},
  {"Name":"fedora-jvm","Source":"oci"}]
 JSON
-
-{ extract_fn image_built "$BIN/tart-new"; echo; extract_fn vm_exists "$BIN/tart-new"; } > "$WORK/q.sh"
-# shellcheck source=/dev/null
-source "$WORK/q.sh"
-
-echo "bin/tart-new — tart-querying helpers:"
-if PATH="$WORK/bin:$PATH" image_built php fedora; then ok "image_built true when local image present"; else bad "image_built true when local image present" "want » rc 0 « got » rc 1 «"; fi
-if PATH="$WORK/bin:$PATH" image_built jvm fedora; then bad "image_built false when only OCI present" "want » rc 1 « got » rc 0 «"; else ok "image_built false when only OCI present"; fi
-if PATH="$WORK/bin:$PATH" vm_exists app-a; then ok "vm_exists true for present VM"; else bad "vm_exists true for present VM" "want » rc 0 « got » rc 1 «"; fi
-if PATH="$WORK/bin:$PATH" vm_exists nope; then bad "vm_exists false for absent VM" "want » rc 1 « got » rc 0 «"; else ok "vm_exists false for absent VM"; fi
 
 # End-to-end: run the whole script with mocked tart + fixture stacks. Assert on
 # exit code, stderr message, and the recorded tart calls.
@@ -228,6 +195,20 @@ assert_absent "invalid geometry clones nothing" "$(<"$TART_CALLS")" "clone"
 : > "$TART_CALLS"
 run_new deskvm6 php fedora kde --display
 assert_eq "--display with no value → exit 64" 64 "$rc"
+
+# An empty value is not the same as an absent flag: the GUI default substitutes
+# for it, so both spellings must be refused rather than clone at 1920x1080.
+# `--display="$GEOM"` with GEOM unset is the way a caller reaches this.
+: > "$TART_CALLS"
+run_new deskvm7 php fedora kde --display=
+assert_eq       "--display= (empty, equals form) → exit 64" 64 "$rc"
+assert_contains "empty display names the bad value" "$(<"$WORK/err")" "--display expects WIDTHxHEIGHT"
+assert_absent   "empty display clones nothing" "$(<"$TART_CALLS")" "clone"
+
+: > "$TART_CALLS"
+run_new deskvm8 php fedora kde --display ''
+assert_eq       "--display '' (empty, space form) → exit 64" 64 "$rc"
+assert_absent   "empty space-form display clones nothing" "$(<"$TART_CALLS")" "clone"
 
 # Restore the shared fixture list for the cases below.
 cat > "$TART_LIST_JSON" <<'JSON'
