@@ -21,6 +21,7 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
+assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
 assert_rc() { # label want — checks $rc from the last run_rm
@@ -93,12 +94,14 @@ exit 0
 M
 chmod +x "$MOCKBIN/tart" "$MOCKBIN/launchctl" "$MOCKBIN/ps"
 
-# Fixture list: one base image, one running dev VM, one stopped dev VM.
+# Fixture list: one base image, two dev VMs, and an out-of-band VM occupying
+# the reserved alias namespace.
 export TART_LIST_JSON="$WORK/list.json"
 cat > "$TART_LIST_JSON" <<'JSON'
 [{"Name":"fedora-php","Source":"local","State":"stopped"},
  {"Name":"app-a","Source":"local","State":"running"},
- {"Name":"app-b","Source":"local","State":"stopped"}]
+ {"Name":"app-b","Source":"local","State":"stopped"},
+ {"Name":"tart-ghost","Source":"local","State":"running"}]
 JSON
 
 run_rm() { # args... — exit code in $rc, stderr in $ERR, recorded calls in $CALLS
@@ -127,12 +130,23 @@ check_rc "no args → exit 64"  64 env PATH="$MOCKBIN:$PATH" HOME="$WORK/home" b
 check_rc "two args → exit 64" 64 env PATH="$MOCKBIN:$PATH" HOME="$WORK/home" bash "$BIN/tart-rm" a b
 check_rc "--help → exit 0"    0  env PATH="$MOCKBIN:$PATH" HOME="$WORK/home" bash "$BIN/tart-rm" --help
 
-# unknown VM → exit 1 pointing at `tart list`; nothing stopped or deleted
+# A bare miss is final even when an out-of-band VM occupies the corresponding
+# reserved alias name: the diagnostic names only the form actually checked,
+# and the unrelated VM is never stopped or deleted.
 run_rm ghost
 assert_rc       "unknown VM → exit 1" 1
 assert_contains "unknown VM → error suggests tart list" "$(cat "$ERR")" "Try 'tart list'"
-assert_absent   "unknown VM → no tart stop"   "$(cat "$CALLS")" "tart stop"
-assert_absent   "unknown VM → no tart delete" "$(cat "$CALLS")" "tart delete"
+assert_absent   "bare miss → does not claim another form was tried" "$(cat "$ERR")" "also tried"
+assert_eq       "bare miss → one as-given state probe" 1 "$(grep -c '^tart list --format json$' "$CALLS")"
+assert_absent   "bare miss → does not stop literal tart-prefixed VM"   "$(cat "$CALLS")" "tart stop tart-ghost"
+assert_absent   "bare miss → does not delete literal tart-prefixed VM" "$(cat "$CALLS")" "tart delete tart-ghost"
+
+# A missed SSH alias still tries its stripped VM name and reports both forms.
+run_rm tart-nope
+assert_rc       "unknown alias → exit 1" 1
+assert_contains "unknown alias → error names stripped form" "$(cat "$ERR")" "also tried 'nope'"
+assert_absent   "unknown alias → no tart stop"   "$(cat "$CALLS")" "tart stop"
+assert_absent   "unknown alias → no tart delete" "$(cat "$CALLS")" "tart delete"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
 # with tart's own stderr surfaced, and no destructive call.

@@ -119,17 +119,17 @@ PS
 chmod +x "$MOCKBIN/ps"
 
 # Run tart-up with the mocks prepended (real jq/seq/etc. stay on PATH).
-# Knobs arrive as env on the call: MOCK_ALIVE (default 1 — a listed-running VM
-# has a live process), MOCK_TART_LIST_RC, MOCK_NC_RC, MOCK_SS_OUTPUT,
-# MOCK_SS_SEQUENCE_FILE, MOCK_SS_READ_FAIL, MOCK_TART_EXEC_FAIL_MATCH,
-# MOCK_TART_FAIL_MATCH, and RUNUP_LOG_DIR. Exit code lands in $rc, stderr in
-# $ERR, recorded mock calls in $CALLS. The sequenced-listener counter is reset
-# for every invocation.
+# Knobs arrive as env on the call: MOCK_LIST_VM (default app-a), MOCK_ALIVE
+# (default 1 — a listed-running VM has a live process), MOCK_TART_LIST_RC,
+# MOCK_NC_RC, MOCK_SS_OUTPUT, MOCK_SS_SEQUENCE_FILE, MOCK_SS_READ_FAIL,
+# MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH, and RUNUP_LOG_DIR. Exit code
+# lands in $rc, stderr in $ERR, recorded mock calls in $CALLS. The
+# sequenced-listener counter is reset for every invocation.
 runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-up argv...>
   local state="$1" hostname="$2" netpolicy="$3" mounts="$4" gui="$5"
   shift 5
   : > "$CALLS"; : > "$SS_COUNT"; rc=0
-  PATH="$MOCKBIN:$PATH" MOCK_VM=app-a MOCK_STATE="$state" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$hostname" \
+  PATH="$MOCKBIN:$PATH" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP=10.0.0.9 MOCK_HOSTNAME="$hostname" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_NC_RC="${MOCK_NC_RC-0}" \
     MOCK_SS_OUTPUT="${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_SS_SEQUENCE_FILE="${MOCK_SS_SEQUENCE_FILE-}" MOCK_SS_COUNT_FILE="$SS_COUNT" \
@@ -151,20 +151,37 @@ check_rc "two args → exit 64" 64 env PATH="$MOCKBIN:$PATH" bash "$BIN/tart-up"
 check_rc "bare --gui → exit 64" 64 env PATH="$MOCKBIN:$PATH" bash "$BIN/tart-up" --gui app-a
 check_rc "unknown --gui value → exit 64" 64 env PATH="$MOCKBIN:$PATH" bash "$BIN/tart-up" --gui=bogus app-a
 
-# unknown VM (mock lists a different name) → exit 1
-check_rc "unknown VM → exit 1" 1 \
-  env PATH="$MOCKBIN:$PATH" MOCK_VM=other MOCK_STATE=stopped TART_NC_BIN="$MOCKBIN/nc" \
-  TART_NETPOLICY="$EMPTY" TART_MOUNTS="$EMPTY" TART_GUI="$EMPTY" \
-  bash "$BIN/tart-up" app-a
+# A bare miss has no alias alternative: report only the supplied name and do
+# not repeat the list query.
+MOCK_LIST_VM=other runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "bare unknown VM → exit 1" 1
+assert_contains "bare unknown VM → diagnostic names supplied form" "$(cat "$ERR")" "VM 'app-a' not found."
+assert_absent   "bare unknown VM → diagnostic does not claim another try" "$(cat "$ERR")" "also tried"
+assert_eq       "bare unknown VM → one list query" 1 "$(grep -c 'tart list' "$CALLS")"
+
+# A VM literally named in the reserved SSH-alias namespace may exist if raw
+# tart created it, but a bare miss must neither retry nor act on that VM.
+MOCK_LIST_VM=tart-app-a runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "bare miss with literal tart-app-a present → exit 1" 1
+assert_eq       "bare miss with literal tart-app-a present → no alias probe" 1 "$(grep -c 'tart list' "$CALLS")"
+assert_absent   "bare miss with literal tart-app-a present → no tart run" "$(cat "$CALLS")" "tart run tart-app-a"
+
+# A missing prefixed alias still reports the stripped stored-name form it
+# tried.
+MOCK_LIST_VM=other runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a
+assert_rc       "unknown prefixed VM → exit 1" 1
+assert_contains "unknown prefixed VM → diagnostic names stripped try" "$(cat "$ERR")" "also tried 'app-a'"
+assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <distro>"
+assert_eq       "unknown prefixed VM → two list queries" 2 "$(grep -c 'tart list' "$CALLS")"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
-# with tart's own stderr surfaced, no prefix-swap retry, and no VM start.
+# with tart's own stderr surfaced, no stripped-name retry, and no VM start.
 MOCK_TART_LIST_RC=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_rc       "tart list failure → exit 1" 1
 assert_contains "tart list failure → diagnostic names the tool" "$(cat "$ERR")" "'tart list' failed"
 assert_contains "tart list failure → tart's stderr surfaced"    "$(cat "$ERR")" "MOCK_TART_LIST_STDERR_MARKER"
 assert_absent   "tart list failure → no tart run"          "$(cat "$CALLS")" "tart run"
-assert_eq       "tart list failure → no prefix-swap retry" 1 "$(grep -c 'tart list' "$CALLS")"
+assert_eq       "tart list failure → no stripped-name retry" 1 "$(grep -c 'tart list' "$CALLS")"
 
 # base image refusal (a stack clone-source is not a dev VM)
 check_rc "base image (fedora-php) → exit 1" 1 \

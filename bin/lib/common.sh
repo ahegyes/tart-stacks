@@ -43,10 +43,9 @@ tart_stop_marked() { [ -e "$(tart_stop_mark "$1")" ]; }
 # carry: the ssh alias (tart-<name>), the guest hostname (`hostname -s` must
 # equal the name, so no dots), and the vm-pattern grammar (commas are list
 # separators, `*` is the wildcard). Letters/digits/_/-, alphanumeric head.
-# The `tart-` prefix itself is reserved: it is the alias namespace, and the
-# two-way lookups strip it — a VM actually named tart-<x> would resolve,
-# guard, and pattern-match as <x>. Pure-bash glob classes: byte-exact in any
-# locale, no subprocess per check.
+# The `tart-` prefix itself is reserved for SSH aliases; alias-aware commands
+# may strip it before resolving the bare stored VM name. Pure-bash glob
+# classes: byte-exact in any locale, no subprocess per check.
 tart_valid_vm_name() {
   case "$1" in
     ''|*[!A-Za-z0-9_-]*|[_-]*|tart-*) return 1 ;;

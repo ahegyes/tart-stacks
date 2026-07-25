@@ -19,6 +19,7 @@ assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" 
 assert_file()     { if [ -e "$2" ]; then ok "$1"; else bad "$1" "missing file: $2"; fi; }
 assert_no_file()  { if [ -e "$2" ]; then bad "$1" "unexpected file: $2"; else ok "$1"; fi; }
 assert_rc()       { if [ "$3" -eq "$2" ]; then ok "$1"; else bad "$1" "want rc=$2 got rc=$3"; fi; }
+assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
@@ -59,7 +60,21 @@ run_down;        assert_rc "no args → exit 64"   64 "$rc"
 run_down a b;    assert_rc "two args → exit 64"  64 "$rc"
 run_down --help; assert_rc "--help → exit 0"      0 "$rc"
 run_down nope;   assert_rc "unknown vm → exit 1"  1 "$rc"
-assert_contains "unknown vm names both forms tried" "$OUT" "also tried"
+assert_contains "unknown bare vm names requested form" "$OUT" "VM 'nope' not found."
+assert_absent   "unknown bare vm claims no second form" "$OUT" "also tried"
+run_down tart-nope
+assert_rc       "unknown prefixed vm → exit 1" 1 "$rc"
+assert_contains "unknown prefixed vm names stripped form" "$OUT" "also tried 'nope'"
+
+# The alias namespace can contain out-of-band VMs created with raw `tart`, but
+# a bare tart-stacks name must never resolve forward into that namespace.
+rm -rf "$MARKS"
+MOCK_TART_LIST_JSON='[{"Name":"tart-nope","State":"running"}]' run_down nope
+assert_rc     "bare miss ignores literal tart-prefixed vm" 1 "$rc"
+calls=$(cat "$CALLS")
+assert_eq     "bare miss performs only its as-given state probe" 1 "$(grep -c '^tart list --format json$' "$CALLS")"
+assert_absent "bare miss does not stop tart-prefixed vm" "$calls" "tart stop tart-nope"
+assert_no_file "bare miss does not mark tart-prefixed vm" "$MARKS/tart-nope"
 
 echo "bin/tart-down — the mark and the stop:"
 rm -rf "$MARKS"
