@@ -55,7 +55,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   │   ├── mise-lib.sh                 # Shared helpers sourced by each stack's mise-install.sh (uploaded to /tmp; not run directly)
 │   │   ├── mise.sh                     # mise install system-wide via repo_add_mise (uses COPR on dnf, signed apt repo on apt) (root)
 │   │   ├── terminfo.sh                 # Compile vendored xterm-ghostty terminfo, which ncurses-term omits (root)
-│   │   └── user-config.sh              # zsh default shell + bash mise activation + .zshenv PATH + virtiofs fstab entry; chowns the uploaded ~/.zshrc and ~/.config (root)
+│   │   └── user-config.sh              # zsh default shell + bash mise activation + .zshenv PATH (incl. mise's shims) + virtiofs fstab entry and its skip-when-shareless drop-in + the /run/tart tmpfiles.d entry for forwarded agent sockets; chowns the uploaded ~/.zshrc and ~/.config (root)
 │   └── files/
 │       ├── xterm-ghostty.terminfo      # Ghostty terminfo source; compiled by terminfo.sh into the image
 │       └── zshrc                       # In-VM shell baseline, incl. the zsh-side mise activation; uploaded to /home/admin/.zshrc
