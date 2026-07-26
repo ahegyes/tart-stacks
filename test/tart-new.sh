@@ -202,7 +202,7 @@ assert_eq "--display with no value → exit 64" 64 "$rc"
 : > "$TART_CALLS"
 run_new deskvm7 php fedora kde --display=
 assert_eq       "--display= (empty, equals form) → exit 64" 64 "$rc"
-assert_contains "empty display names the bad value" "$(<"$WORK/err")" "--display expects WIDTHxHEIGHT"
+assert_contains "empty display names the flag" "$(<"$WORK/err")" "option '--display' requires a value"
 assert_absent   "empty display clones nothing" "$(<"$TART_CALLS")" "clone"
 
 : > "$TART_CALLS"
@@ -227,6 +227,10 @@ assert_contains "clone ran before the failing set" "$(<"$TART_CALLS")" "clone fe
 assert_contains "set was attempted"                "$(<"$TART_CALLS")" "set half --cpu 2"
 assert_absent   "alias pin scrubbed despite the failed set" "$(<"$WORK/home/.ssh/known_hosts.tart")" "tart-half"
 assert_contains "unrelated pin survives the aborted create" "$(<"$WORK/home/.ssh/known_hosts.tart")" "tart-keep2"
+# The half-configured clone is ours (the collision gate proved the name free),
+# and leaving it behind makes the next attempt die at that gate instead.
+assert_contains "failing set deletes the clone it left behind" "$(<"$TART_CALLS")" "delete half"
+assert_contains "failing set says it deleted the clone" "$(<"$WORK/err")" "deleting the clone"
 
 # Bad arity (only 2 positionals, missing distro) → usage, exit 64.
 run_new only-one two
@@ -257,6 +261,41 @@ run_new foo php fedora --memory
 assert_eq "valueless --memory exits 64" 64 "$rc"
 run_new foo php fedora --disk-size
 assert_eq "valueless --disk-size exits 64" 64 "$rc"
+
+# An EMPTY value is the same defect one step later: every consumer reads "" as
+# "flag absent", so the resource is silently not set while the exit status
+# claims it was. `--cpu="$N"` with N unset is how a caller reaches this.
+for empty_flag in --cpu --memory --disk-size; do
+  : > "$TART_CALLS"
+  run_new emptyflag php fedora "$empty_flag="
+  assert_eq       "$empty_flag= (empty, equals form) → exit 64" 64 "$rc"
+  assert_contains "$empty_flag= names the flag" "$(<"$WORK/err")" "option '$empty_flag' requires a value"
+  assert_absent   "$empty_flag= clones nothing" "$(<"$TART_CALLS")" "clone"
+  : > "$TART_CALLS"
+  run_new emptyflag php fedora "$empty_flag" ''
+  assert_eq       "$empty_flag '' (empty, space form) → exit 64" 64 "$rc"
+  assert_absent   "$empty_flag '' clones nothing" "$(<"$TART_CALLS")" "clone"
+done
+
+# Base-image names are the reserved clone-source namespace: tart-up, tart-down
+# and tart-rm all refuse them, so creating one mints a VM nothing downstream
+# will touch. The refusal also has to precede the collision gate, whose
+# "or 'tart-rm $NAME' first" remedy tart-rm would decline for such a name.
+for reserved in fedora-php fedora-base fedora-php-kde; do
+  : > "$TART_CALLS"
+  run_new "$reserved" php fedora
+  assert_eq       "reserved base-image name '$reserved' → exit 1" 1 "$rc"
+  assert_contains "reserved '$reserved' → refusal explains itself" "$(<"$WORK/err")" "reserved base-image name"
+  assert_absent   "reserved '$reserved' → no clone" "$(<"$TART_CALLS")" "clone"
+  assert_absent   "reserved '$reserved' → not reported as a collision" "$(<"$WORK/err")" "already exists"
+done
+
+# A hyphenated project name that merely looks like one stays allowed — the
+# classification is anchored on the supported distro and desktop sets.
+: > "$TART_CALLS"
+run_new web-php php fedora
+assert_eq     "look-alike project name still allowed" 0 "$rc"
+assert_contains "look-alike project name clones" "$(<"$TART_CALLS")" "clone fedora-php web-php"
 
 # ── tart_is_base_image unit tests ────────────────────────────────────────────
 # Source bin/lib/common.sh and exercise it directly.
