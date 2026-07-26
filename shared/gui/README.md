@@ -180,9 +180,10 @@ selector rather than a config file:
 
 1. Add the token to `shared/desktops` (that is what `tart-new`, the Makefile's
    `check-de`, and the base-image guard read).
-2. Add a row to each family branch of `gui_packages`, `gui_app_packages`,
-   `gui_scale_packages`, `gui_dm_unit` and `gui_session_candidates` in
-   `shared/scripts/gui-lib.sh` — dnf and apt both.
+2. Add a row to the DE selectors in `shared/scripts/gui-lib.sh`. `gui_packages`,
+   `gui_app_packages` and `gui_dm_unit` branch on family × DE, so each needs a
+   dnf row and an apt row; `gui_scale_packages` and `gui_session_candidates`
+   branch on the DE alone, so each needs one.
 3. Add a `apply_<de>` branch to `shared/scripts/display-scale.sh`, using the
    desktop's own config tool. Scale is per-DE; there is no generic path.
 4. If the desktop needs anything baked beyond packages (a panel layout, an

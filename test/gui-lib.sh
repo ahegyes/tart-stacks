@@ -60,6 +60,24 @@ assert_eq "apt agent"     "spice-vdagent"                                       
 assert_eq "dnf browser"   "firefox"                                                 "$(with_family dnf gui_browser_packages)"
 assert_eq "apt browser"   "firefox-esr"                                             "$(with_family apt gui_browser_packages)"
 
+# The browser's package name and its desktop-file id are one fact per family:
+# gui.sh decides whether to pin a launcher from the package, then names the file
+# from the id, and kde-panel.sh fails the build if that file is absent. Pin both
+# halves so a rename cannot move one without the other.
+echo "gui-lib — the browser package and its desktop id agree per family:"
+assert_eq "dnf browser desktop id" "org.mozilla.firefox.desktop" "$(with_family dnf gui_browser_desktop_id)"
+assert_eq "apt browser desktop id" "firefox-esr.desktop"         "$(with_family apt gui_browser_desktop_id)"
+for fam in dnf apt; do
+  pkg="$(with_family "$fam" gui_browser_packages)"
+  id="$(with_family "$fam" gui_browser_desktop_id)"
+  # The id is not derivable from the package name (dnf reverses the domain), so
+  # the check is that both are populated and the id is a .desktop file.
+  case "$id" in *.desktop) ok "$fam browser id is a desktop file ($id)" ;; *) bad "$fam browser id is a desktop file" "want » *.desktop « got » $id «" ;; esac
+  # gui.sh passes this list accessor's output to pkg_installed as ONE argument,
+  # which is only correct while every branch returns a single token.
+  assert_eq "$fam browser package list is a single token" 1 "$(printf '%s' "$pkg" | wc -w | tr -d ' ')"
+done
+
 echo "gui-lib — gui_require_de gate:"
 with_family dnf gui_require_de kde; rc=$?
 assert_eq "kde accepted" 0 "$rc"

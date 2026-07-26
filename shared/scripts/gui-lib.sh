@@ -101,6 +101,18 @@ gui_browser_packages() {
   esac
 }
 
+# gui_browser_desktop_id — the desktop-file id of the browser gui_browser_packages
+# installs, used by the KDE launcher pinning. It lives beside that package name
+# because the two are one fact per family: a rename that moved only one of them
+# would pin a launcher for a file the image does not have, which kde-panel.sh
+# then fails the build over.
+gui_browser_desktop_id() {
+  case "$_DISTRO_FAMILY" in
+    dnf) echo "org.mozilla.firefox.desktop" ;;
+    apt) echo "firefox-esr.desktop" ;;
+  esac
+}
+
 # gui_scale_packages <de> — runtime needed by the pre-session scale applier.
 # KDE and GNOME already carry their native config tools with the desktop;
 # XFCE's XML must be changed structurally while xfconfd is not running.
@@ -136,9 +148,11 @@ gui_dm_unit() {
 # gui_session_candidates <de> — X session names (basenames under
 # /usr/share/xsessions) to try, most specific first. gui.sh resolves the first
 # one present AFTER the package install and hard-fails if none is — the VNC
-# layer is Xvnc-based, so a cell whose DE ships no X11 session (e.g. Plasma 6
-# on Debian 13, Wayland-only) is unsupported and must fail the build, not bake
-# a desktop that can't start.
+# layer is Xvnc-based, so a cell whose DE ships only a Wayland session is
+# unsupported and must fail the build, not bake a desktop that can't start.
+# Resolution reads /usr/share/xsessions rather than package names for the same
+# reason: Debian ships plasmax11.desktop with no plasma-x11-session package, so
+# a name-based probe refused a cell that builds and boots.
 gui_session_candidates() {
   case "$1" in
     kde)   echo "plasmax11 plasma" ;; # Plasma 6 splits X11 out (plasmax11); Plasma 5's plasma IS X11
