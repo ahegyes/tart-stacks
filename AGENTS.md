@@ -66,7 +66,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   │   │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
 │   │   ├── files/
 │   │   │   └── mise.toml               # In-VM global tool versions (pinned PHP patch + Node LTS)
-│   │   ├── packages.dnf                # Native build deps for dnf-family (Fedora/RHEL); one or more per line, comments stripped
+│   │   ├── packages.dnf                # Native build deps for dnf-family (Fedora); one or more per line, comments stripped
 │   │   ├── packages.apt                # Native build deps for apt-family (Debian/Ubuntu); equivalent capabilities to packages.dnf
 │   │   └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
 │   └── jvm/                            # JVM stack — same shape; Temurin 25 + Maven/Gradle/sbt/Kotlin/scala-cli + uv + Node
@@ -94,9 +94,9 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 
 The root `stack.pkr.hcl` (one parameterized template, built with `make build STACK=<name> DISTRO=<distro>` from the repo root) defines the provisioner chain combining shared and stack-specific scripts. `DISTRO` is mandatory — there is no default. The supported distros are listed in `shared/distros`. Only two scripts have hard ordering constraints — `shared/scripts/00-base.sh` must run first and `shared/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block; it sources `shared/scripts/distro-lib.sh` and reads the stack's `packages.<family>` file to install native build deps in a distro-agnostic way.
 
-`shared/scripts/distro-lib.sh` is the package-manager abstraction layer. It detects the package family from `/etc/os-release` (`dnf` for Fedora/RHEL, `apt` for Debian/Ubuntu) and exposes functions (`pkg_install`, `pkg_refresh`, `repo_add_mise`, `install_zellij`, etc.) that every provisioner uses. Provisioners do not call `dnf` or `apt` directly; the family-abstraction libraries (`distro-lib.sh`, `gui-lib.sh`) are where those calls live.
+`shared/scripts/distro-lib.sh` is the package-manager abstraction layer. It detects the package family from `/etc/os-release` (`dnf` for Fedora — ID only, since that branch is Fedora-specific; `apt` for Debian/Ubuntu and their derivatives, via ID_LIKE too) and exposes functions (`pkg_install`, `pkg_refresh`, `repo_add_mise`, `install_zellij`, etc.) that every provisioner uses. Provisioners do not call `dnf` or `apt` directly; the family-abstraction libraries (`distro-lib.sh`, `gui-lib.sh`) are where those calls live.
 
-Native build deps for each stack live in `stacks/<name>/packages.dnf` (Fedora/RHEL names) and `stacks/<name>/packages.apt` (Debian/Ubuntu names). Adding or removing a package there takes effect on the next rebuild for the relevant distro family.
+Native build deps for each stack live in `stacks/<name>/packages.dnf` (Fedora names) and `stacks/<name>/packages.apt` (Debian/Ubuntu names). Adding or removing a package there takes effect on the next rebuild for the relevant distro family.
 
 Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts share a provisioner block; user scripts share another), not by filename. The table below shows the execution order for the `php` stack.
 

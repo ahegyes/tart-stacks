@@ -13,7 +13,7 @@ Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images fo
 
 `<distro>` is the distribution token (e.g. `fedora`). `shared/distros` lists the supported values.
 
-All stacks share a common base: mise + zellij + standard dev utilities, wired through a distro-abstraction layer (`shared/scripts/distro-lib.sh`) that handles dnf (Fedora/RHEL) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
+All stacks share a common base: mise + zellij + standard dev utilities, wired through a distro-abstraction layer (`shared/scripts/distro-lib.sh`) that handles dnf (Fedora) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
 ## Repo layout
 
@@ -309,7 +309,7 @@ nobody is talking to.
 
 1. Add the distro token (one line) to `shared/distros`.
 2. Confirm a `ghcr.io/cirruslabs/<distro>` Tart image exists (Cirrus must publish it).
-3. A distro in an existing family (dnf or apt) needs nothing further — `rocky` works with the steps above. A **new package family** is a code change, not configuration: add a branch to `shared/scripts/distro-lib.sh` exporting `_DISTRO_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `stack.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
+3. Another **apt-family** distro needs nothing further — the apt branch is portable apt/dpkg only, so a Debian or Ubuntu derivative works with the steps above. The dnf branch is **Fedora-specific** (`rpm -E %fedora` builds a Fedora-release COPR URL, plus `copr enable` and the `development-tools` group), so an enterprise rebuild such as `rocky` is refused by `_detect_family` rather than failed partway through a build. A **new package family** is a code change, not configuration: add a branch to `shared/scripts/distro-lib.sh` exporting `_DISTRO_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `stack.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
 4. For each stack that has native build deps, add the equivalent packages to `packages.<new-family>` in that stack's directory.
 5. CI picks up the new distro automatically (matrix is `stacks/*` × `shared/distros`).
 
