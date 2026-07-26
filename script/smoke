@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# smoke — end-to-end proof of a BUILT stack image: clone a throwaway VM, boot
-# it, ssh in, assert the guest hostname, destroy it. One passing run exercises
-# the whole chain — tart-new's gates, clone, boot, DHCP, sshd, key auth, and
-# tart-up's hostname provisioning — which `packer validate` and the mocked
-# tests cannot. Needs the <distro>-<stack> image already built and the host
-# tools wired (`make setup`); boots a real VM (~1 min). Run via
-# `make smoke STACK=<stack> DISTRO=<distro>` — local-only, never in CI.
+# smoke — end-to-end proof of a BUILT stack image: clone a throwaway VM, boot it,
+# ssh in, then attest that the image IS the cell that was asked for, and destroy
+# it. One passing run exercises the whole chain — tart-new's gates, clone, boot,
+# DHCP, sshd, key auth, tart-up's hostname provisioning, the provenance manifest,
+# the guest's own os-release, the stack's toolchain over a NON-interactive ssh
+# (the shape a script or agent uses), and sshd's effective hardening — none of
+# which `packer validate` or the mocked tests can reach. Needs the
+# <distro>-<stack> image already built and the host tools wired (`make setup`);
+# boots a real VM (~1 min). Run via `make smoke STACK=<stack> DISTRO=<distro>` —
+# local-only, never in CI.
 #
 # SMOKE_KEEP=1 skips the teardown, leaving the VM up for debugging.
 set -euo pipefail
@@ -75,6 +78,56 @@ if [ "$got" != "$VM" ]; then
   echo "$prog: FAIL — guest hostname: expected '$VM', got '$got' (re-run with SMOKE_KEEP=1 to keep the VM for debugging)." >&2
   exit 1
 fi
+
+# Attestation: everything above proves a VM boots and answers, not that it is the
+# image that was asked for. The name is the only thing tart-new checks, and
+# tart-up supplies the hostname — so a mislabeled or stale image passes all of it.
+# These four read what the guest actually carries.
+attest() { # <label> <want> <got>
+  if [ "$2" = "$3" ]; then
+    printf '%s: ok   %-22s %s\n' "$prog" "$1" "$3" >&2
+  else
+    echo "$prog: FAIL — $1: expected '$2', guest reports '$3' (re-run with SMOKE_KEEP=1 to inspect /etc/tart-stacks-release)." >&2
+    exit 1
+  fi
+}
+manifest=$(ssh -o BatchMode=yes "tart-$VM" 'cat /etc/tart-stacks-release; . /etc/os-release; echo "os-id: $ID"') || {
+  rc=$?
+  echo "$prog: FAIL — could not read /etc/tart-stacks-release in 'tart-$VM' (rc=$rc); the image carries no provenance to check." >&2
+  exit "$rc"
+}
+field() { printf '%s\n' "$manifest" | awk -v k="$1:" '$1==k { print $2; exit }'; }
+attest "manifest stack"  "$STACK"          "$(field stack)"
+attest "manifest distro" "$DISTRO"         "$(field distro)"
+attest "guest os-release id" "$DISTRO"     "$(field os-id)"
+attest "manifest gui"    "${DE:-none}"     "$(field gui)"
+
+# The toolchain has to be reachable the way an agent or a script reaches it: a
+# login shell with no rc file, which is what `ssh <vm> <cmd>` runs.
+for probe in "node --version" "$( [ "$STACK" = php ] && echo 'php --version' || echo 'java -version' )"; do
+  if ssh -o BatchMode=yes "tart-$VM" "$probe" >/dev/null 2>&1; then
+    printf '%s: ok   %-22s %s\n' "$prog" "non-interactive" "$probe" >&2
+  else
+    echo "$prog: FAIL — '$probe' does not work over a non-interactive ssh, so the image's PATH wiring is broken for scripts and agents." >&2
+    exit 1
+  fi
+done
+
+# The hardening posture 99-finalize establishes, read from sshd's own effective
+# config rather than from the drop-in file it was written into.
+sshd_effective=$(ssh -o BatchMode=yes "tart-$VM" 'sudo sshd -T 2>/dev/null || sudo /usr/sbin/sshd -T' 2>/dev/null) || sshd_effective=""
+if [ -z "$sshd_effective" ]; then
+  echo "$prog: FAIL — could not read sshd's effective config in 'tart-$VM'; the hardening posture is unverified." >&2
+  exit 1
+fi
+for want in "passwordauthentication no" "permitrootlogin no" "kbdinteractiveauthentication no" "streamlocalbindunlink yes"; do
+  if printf '%s\n' "$sshd_effective" | grep -qix "$want"; then
+    printf '%s: ok   %-22s %s\n' "$prog" "sshd -T" "$want" >&2
+  else
+    echo "$prog: FAIL — sshd's effective config lacks '$want' in 'tart-$VM' (got: $(printf '%s\n' "$sshd_effective" | grep -i "^${want%% *} " || echo 'nothing'))." >&2
+    exit 1
+  fi
+done
 
 # GUI flavor: the desktop surface IS what a GUI smoke proves — start the baked
 # VNC unit (deliberately not enabled in the image, so this also exercises the

@@ -180,7 +180,9 @@ selector rather than a config file:
 
 1. Add the token to `shared/desktops` (that is what `tart-new`, the Makefile's
    `check-de`, and the base-image guard read).
-2. Add a row to the DE selectors in `shared/scripts/gui-lib.sh`. `gui_packages`,
+2. Check `gui_require_cell` in `shared/scripts/gui-lib.sh`: if the DE cannot ship
+   an X11 session on some family, refuse that cell there rather than letting the
+   package install discover it. Then add a row to the DE selectors. `gui_packages`,
    `gui_app_packages` and `gui_dm_unit` branch on family × DE, so each needs a
    dnf row and an apt row; `gui_scale_packages` and `gui_session_candidates`
    branch on the DE alone, so each needs one.
@@ -203,11 +205,20 @@ desktop that can't start.
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
 | `kde` (default) | ✅ image verified | ✅ image verified | ✅ image verified | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
-| `gnome` | ✅ image verified | ✅ image verified | ✅ image verified | `gnome-xorg` / `gnome` |
+| `gnome` | ❌ **refused** | ✅ image verified | ✅ image verified | `gnome-xorg` / `gnome` |
 | `xfce` | ✅ image verified | ✅ image verified | ✅ image verified | `xfce` |
 
+❌ **fedora × gnome is refused by `gui_require_cell`, before any package work.**
+Fedora ships no GNOME X11 session from F43 on ([FESCo
+`Changes/WaylandOnlyGNOME`](https://fedoraproject.org/wiki/Changes/WaylandOnlyGNOME):
+GNOME is built without X11, and `gnome-session-xsession` no longer exists), and
+this layer is Xvnc-based — there is no session to bake. Refusing by name keeps
+that a one-line answer rather than a package-not-found failure partway through a
+40-minute build. Use `kde` or `xfce` on fedora, or `gnome` on ubuntu/debian.
+
 ✅ image verified = a full `GUI=1` build was booted and its desktop contract
-asserted in a live session: the applied scale (`Xft.dpi` 96 → 192 → unscaled),
+asserted in a live session (the status is per source revision, not permanent — a
+change to this layer retires it): the applied scale (`Xft.dpi` 96 → 192 → unscaled),
 the manifest's baked `gui:` line, the browser — or, on ubuntu, the recorded
 `firefox-esr` gap — and for KDE the panel's pinned launchers. ⚠️ = package sets
 and session names were checked against the live distro repos, but no

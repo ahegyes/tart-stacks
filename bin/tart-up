@@ -153,7 +153,8 @@ dir_args() {
     echo "${prog:-tart-up}: $MOUNTS_CONFIG: file exists but is not readable, so this VM's shares cannot be resolved. Fix it with: chmod 600 $MOUNTS_CONFIG" >&2
     return 1
   fi
-  local raw line pattern rest path ro name
+  local raw line pattern rest path ro name pattern_ok pat_n
+  local -a pat_names=()
   while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw%%#*}"
     IFS=$' \t' read -r pattern rest <<< "$line"
@@ -161,6 +162,23 @@ dir_args() {
     if [ -z "$rest" ]; then
       echo "${prog:-tart-up}: $MOUNTS_CONFIG: no path on line, skipping: $raw" >&2
       continue
+    fi
+    # The grammar is `*` | <name> | <a>,<b>,… — validated rather than just matched,
+    # because an unsupported form like `app-*` matches nothing and would otherwise
+    # drop the share silently. A VM that starts without its mount looks identical
+    # to one that has it until something writes to /mnt/shared and loses it with
+    # the clone. Same check tart-ssh-sync applies to the forwards file.
+    if [ "$pattern" != "*" ]; then
+      pattern_ok=1
+      IFS=',' read -r -a pat_names <<< "$pattern"
+      [ "${#pat_names[@]}" -gt 0 ] || pattern_ok=0
+      for pat_n in "${pat_names[@]}"; do
+        tart_valid_vm_name "$pat_n" || { pattern_ok=0; break; }
+      done
+      if [ "$pattern_ok" -ne 1 ]; then
+        echo "${prog:-tart-up}: $MOUNTS_CONFIG: selector '$pattern' is not '*', a bare VM name, or a comma list of them — this mount is NOT attached: $raw" >&2
+        continue
+      fi
     fi
     tart_pattern_matches "$pattern" "$vm" || continue
     case "$rest" in

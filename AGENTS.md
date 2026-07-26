@@ -22,7 +22,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── tart-up                         # Starts a stopped VM (+ mounts + net-policy) and waits for SSH on :22, then sets the guest hostname; the hook the auto-start Match line fires on an interactive `ssh tart-<name>` (also runnable directly to pre-warm). Accepts bare or `tart-`-prefixed name. Also owns the GUI boot plane: `--gui=headless|vnc|window` (or the per-VM `gui` config), the host backing-scale probe it applies in the guest before graphical.target, and the loopback-only classifier that fails a VNC activation closed
 ├── script/
 │   ├── setup                           # Host install run by `make setup` (symlinks the bin/ commands, zsh completion, idempotent SSH Include + placement check, forwards + mounts scaffold, closing tart-ssh-sync run); --uninstall is the inverse (keeps per-VM config)
-│   ├── smoke                           # End-to-end proof of a built image, run by `make smoke`: tart-new clone → tart-up boot → BatchMode ssh → hostname assert → tart-rm teardown (SMOKE_KEEP=1 keeps the VM; optional <de> arg smokes a GUI flavor). Boots a real VM — local only, never CI
+│   ├── smoke                           # End-to-end proof of a built image, run by `make smoke`: tart-new clone → tart-up boot → BatchMode ssh → hostname assert → image attestation (manifest + os-release vs the requested cell, the stack's toolchain over a non-interactive ssh, sshd -T's effective hardening) → VNC surface for a GUI flavor → tart-rm teardown (SMOKE_KEEP=1 keeps the VM). Boots a real VM — local only, never CI
 │   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
 ├── completions/
 │   └── _tart-new                       # Zsh completion for tart-new (stack + distro tokens, resource flags); installed by `make setup`
@@ -52,7 +52,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   │   ├── kde-panel.sh                # Install template for the KDE default-panel launcher pinning; gui.sh runs it for the kde DE only, standalone so its template transform is testable
 │   │   ├── distro-lib.sh               # Package-manager abstraction: pkg_install/pkg_refresh/repo_add_mise/install_zellij etc. for dnf (Fedora) and apt (Debian/Ubuntu) families
 │   │   ├── gui.sh                      # Optional desktop layer (no-op unless -var gui=true): DE + display manager + loopback-only VNC session unit; netpolicy-neutral by design (root)
-│   │   ├── gui-lib.sh                  # DE × family abstraction sourced by gui.sh: package sets, DM units, X session candidates, TigerVNC session-starter paths
+│   │   ├── gui-lib.sh                  # DE × family abstraction sourced by gui.sh: the gui_require_de/gui_require_cell gates (the latter refuses fedora × gnome — no X11 session from F43 on), package sets, DM units, X session candidates, TigerVNC session-starter paths
 │   │   ├── host-keys.sh                # Installs the first-boot oneshot that regenerates a clone's SSH host keys before its sshd ever starts (root)
 │   │   ├── mise-lib.sh                 # Shared helpers sourced by each stack's mise-install.sh: mise_runtime_setup + the smoke_gate/membership_gate hard gates (uploaded to /tmp; not run directly)
 │   │   ├── mise.sh                     # mise install system-wide via repo_add_mise (uses COPR on dnf, signed apt repo on apt) (root)
@@ -104,7 +104,7 @@ Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts 
 
 | Exec | Script | Privilege | Why this position |
 |---|---|---|---|
-| 1 | `shared/scripts/00-base.sh` | root | First (`00-` sentinel). System update, core dev packages, build toolchain, zellij — all via `distro-lib.sh`. Foundation for everything else |
+| 1 | `shared/scripts/00-base.sh` | root | First (`00-` sentinel). Asserts the guest's os-release ID matches the build's `DISTRO` before anything else — the image name and manifest are both written from `DISTRO`, so a wrong base would ship mislabeled. Then system update, core dev packages, build toolchain, zellij — all via `distro-lib.sh` |
 | 2 | `stacks/php/scripts/00-stack.sh` | root | Same root provisioner block as 00-base; reads `packages.<family>` and installs stack-specific native build deps via `pkg_install_optional`. Bundled with 00-base so the toolchain group and compile headers land in one transaction |
 | 3 | `shared/scripts/mise.sh` | root | Same root block; installs mise system-wide via `repo_add_mise` (COPR on dnf, signed apt repo on apt) |
 | 3b | `shared/scripts/gui.sh` | root | Own root block (needs GUI/DE as `environment_vars`); exits immediately unless `-var gui=true`. Desktop + display manager + loopback-only VNC unit per shared/gui/README.md — keep it netpolicy-neutral |

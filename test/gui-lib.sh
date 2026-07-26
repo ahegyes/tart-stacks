@@ -84,6 +84,18 @@ assert_eq "kde accepted" 0 "$rc"
 with_family dnf gui_require_de cinnamon; rc=$?
 if [ "$rc" -ne 0 ]; then ok "unknown de hard-fails"; else bad "unknown de hard-fails" "want » rc!=0 « got » rc=0 «"; fi
 
+# gui_require_de accepts a DE this layer supports somewhere; gui_require_cell is
+# the narrower gate on the family x DE pairing. Fedora ships no GNOME X11 session
+# from F43 on and the layer is Xvnc-based, so that one cell has no session to bake
+# — refused by name rather than left to fail as a missing package.
+echo "gui-lib — gui_require_cell:"
+with_family dnf gui_require_cell gnome; rc=$?
+if [ "$rc" -ne 0 ]; then ok "dnf/gnome refused"; else bad "dnf/gnome refused" "want rc!=0 got rc=0"; fi
+for cell in dnf/kde dnf/xfce apt/kde apt/gnome apt/xfce; do
+  with_family "${cell%%/*}" gui_require_cell "${cell##*/}"; rc=$?
+  assert_eq "$cell accepted" 0 "$rc"
+done
+
 # The lib's supported set and shared/desktops must not drift apart: the
 # Makefile validates against the file, the lib is the in-VM backstop.
 echo "gui-lib — shared/desktops ↔ gui_require_de lockstep:"

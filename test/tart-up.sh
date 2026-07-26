@@ -239,6 +239,28 @@ assert_contains "stopped → provisions over vsock (hostname probe)" "$calls" "h
 assert_eq       "stopped → exactly one provisioning vsock call" 1 "$(grep -c '^tart exec ' "$CALLS")"
 assert_absent   "stopped → no host-side host-key regeneration" "$calls" "ssh_host_"
 
+# A selector outside the documented grammar matched nothing and was silently a
+# non-match, so the VM started without the share — and work written to the
+# expected path in the guest dies with the clone. The forwards parser already
+# validates the same grammar; this is the mounts plane catching up.
+printf -- 'app-* /srv/data\n' > "$WORK/mounts-badpattern"
+runup stopped app-a "$EMPTY" "$WORK/mounts-badpattern" "$EMPTY" app-a
+assert_rc       "unsupported mounts selector → VM still starts" 0
+assert_contains "unsupported selector is named"        "$(cat "$ERR")" "selector 'app-*' is not"
+assert_contains "unsupported selector says the mount is dropped" "$(cat "$ERR")" "NOT attached"
+assert_absent   "unsupported selector attaches no --dir" "$(cat "$CALLS")" "--dir="
+# A comma list with one bad element is refused as a whole, not partially applied.
+printf -- 'app-a,app-* /srv/data\n' > "$WORK/mounts-badlist"
+runup stopped app-a "$EMPTY" "$WORK/mounts-badlist" "$EMPTY" app-a
+assert_absent   "a comma list with a bad element attaches nothing" "$(cat "$CALLS")" "--dir="
+# The documented forms still work. `*` is the wildcard on its own only — inside a
+# comma list it is not a valid element, which is why the list below spells names.
+printf -- 'app-a /srv/one\napp-a,other /srv/two\n* /srv/three\n' > "$WORK/mounts-good"
+runup stopped app-a "$EMPTY" "$WORK/mounts-good" "$EMPTY" app-a
+assert_contains "an exact-name selector still attaches"  "$(cat "$CALLS")" "--dir=one:/srv/one"
+assert_contains "a comma list of names still attaches"   "$(cat "$CALLS")" "--dir=two:/srv/two"
+assert_contains "the bare wildcard still attaches"       "$(cat "$CALLS")" "--dir=three:/srv/three"
+
 # An unreadable mounts file fails closed like the gui plane: a VM missing its
 # shares is indistinguishable from one that has them until something reads an
 # empty /mnt/shared.

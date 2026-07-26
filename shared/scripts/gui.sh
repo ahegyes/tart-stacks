@@ -21,6 +21,7 @@ fi
 
 DE="${DE:?DE must be set when GUI=true}"
 gui_require_de "$DE"
+gui_require_cell "$DE"
 
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"

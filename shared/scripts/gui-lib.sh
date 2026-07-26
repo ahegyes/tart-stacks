@@ -16,6 +16,17 @@ gui_require_de() {
   esac
 }
 
+# gui_require_cell <de> — hard-fail on a family x DE combination this layer cannot
+# serve, ahead of any package work. Separate from gui_require_de: the DE itself is
+# supported, the pairing is not.
+gui_require_cell() {
+  case "$_DISTRO_FAMILY/$1" in
+    dnf/gnome)
+      echo "gui-lib: the fedora x gnome cell is not supported. Fedora ships no GNOME X11 session from F43 on (FESCo WaylandOnlyGNOME), and this layer is Xvnc-based, so there is no session to bake. Use kde or xfce on fedora, or gnome on ubuntu/debian." >&2
+      exit 1 ;;
+  esac
+}
+
 # gui_pkg_install <pkg…> — like pkg_install but WITH weak deps / Recommends:
 # DE metapackages express most of a working desktop (fonts, greeters, session
 # helpers) through Recommends, so --no-install-recommends here would bake a
