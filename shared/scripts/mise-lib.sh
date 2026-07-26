@@ -41,13 +41,47 @@ mise_runtime_setup() {
   fi
 }
 
+# membership_gate <label> <listing> <name…> — HARD GATE for a stack whose smoke
+# is membership-based rather than command-based: check each <name> against a
+# listing the caller already captured, print one line per name, and exit 1 if any
+# is absent so the Packer build fails rather than shipping a broken toolchain.
+#
+# The match is line-anchored and case-insensitive, and both halves are
+# load-bearing. `php -m` spells opcache "Zend OPcache", hence -i. And PHP CLI's
+# display_errors writes "Warning: PHP Startup: Unable to load dynamic library
+# 'imagick.so'" to the SAME stdout the listing comes from — so an unanchored
+# match reads that warning as proof the extension loaded, passing the gate in
+# exactly the case it exists to catch (measured on a live clone: `grep -qiF`
+# matches an extension absent from [PHP Modules], `grep -qixF` does not).
+membership_gate() {
+  local label="$1" listing="$2"
+  shift 2
+  echo ""
+  echo "==> Smoke test (hard gate): $label"
+  local missing=0 name
+  for name in "$@"; do
+    printf "  %-12s " "$name"
+    if printf '%s\n' "$listing" | grep -qixF "$name"; then
+      echo "loaded"
+    else
+      echo "(missing)"
+      missing=$((missing + 1))
+    fi
+  done
+  if [ "$missing" -gt 0 ]; then
+    echo "" >&2
+    echo "ERROR: $missing of the expected $label did not load. Fix the build environment and re-run." >&2
+    exit 1
+  fi
+}
+
 # smoke_gate <label> -- <cmd> [args…] [-- <cmd> [args…]]… — HARD GATE: run each
 # `--`-delimited argv group, print its first meaningful output line, and exit 1
 # if any fails, so the Packer build fails rather than shipping a broken
 # toolchain. Argv groups (never strings, never eval) keep arguments word-split-
 # safe for every future stack author. Empty groups (doubled or trailing `--`)
-# are ignored. For command-based stacks (jvm, python). Stacks whose smoke is
-# membership-based (php's `php -m`) keep their own loop.
+# are ignored. For command-based stacks (jvm, python); membership_gate above is
+# the counterpart for a listing (php's `php -m`).
 smoke_gate() {
   local label="$1"; shift
   echo ""

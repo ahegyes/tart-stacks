@@ -55,5 +55,83 @@ assert_eq       "doubled/trailing -- ignored" 0 "$rc"
 assert_contains "real group still ran"        "$OUT" "solo"
 assert_absent   "no empty-group FAILED noise" "$OUT" "FAILED"
 
+# ── membership_gate ─────────────────────────────────────────────────────────
+# Three `php -m` fixtures, shaped exactly as PHP CLI prints them. The third is
+# the regression test that matters: PHP writes an "Unable to load dynamic
+# library" warning to the SAME stdout the extension list comes from, so an
+# unanchored match reads the warning as proof the extension loaded and the gate
+# passes the one failure it exists to catch.
+echo "mise-lib — membership_gate:"
+
+php_m_clean() {
+  cat <<'EOF'
+[PHP Modules]
+bcmath
+Core
+imagick
+json
+mbstring
+redis
+Zend OPcache
+zlib
+
+[Zend Modules]
+Xdebug
+Zend OPcache
+EOF
+}
+
+php_m_missing_imagick() {
+  php_m_clean | grep -v '^imagick$'
+}
+
+# The exact shape of a broken ini: the warning precedes the listing, on stdout.
+php_m_warning_polluted() {
+  cat <<'EOF'
+
+Warning: PHP Startup: Unable to load dynamic library 'imagick.so' (tried: /home/admin/.local/share/mise/installs/php/8.5.6/lib/php/extensions/no-debug-non-zts-20250925/imagick.so (cannot open shared object file: No such file or directory)) in Unknown on line 0
+[PHP Modules]
+bcmath
+Core
+json
+mbstring
+redis
+Zend OPcache
+zlib
+
+[Zend Modules]
+Zend OPcache
+EOF
+}
+
+run_membership() { # <listing> <name…> — exit code in $rc, combined output in $OUT
+  local listing="$1"; shift
+  rc=0
+  OUT=$( (membership_gate "PHP extensions" "$listing" "$@") 2>&1 ) || rc=$?
+}
+
+run_membership "$(php_m_clean)" bcmath imagick redis json
+assert_eq       "all present → exit 0"         0 "$rc"
+assert_contains "label printed"                "$OUT" "Smoke test (hard gate): PHP extensions"
+assert_contains "each name reported loaded"    "$OUT" "imagick      loaded"
+
+# Case-insensitive, because `php -m` spells opcache "Zend OPcache" — the reason
+# the match cannot simply be exact.
+run_membership "$(php_m_clean)" 'zend opcache'
+assert_eq       "case-insensitive match → exit 0" 0 "$rc"
+
+run_membership "$(php_m_missing_imagick)" bcmath imagick redis
+assert_eq       "a genuinely absent extension → exit 1" 1 "$rc"
+assert_contains "absent extension marked missing" "$OUT" "imagick      (missing)"
+assert_contains "count reported"                  "$OUT" "1 of the expected PHP extensions did not load"
+assert_contains "present siblings still reported" "$OUT" "bcmath       loaded"
+
+run_membership "$(php_m_warning_polluted)" bcmath imagick redis
+assert_eq       "warning-polluted stdout → exit 1" 1 "$rc"
+assert_contains "the warning is not read as the extension" "$OUT" "imagick      (missing)"
+# The needle appears inside the warning text, which is exactly why the match has
+# to be line-anchored rather than a containment test.
+assert_contains "the warning really does carry the name" "$(php_m_warning_polluted)" "imagick.so"
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

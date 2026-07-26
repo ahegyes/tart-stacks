@@ -36,9 +36,9 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── display-scale.sh                # Guest display-scale applier tests: exact installed template instantiated per DE against temp homes; KDE config preservation/reset, GNOME private-dbus writes, XFCE XML preservation/reset
 │   ├── kde-panel.sh                    # Behavioral tests for kde-panel.sh against synthetic Plasma 5/6 templates (anchor counts, launcher gates, indentation, rerun stability)
 │   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
-│   ├── mise-lib.sh                     # Characterization tests for mise-lib's smoke_gate (argv-group grammar, word-split safety, hard-fail path)
+│   ├── mise-lib.sh                     # Characterization tests for mise-lib's two hard gates: smoke_gate (argv-group grammar, word-split safety, hard-fail path) and membership_gate (line-anchored `php -m` matching, incl. the warning-polluted stdout fixture)
 │   ├── gui-lib.sh                      # Characterization tests for gui-lib's DE × family selectors + the shared/desktops ↔ gui_require_de lockstep
-│   └── distro-lib.sh                   # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt) + pkg_install_optional skip recording
+│   └── distro-lib.sh                   # Characterization tests for distro-lib: _detect_family (os-release ID → dnf, ID/ID_LIKE → apt), pkg_install_optional skip recording (incl. the compat-Provides and virtual-package cases), and assert_mac_enforcing
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── distros                         # Supported distro tokens, one per line; consumed by the Makefile, tart-new, the bin/ base-image guard, and the CI matrix
 │   ├── desktops                        # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de), tart-new (+ its zsh completion), and the bin/ base-image guard
@@ -52,7 +52,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   │   ├── gui.sh                      # Optional desktop layer (no-op unless -var gui=true): DE + display manager + loopback-only VNC session unit; netpolicy-neutral by design (root)
 │   │   ├── gui-lib.sh                  # DE × family abstraction sourced by gui.sh: package sets, DM units, X session candidates, TigerVNC session-starter paths
 │   │   ├── host-keys.sh                # Installs the first-boot oneshot that regenerates a clone's SSH host keys before its sshd ever starts (root)
-│   │   ├── mise-lib.sh                 # Shared helpers sourced by each stack's mise-install.sh (uploaded to /tmp; not run directly)
+│   │   ├── mise-lib.sh                 # Shared helpers sourced by each stack's mise-install.sh: mise_runtime_setup + the smoke_gate/membership_gate hard gates (uploaded to /tmp; not run directly)
 │   │   ├── mise.sh                     # mise install system-wide via repo_add_mise (uses COPR on dnf, signed apt repo on apt) (root)
 │   │   ├── terminfo.sh                 # Compile vendored xterm-ghostty terminfo, which ncurses-term omits (root)
 │   │   └── user-config.sh              # zsh default shell + bash mise activation + .zshenv PATH (incl. mise's shims) + virtiofs fstab entry and its skip-when-shareless drop-in + the /run/tart tmpfiles.d entry for forwarded agent sockets; chowns the uploaded ~/.zshrc and ~/.config (root)

@@ -117,15 +117,8 @@ echo "    ini files written to $PHP_SCAN_DIR/"
 # is missing (built-in or PECL). This catches both compile failures and
 # pecl install failures, so we never produce a green build with broken
 # extension wiring that only surfaces at first PHP invocation in a clone.
-echo ""
-echo "==> Smoke test (hard gate):"
-echo -n "node: "; node --version
-echo -n "php:  "; php --version | head -1
-echo ""
-echo "PHP extensions:"
-missing=0
-modules=$(php -m)
-for ext in \
+smoke_gate "runtimes" -- node --version -- php --version
+membership_gate "PHP extensions" "$(php -m)" \
     pdo_sqlite sqlite3 \
     mysqli pdo_mysql \
     pdo_pgsql \
@@ -133,22 +126,7 @@ for ext in \
     redis memcached \
     intl mbstring curl json 'zend opcache' \
     sodium readline bz2 zip \
-    pcov xdebug; do
-  printf "  %-12s " "$ext"
-  # Case-insensitive containment: opcache shows as "Zend OPcache" in the list.
-  if grep -qiF "$ext" <<<"$modules"; then
-    echo "loaded"
-  else
-    echo "(missing)"
-    missing=$((missing + 1))
-  fi
-done
-
-if [ "$missing" -gt 0 ]; then
-  echo ""
-  echo "ERROR: $missing expected PHP extension(s) did not load. Fix the build environment and re-run." >&2
-  exit 1
-fi
+    pcov xdebug
 
 # Composer — official installer. Composer isn't bundled with PHP the way
 # npm is with Node, so we install it explicitly alongside the PHP runtime.
