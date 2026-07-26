@@ -17,10 +17,22 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « i
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 ERR="$WORK/err"
 
+# `make` runs against a COPY of the repo, never the checkout. `scaffold` writes a
+# stack directory for any token the gates let through, so a case that ever stopped
+# being refused — or a gate someone disconnects while testing one — would leave
+# that directory in the developer's tree and in CI's stacks/* matrix. Copying is
+# what makes the blast radius the tmpdir. The copy is made fresh from the real
+# Makefile each run, so a deliberate mutation of it still shows up here.
+SANDBOX="$WORK/repo"
+mkdir -p "$SANDBOX/shared"
+cp "$REPO/Makefile" "$SANDBOX/"
+cp "$REPO/shared/distros" "$REPO/shared/desktops" "$SANDBOX/shared/"
+cp -R "$REPO/stacks" "$REPO/templates" "$SANDBOX/"
+
 gate() { # <target> <VAR=VALUE…> — rc in $rc, stderr in $ERR
   local target="$1"; shift
   rc=0
-  make -C "$REPO" "$target" "$@" >/dev/null 2>"$ERR" || rc=$?
+  make -C "$SANDBOX" "$target" "$@" >/dev/null 2>"$ERR" || rc=$?
 }
 assert_rejects() { # label target VAR=VALUE…
   local label="$1"; shift
@@ -66,9 +78,13 @@ assert_contains "the missing-stack refusal lists what exists" "$(cat "$ERR")" "p
 echo "Makefile — check-distro:"
 assert_rejects "empty DISTRO rejected"       check-distro DISTRO=
 assert_rejects "unsupported DISTRO rejected" check-distro DISTRO=arch
+distro_cases=0
 while IFS= read -r d; do
+  distro_cases=$((distro_cases + 1))
   assert_accepts "shared/distros token '$d' accepted" check-distro DISTRO="$d"
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/distros")
+if [ "$distro_cases" -gt 0 ]; then ok "shared/distros contributed $distro_cases case(s)"
+else bad "shared/distros contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
 # GUI is read by `$(if $(GUI),…)`, where make truthiness would treat GUI=0 as ON.
 echo "Makefile — check-gui:"
@@ -83,9 +99,13 @@ assert_rejects "GUI=yes rejected"   check-gui GUI=yes
 echo "Makefile — check-de:"
 assert_rejects "GUI=1 with an unsupported DE rejected" check-de GUI=1 DE=cinnamon
 assert_accepts "an unsupported DE is ignored without GUI" check-de DE=cinnamon
+de_cases=0
 while IFS= read -r de; do
+  de_cases=$((de_cases + 1))
   assert_accepts "shared/desktops token '$de' accepted with GUI=1" check-de GUI=1 DE="$de"
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
+if [ "$de_cases" -gt 0 ]; then ok "shared/desktops contributed $de_cases case(s)"
+else bad "shared/desktops contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
 echo "Makefile — scaffold refuses to overwrite:"
 assert_rejects "scaffold over an existing stack rejected" scaffold STACK=php
@@ -120,6 +140,15 @@ for target in check-stack scaffold; do
     *)                       bad "$target requires check-stack-token" "prerequisites are: ${line:-<none>}" ;;
   esac
 done
+
+# The guard that makes every case above safe: a token the gates accept really does
+# get scaffolded, and it lands in the copy.
+echo "Makefile — scaffold writes only inside the sandbox:"
+assert_accepts "scaffold of a fresh valid token succeeds" scaffold STACK=probe
+if [ -f "$SANDBOX/stacks/probe/README.md" ]; then ok "scaffold wrote into the sandbox copy"
+else bad "scaffold wrote into the sandbox copy" "no $SANDBOX/stacks/probe/README.md"; fi
+if [ -e "$REPO/stacks/probe" ]; then bad "scaffold left the checkout untouched" "$REPO/stacks/probe exists"
+else ok "scaffold left the checkout untouched"; fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

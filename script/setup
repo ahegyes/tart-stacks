@@ -86,7 +86,13 @@ case "$GENERATED" in
   "$HOME"/*) INCLUDE_TARGET="~/${GENERATED#"$HOME"/}" ;;
   *)         INCLUDE_TARGET="$GENERATED" ;;
 esac
-INCLUDE_LINE="Include $INCLUDE_TARGET"
+# Quoted when the path carries whitespace: ssh_config splits on it otherwise, so
+# the unquoted form would name a file ssh never finds — and the scanner below
+# would not recognise it either, adding one more Include on every run.
+case "$INCLUDE_TARGET" in
+  *[[:space:]]*) INCLUDE_LINE="Include \"$INCLUDE_TARGET\"" ;;
+  *)             INCLUDE_LINE="Include $INCLUDE_TARGET" ;;
+esac
 # ssh_config(5) resolves a bare relative Include against ~/.ssh, so
 # `Include config.d/tart-vms` is a third legal spelling of the same file.
 # Recognising all three is what stops setup adding a second Include beside a
@@ -150,11 +156,25 @@ include_scan() {
         enclosing=NR
         enclosing_catchall=0
         if (kw=="host") { for (i=2; i<=n; i++) if (f[i]=="*") enclosing_catchall=1 }
-        else if (tolower(f[2])=="all") enclosing_catchall=1
+        else {
+          # `Match all` matches every host, and only `final` may precede it. After
+          # any other criterion an `all` is that criterion s argument, not the
+          # keyword — `Match canonical all` is not entered on the normal pass.
+          for (i=2; i<=n; i++) {
+            if (tolower(f[i])=="all")   { enclosing_catchall=1; break }
+            if (tolower(f[i])!="final") break
+          }
+        }
       }
     }
     kw=="include" && !inc {
+      # Per field for the multi-path form ssh also accepts, then the whole
+      # argument, which is the only way a path containing a space can match.
       for (i=2; i<=n; i++) if (f[i]==t1 || f[i]==t2 || f[i]==t3) { inc=NR; break }
+      if (!inc) {
+        arg = l; sub(/^[^ \t]+[ \t]+/, "", arg)
+        if (arg==t1 || arg==t2 || arg==t3) inc=NR
+      }
     }
     END { print first+0, enclosing+0, enclosing_catchall+0, inc+0 }
   ' "$1"

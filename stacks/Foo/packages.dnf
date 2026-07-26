@@ -1,3 +1,0 @@
-# Foo native build dependencies (Fedora/dnf names), one or more per line;
-# '#' comments and blank lines ignored. Equivalent capabilities to packages.apt
-# (names differ); keep the two aligned. Empty if all runtimes are mise binaries.

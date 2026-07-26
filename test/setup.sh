@@ -191,11 +191,23 @@ assert_contains "scoped block encloses despite an earlier catch-all → names th
 assert_absent   "scoped block encloses despite an earlier catch-all → not called a catch-all" "$(cat "$ERR")" "catch-all that starts"
 assert_contains "scoped block encloses despite an earlier catch-all → gives the scoping reason" "$(cat "$ERR")" "never applies to tart-* aliases"
 
-# `Match all` matches every host, so ssh treats it as the catch-all case.
+# `Match all` matches every host, so ssh treats it as the catch-all case — and
+# `final` may precede it. After any other criterion an `all` is that criterion's
+# argument instead, which `ssh -G` confirms is not entered on the normal pass.
 sandbox s3e
 printf 'Match all\n  User bob\n%s\n' "$INC" > "$SSHCFG"
 run_setup
 assert_contains "Match all → recognised as a catch-all" "$(cat "$ERR")" "inside the catch-all that starts on line 1"
+sandbox s3e2
+printf 'Match final all\n  User bob\n%s\n' "$INC" > "$SSHCFG"
+run_setup
+assert_contains "Match final all → recognised as a catch-all" "$(cat "$ERR")" "inside the catch-all that starts on line 1"
+for notall in 'Match canonical all' 'Match host all'; do
+  sandbox "s3f-$(printf '%s' "$notall" | tr -cd '[:lower:]')"
+  printf '%s\n  User bob\n%s\n' "$notall" "$INC" > "$SSHCFG"
+  run_setup
+  assert_contains "'$notall' → not a catch-all" "$(cat "$ERR")" "inside the block that starts on line 1"
+done
 
 # ssh_config separates a keyword from its argument by whitespace OR one `=`,
 # accepts double-quoted arguments, and allows leading indentation — all four
@@ -349,6 +361,20 @@ printf 'Include ~/.ssh/config.d/tart-vms-extra\nHost *\n  User bob\n' > "$SSHCFG
 run_setup
 assert_contains "prefix-sharing neighbour → our own Include still added" "$(cat "$SSHCFG")" "$INC"
 assert_contains "prefix-sharing neighbour → left in place" "$(cat "$SSHCFG")" "tart-vms-extra"
+
+# A generated path containing whitespace has to be written quoted, or ssh splits
+# it and the scanner cannot field-match it — which added one Include per run.
+sandbox s7e
+mkdir -p "$SB/out dir"
+GEN="$SB/out dir/tart-vms"
+run_setup
+assert_rc       "spaced generated path → exit 0" 0
+assert_contains "spaced generated path → Include is quoted" "$(cat "$SSHCFG")" "Include \"$SB/out dir/tart-vms\""
+run_setup
+run_setup
+assert_eq "spaced generated path → still one Include after three runs" "1" "$(grep -c 'out dir/tart-vms' "$SSHCFG")"
+if ssh -G -F "$SSHCFG" someprobe >/dev/null 2>&1; then ok "spaced generated path → ssh still parses the config"
+else bad "spaced generated path → ssh still parses the config" "ssh -G rejected it"; fi
 
 # setup is run through a symlink by anything that puts script/ on a path; the
 # repo it links the commands from must still be this checkout.

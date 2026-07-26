@@ -28,6 +28,14 @@ run_gate() { # args... — exit code in $rc, combined output in $OUT
   OUT=$( (smoke_gate "$@") 2>&1 ) || rc=$?
 }
 
+# Same, but under the shell options the real caller sets. mise-install.sh runs
+# with `set -euo pipefail`, and that is what turns a stray pipeline 141 into an
+# aborted build — without it a broken gate looks like it passed.
+run_gate_strict() { # args... — exit code in $rc, combined output in $OUT
+  rc=0
+  OUT=$( ( set -eo pipefail; smoke_gate "$@" ) 2>&1 ) || rc=$?
+}
+
 echo "mise-lib — smoke_gate:"
 
 run_gate "happy" -- echo hello -- printf 'world\n'
@@ -54,6 +62,15 @@ run_gate "empties" -- -- echo solo -- --
 assert_eq       "doubled/trailing -- ignored" 0 "$rc"
 assert_contains "real group still ran"        "$OUT" "solo"
 assert_absent   "no empty-group FAILED noise" "$OUT" "FAILED"
+
+# The same SIGPIPE shape membership_gate carries: awk exits at the first match, so
+# past the pipe buffer the producer takes SIGPIPE and pipefail turns a PASSING
+# check into 141 — and here it is not inside an `if`, so the caller's `set -e`
+# aborts the build with nothing printed.
+# shellcheck disable=SC2016  # $i is the inner sh's loop counter, not this shell's
+run_gate_strict "bulky" -- sh -c 'i=0; while [ $i -lt 20000 ]; do printf "line%06d\n" $i; i=$((i+1)); done'
+assert_eq       "a command with output past the pipe buffer → exit 0" 0 "$rc"
+assert_contains "its first line is still reported" "$OUT" "line000000"
 
 # ── membership_gate ─────────────────────────────────────────────────────────
 # Three `php -m` fixtures, shaped exactly as PHP CLI prints them. The third is

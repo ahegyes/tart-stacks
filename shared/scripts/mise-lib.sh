@@ -98,9 +98,12 @@ smoke_gate() {
     if [ "$tok" != "--" ]; then cmd+=("$tok"); continue; fi
     [ "${#cmd[@]}" -gt 0 ] || continue
     printf "  %-26s " "${cmd[*]}"
-    # First non-empty, non-separator line (e.g. `gradle --version` leads with a box border).
+    # First non-empty, non-separator line (e.g. `gradle --version` leads with a box
+    # border). A herestring, not `echo |`: awk exits at the first match, so past the
+    # pipe buffer echo takes SIGPIPE and pipefail turns a passing check into a
+    # build-aborting 141 with nothing printed.
     if output=$("${cmd[@]}" 2>&1); then
-      echo "$output" | awk '/^[^-]/ && NF { print; exit }'
+      awk '/^[^-]/ && NF { print; exit }' <<<"$output"
     else
       echo "FAILED"
       echo "$output" >&2

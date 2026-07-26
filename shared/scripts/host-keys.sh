@@ -38,10 +38,15 @@ chmod 755 /usr/local/sbin/tart-stacks-host-keys
 cat > /etc/systemd/system/tart-stacks-host-keys.service <<'EOF'
 [Unit]
 Description=Regenerate SSH host keys on a clone's first boot (tart-stacks)
-# Every name the daemon answers to, across families and activation styles:
-# dnf ships sshd.service, apt ships ssh.service, and apt also socket-activates
-# through ssh.socket. systemd ignores ordering against units that do not exist.
-Before=ssh.service sshd.service ssh.socket
+# Both daemon names listed: dnf-family ships sshd.service, apt-family ships
+# ssh.service — systemd ignores ordering against units that do not exist. NOT
+# ssh.socket: this unit keeps DefaultDependencies, so it is implicitly
+# After=basic.target, and basic.target comes after sockets.target — ordering
+# before the socket closes a cycle that systemd breaks by deleting one of the
+# jobs in it (measured on ubuntu: "Job sockets.target/start deleted to break
+# ordering cycle"). Ordering before ssh.service is enough either way, because
+# socket activation still has to start ssh.service to serve a connection.
+Before=ssh.service sshd.service
 ConditionPathExists=!/etc/ssh/.tart-keys
 
 [Service]

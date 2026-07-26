@@ -78,6 +78,8 @@ DEFAULT_DISPLAY_GEOMETRY="1920x1080"
 # argument reports the flag instead of dying as an opaque set -u error. Empty is
 # refused for a separate reason: every consumer below reads "" as "flag absent"
 # and drops it, so `--cpu=` would report success for a resource it never set.
+# Called as a statement: inside `CPU=$(need_value …)` the exit would leave the
+# subshell, not the script, and parsing would carry on with an empty value.
 need_value() {
   [ -n "$2" ] && return 0
   echo "$prog: option '$1' requires a value" >&2
@@ -232,7 +234,7 @@ if [ "${#set_args[@]}" -gt 0 ]; then
     # already scrubbed before the clone.
     echo "$prog: 'tart set' failed for '$NAME' — deleting the clone it left behind." >&2
     tart delete "$NAME" \
-      || echo "$prog: warning: '$NAME' is still there and half-configured; see tart's error above, then delete it." >&2
+      || echo "$prog: warning: '$NAME' is still there and half-configured — see tart's error above, then: tart delete $NAME" >&2
     exit "$set_rc"
   fi
 fi
