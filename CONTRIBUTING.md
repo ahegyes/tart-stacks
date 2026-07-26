@@ -6,7 +6,7 @@ Small project; PRs welcome.
 
 You'll need a macOS host (Apple Silicon, M1 or later, macOS 26+ — see the README's Prerequisites for why) and:
 
-- [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
+- [Tart](https://tart.run/): `brew install openai/tools/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
 - [jq](https://jqlang.org/): `brew install jq` — the host commands and the test suite parse JSON with it
 - [ShellCheck](https://www.shellcheck.net/): `brew install shellcheck` — to mirror the CI lint locally

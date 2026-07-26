@@ -71,7 +71,7 @@ case "${1:-}" in
   *) echo "$prog: unknown arg '$1'" >&2; usage; exit 64 ;;
 esac
 
-tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
+tart_need_cmd tart "Install: brew install openai/tools/tart"
 
 # Resolve tart-up to an absolute path for the generated Match line (the Match
 # exec runs under a GUI/non-login shell that may lack ~/.local/bin on PATH).

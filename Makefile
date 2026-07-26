@@ -128,7 +128,7 @@ init:
 	packer init .
 
 bootstrap: check-distro
-	@command -v tart >/dev/null 2>&1 || { echo "tart not installed. Run: brew install cirruslabs/cli/tart"; exit 1; }
+	@command -v tart >/dev/null 2>&1 || { echo "tart not installed. Run: brew install openai/tools/tart"; exit 1; }
 	tart pull ghcr.io/cirruslabs/$(DISTRO):$(IMAGE_TAG)
 	-tart delete $(TART_BASE_NAME) 2>/dev/null
 	tart clone ghcr.io/cirruslabs/$(DISTRO):$(IMAGE_TAG) $(TART_BASE_NAME)

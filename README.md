@@ -38,7 +38,7 @@ orientation.
 - **Apple Silicon Mac**, M1 or later. M3+ is only needed for nested virtualization (not enabled here).
 - **macOS 26 Tahoe or later.** The floor is set by OpenSSH: the generated SSH config's auto-start hook uses `Match sessiontype`, which needs **OpenSSH 10.0+** and which older ssh rejects as a fatal parse error — in an Included file, that takes down every `ssh` on the host. macOS 26 is the first release to ship it (26.5 has 10.2). `tart-ssh-sync` probes for the keyword and, failing it, writes nothing at all: on an older macOS you get no `tart-<name>` alias, no identity pinning and no connect-time IP resolution, so you reach a VM as `ssh admin@$(tart ip <name>)`. Building and running images works; the SSH ergonomics are what you lose.
 - **8 GB RAM minimum**; 16 GB+ recommended for multiple concurrent VMs.
-- [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
+- [Tart](https://tart.run/): `brew install openai/tools/tart` — Tart, softnet and the guest agent moved to the `openai` org; the older `cirruslabs/cli` tap is frozen and current Homebrew refuses to load formulae from it. Distro base images are still published under `ghcr.io/cirruslabs`.
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
 - [jq](https://jqlang.org/) — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`) parse `tart list --format json` with it. macOS 15+ ships one at `/usr/bin/jq`, so this is normally already satisfied; `brew install jq` if `jq --version` fails.
 

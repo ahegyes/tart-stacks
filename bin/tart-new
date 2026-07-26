@@ -87,7 +87,7 @@ need_value() {
   exit 64
 }
 
-tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
+tart_need_cmd tart "Install: brew install openai/tools/tart"
 tart_need_cmd jq   "Install: brew install jq"
 
 CPU="" MEM="" DISK="" DISPLAY_GEOMETRY=""
