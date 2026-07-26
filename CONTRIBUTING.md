@@ -4,7 +4,7 @@ Small project; PRs welcome.
 
 ## Setup
 
-You'll need a macOS host (Apple Silicon, M1 or later, macOS 13+) and:
+You'll need a macOS host (Apple Silicon, M1 or later, macOS 26+ — see the README's Prerequisites for why) and:
 
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
@@ -22,11 +22,12 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
    - `shellcheck` on any script you changed — the CI job fails on shellcheck **warnings**, not just errors, so locally-clean is the bar. (Scaffold templates get linted too, with `__STACK__` substituted; see `.github/workflows/validate.yml`.)
 3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name> DISTRO=<distro>` (15-20 min for PHP). Follow with `make smoke STACK=<name> DISTRO=<distro>` (~1 min; boots a real VM, so local-only). The manual equivalent, for poking around inside:
    ```bash
-   tart clone <distro>-<name> test-vm
-   ssh tart-test-vm            # auto-starts the stopped VM, then connects
-   # inside VM (example for fedora-php):
+   tart-new test-vm <name> <distro>   # guarded clone
+   ssh tart-test-vm                   # auto-starts the stopped VM, then connects
+   # inside the VM (example for the php stack):
    node --version && php --version && composer --version
-   tart-rm test-vm             # guarded teardown when done
+   exit                               # back to the host — tart-rm is host-side
+   tart-rm test-vm                    # guarded teardown when done
    ```
 
 > **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, and `test`, run via `make`. `shared/scripts/` and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.

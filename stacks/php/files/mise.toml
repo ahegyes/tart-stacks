@@ -48,3 +48,9 @@ verbose = false
 # a cloned repo's config is executable (tool installs, env hooks on activation),
 # and the per-project prompt is the supply-chain gate this VM exists to keep.
 # This global file lives in mise's own default-trusted location.
+#
+# How much that gate covers is version-dependent, and mise is installed from a
+# floating repo at build time. On 2026.6.2 (verified in a guest) even a config
+# holding nothing but a `[tools]` pin is refused until trusted; a later release
+# may narrow the gate to env vars, hooks and templates. Check the mise your image
+# actually shipped before relying on the wider reading.

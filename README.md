@@ -36,12 +36,11 @@ orientation.
 ## Prerequisites
 
 - **Apple Silicon Mac**, M1 or later. M3+ is only needed for nested virtualization (not enabled here).
-- **macOS 13 Ventura or later.**
+- **macOS 26 Tahoe or later.** The floor is set by OpenSSH: the generated SSH config's auto-start hook uses `Match sessiontype`, which needs **OpenSSH 10.0+** and which older ssh rejects as a fatal parse error. macOS 26 is the first release to ship it (26.5 has 10.2). `tart-ssh-sync` checks `ssh -V` and refuses to write the config rather than break every ssh on the host — on an older macOS everything else here still works, you just start VMs with `tart-up <name>` instead of on connect.
 - **8 GB RAM minimum**; 16 GB+ recommended for multiple concurrent VMs.
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
-- [jq](https://jqlang.org/): `brew install jq` — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`) parse `tart list --format json` with it. macOS 15+ ships a system jq, but the floor here is macOS 13, so install it explicitly.
-- **OpenSSH 10.0 or later** (`ssh -V`) — the generated SSH config's auto-start hook uses `Match sessiontype`, which older ssh rejects as a fatal parse error. Current macOS updates ship 10.x; `tart-ssh-sync` checks and refuses to write the config rather than break your ssh.
+- [jq](https://jqlang.org/) — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`) parse `tart list --format json` with it. macOS 15+ ships one at `/usr/bin/jq`, so this is normally already satisfied; `brew install jq` if `jq --version` fails.
 
 ## Setup
 
@@ -49,7 +48,7 @@ orientation.
 
 Every stack's Packer build authorizes a Secure-Enclave-backed SSH key for `admin@<vm>` and disables password auth — one key serves every VM cloned from any stack, and the private key never leaves the Enclave. Whether that key prompts for Touch ID on use is your call (see below).
 
-Use [Secretive](https://github.com/maxgoedjen/secretive) (macOS 13+):
+Use [Secretive](https://github.com/maxgoedjen/secretive):
 
 ```bash
 brew install --cask secretive
@@ -94,6 +93,8 @@ make setup
 ```
 
 Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm` and `tart-down` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+
+Stopping a VM is `tart-down <name>` — `tart stop` with the same gates as the rest: it accepts the bare or `tart-`-prefixed name and refuses stack base images. Several settings here (mounts, net-policy, gui mode) apply at boot, so `tart-down <name>` followed by a fresh `ssh tart-<name>` is how you pick up a change to them.
 
 `make uninstall` is the inverse: it removes only what verifiably points into this repo (the command symlinks, the completion, the exact Include block setup wrote, the generated config), keeps every per-VM config file (`forwards`, `mounts`, `gui`, `ssh-agents`, `netpolicy` — they carry your opt-ins).
 
@@ -244,7 +245,7 @@ za logs          # attach to (or create) "logs" session — independent
 
 Detach (leaving the session running) with `Ctrl-o` then `d`; reconnect later from any new `ssh tart-<name>` with `za <name>`. Run `za` with no args to list sessions. Don't use `Ctrl-q` to leave — it quits zellij and ends the session.
 
-**Multi-tab gotcha:** running plain `zellij` (without a name) in two host tabs attaches both to the same default session — both tabs mirror each other, useless for parallel work. Always use named sessions (`za <name>`) when working across tabs.
+**Name your sessions.** Plain `zellij` starts a *new* session each time, under a generated name (`glowing-donkey`, …), so a second tab does get its own state — but after a disconnect nothing points you back at the one you were in, and `zellij list-sessions` is all you have. `za <name>` attaches to that name or creates it, which is what makes a tab's work findable again.
 
 ### Iterate a stack base
 
@@ -318,7 +319,7 @@ nobody is talking to.
 - **`packer init` fails with "no plugins for github.com/cirruslabs/tart"** → upgrade Packer (`brew upgrade hashicorp/tap/packer`); the tart plugin requires Packer 1.7+.
 - **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip <distro>-base` (e.g. `tart ip fedora-base`). If blank, the VM didn't get DHCP — `tart stop <distro>-base; tart delete <distro>-base; make bootstrap DISTRO=<distro>` to start over.
 - **`ssh tart-<name>` triggers Touch ID more than once** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below a `Host *` catch-all), so ssh falls back to defaults and offers every key in Secretive's agent — one Touch ID prompt per key tried. The generated config pins just the Tart VM key (`IdentityFile` + `IdentitiesOnly yes`), so a match is what collapses it to a single prompt. Re-run `make setup` — it adds the `Include` line and warns if an existing one is misplaced. See [Setup §2](#2-install-the-host-tools).
-- **All SSH sessions to a VM drop at once / "broken pipe", and the VM loses forwarded host services** → the VM's `tart run` process crashed (often an Apple Virtualization.framework trap; check `~/Library/Logs/tart-stacks/<name>.run.log` and `~/Library/Logs/DiagnosticReports/tart-*.ips`). Bring it back with `tart stop <name>` then `ssh tart-<name>`, or have it restart itself — see [Keep a VM alive across crashes](#keep-a-vm-alive-across-crashes).
+- **All SSH sessions to a VM drop at once / "broken pipe", and the VM loses forwarded host services** → the VM's `tart run` process crashed (often an Apple Virtualization.framework trap; check `~/Library/Logs/tart-stacks/<name>.run.log` and `~/Library/Logs/DiagnosticReports/tart-*.ips`). Bring it back with `tart stop <name>` then `ssh tart-<name>`. Recovery is manual by design — see [When a VM crashes](#when-a-vm-crashes).
 
 Stack-specific troubleshooting lives in each stack's README.
 

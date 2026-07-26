@@ -28,7 +28,7 @@ None currently. All JVM runtimes ship as pre-built aarch64 binaries via mise; th
 ## Customization
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
-- **Per-project JDK pin**: drop a `.mise.toml` in the project repo root and commit it, then run `mise trust` once inside the repo — project configs are deliberately untrusted until you do (that prompt is the supply-chain gate; a non-interactive agent runs `mise trust` as an explicit step). mise honors the closest trusted `.mise.toml` walking up from CWD, so per-project pins win over the global default.
+- **Per-project JDK pin**: drop a `.mise.toml` in the project repo root and commit it, then run `mise trust` once inside the repo — project configs are deliberately untrusted until you do (that prompt is the supply-chain gate; a non-interactive agent runs `mise trust` as an explicit step). How much the gate covers moves with the mise release the image happened to install — see the note in [`files/mise.toml`](./files/mise.toml). mise honors the closest trusted `.mise.toml` walking up from CWD, so per-project pins win over the global default.
   ```toml
   [tools]
   java = "temurin-17"   # or temurin-21, etc.
