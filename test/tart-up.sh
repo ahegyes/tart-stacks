@@ -168,9 +168,11 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
     TART_NC_BIN="$MOCKBIN/nc" TART_NETPOLICY="$netpolicy" TART_MOUNTS="$mounts" TART_GUI="$gui" \
     TART_LOG_DIR="${RUNUP_LOG_DIR:-$WORK/logs}" \
     bash "$BIN/tart-up" "$@" >/dev/null 2>"$ERR" || rc=$?
-  # The stopped-VM `tart run` is backgrounded (& disown); give the mock up to ~2s to log it.
+  # The stopped-VM `tart run` is backgrounded (& disown), so wait for the mock to
+  # log it. The loop exits the moment the line lands; the bound is generous
+  # because a loaded machine has been seen to need more than a second.
   if [ "$rc" -eq 0 ] && [ "$state" = stopped ]; then
-    local _; for _ in $(seq 1 20); do grep -q 'tart run' "$CALLS" 2>/dev/null && break; sleep 0.1; done
+    local _; for _ in $(seq 1 100); do grep -q 'tart run' "$CALLS" 2>/dev/null && break; sleep 0.1; done
   fi
 }
 
@@ -230,9 +232,11 @@ assert_contains "stopped → run carries netpolicy flag"  "$calls" "--net-softne
 assert_contains "stopped → run carries dir-mount flag"  "$calls" "--dir=data:/srv/data:ro"
 assert_contains "stopped → :22 probe uses \$TART_NC_BIN" "$calls" "nc -z -G 3 10.0.0.9 22"
 assert_contains "stopped → provisions over vsock (hostname probe)" "$calls" "hostname -s"
-# Host keys belong to the image's first-boot oneshot, which runs before sshd
-# ever starts. A host-side repeat would restart sshd under the connection this
-# very probe just proved, for keys the clone already rotated.
+# Host keys belong to the image's first-boot oneshot, which runs before sshd ever
+# starts. Pinned as a count, not as the absence of a spelling: the property is
+# that a started boot spends exactly one vsock call — the hostname probe — so any
+# added `tart exec`, however written, shows up here.
+assert_eq       "stopped → exactly one provisioning vsock call" 1 "$(grep -c '^tart exec ' "$CALLS")"
 assert_absent   "stopped → no host-side host-key regeneration" "$calls" "ssh_host_"
 
 # An unreadable mounts file fails closed like the gui plane: a VM missing its

@@ -104,8 +104,8 @@ gui_browser_packages() {
 # gui_browser_desktop_id — the desktop-file id of the browser gui_browser_packages
 # installs, used by the KDE launcher pinning. It lives beside that package name
 # because the two are one fact per family: a rename that moved only one of them
-# would pin a launcher for a file the image does not have, which kde-panel.sh
-# then fails the build over.
+# leaves kde-panel.sh pinning a launcher for a file the image does not have, which
+# it refuses to do — and gui.sh downgrades that refusal to the stock Plasma panel.
 gui_browser_desktop_id() {
   case "$_DISTRO_FAMILY" in
     dnf) echo "org.mozilla.firefox.desktop" ;;
@@ -150,9 +150,8 @@ gui_dm_unit() {
 # one present AFTER the package install and hard-fails if none is — the VNC
 # layer is Xvnc-based, so a cell whose DE ships only a Wayland session is
 # unsupported and must fail the build, not bake a desktop that can't start.
-# Resolution reads /usr/share/xsessions rather than package names for the same
-# reason: Debian ships plasmax11.desktop with no plasma-x11-session package, so
-# a name-based probe refused a cell that builds and boots.
+# Resolution reads /usr/share/xsessions, not package names — the session file is
+# what a cell actually needs, and the two do not track each other.
 gui_session_candidates() {
   case "$1" in
     kde)   echo "plasmax11 plasma" ;; # Plasma 6 splits X11 out (plasmax11); Plasma 5's plasma IS X11

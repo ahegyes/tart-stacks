@@ -312,6 +312,15 @@ check "leading dash invalid"         1 tart_valid_vm_name -x
 check "leading underscore invalid"   1 tart_valid_vm_name _x
 check "empty invalid"                1 tart_valid_vm_name ''
 check "reserved tart- prefix invalid" 1 tart_valid_vm_name tart-x
+# The glob classes are byte ranges only under LC_ALL=C. The locale is forced on
+# the call, not inherited: both CI runners default to C, where an unpinned
+# validator passes this case too and the assertion would prove nothing.
+# shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
+utf8_name_check() { # <label> <expected-rc> <name>
+  check "$1" "$2" env LC_ALL=en_US.UTF-8 bash -c '. "$1"; shift; tart_valid_vm_name "$1"' _ "$BIN/lib/common.sh" "$3"
+}
+utf8_name_check "accented name invalid under a UTF-8 locale"  1 café
+utf8_name_check "plain name still valid under a UTF-8 locale" 0 app-a
 
 echo "bin/lib/common.sh — tart_is_base_image:"
 check "<distro>-base is a base"        0 tart_is_base_image fedora-base "$WORK/stacks" "$WORK/distros2" "$WORK/desktops"

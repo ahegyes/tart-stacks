@@ -13,11 +13,11 @@ node = "lts"
 # sort higher than the bare patch they precede); run `mise ls-remote php`
 # inside the VM to see options before bumping.
 #
-# The plugin is pinned in [tool_alias] below rather than by naming it here: a
-# backend-qualified key ("vfox:jdx/vfox-php" = …) makes THAT string the tool's
-# name, so the php it installs satisfies nothing the config asked for — `mise ls`
-# reports the entry `(missing)` and the `php` shim has no version to resolve,
-# which is what leaves a non-interactive `ssh <vm> php -v` with no PHP at all.
+# The tool is named `php`, with the plugin pinned in [tool_alias] below. Naming
+# the backend here instead ("vfox:jdx/vfox-php" = …) makes that string the tool's
+# name, and with this plugin the php it installs then satisfies no config entry:
+# `mise ls` reports `(missing)`, the `php` shim has no version to resolve, and a
+# non-interactive `ssh <vm> php -v` finds no PHP at all.
 php = "8.5.6"
 
 # Per-project examples (do not enable globally):
@@ -25,20 +25,18 @@ php = "8.5.6"
 # ruby   = "<major.minor>"
 # go     = "<major.minor>"
 
-# Which plugin builds php, pinned for the short name so the tool stays `php`.
-# Two plugins serve that name and they read PHP_CONFIGURE_OPTIONS with opposite
-# meanings — vfox-php treats it as the whole configure line, asdf-php as an
-# override of one default group — and mise's registry reorders them between
-# releases. Unpinned, `mise tool php` resolves to asdf:php (measured on the mise
-# these images ship, 2026.6.2), which compiles a PHP with no pear (hence no
-# pecl) and no --with-config-file-scan-dir: every flag mise-install.sh sets is
-# written for the vfox contract.
+# Which plugin builds php. Two serve that name and read PHP_CONFIGURE_OPTIONS
+# with opposite meanings — vfox-php as the whole configure line, asdf-php as an
+# override of one default group — and unpinned, `mise tool php` resolves to
+# asdf:php, which compiles a PHP with no pear (hence no pecl) and no
+# --with-config-file-scan-dir. Every flag mise-install.sh sets is written for the
+# vfox contract.
 [tool_alias]
 php = "vfox:jdx/vfox-php"
 
 [settings]
-# Corepack shims are installed after every node install, not just the global
-# one — a project-pinned node otherwise lacks the pnpm/yarn the READMEs promise.
+# Corepack shims land after every node install, not just the global one, so a
+# project-pinned node gets pnpm/yarn too.
 node.corepack = true
 
 # Set to true while debugging tool installs (especially PHP, which compiles from source).
@@ -49,8 +47,7 @@ verbose = false
 # and the per-project prompt is the supply-chain gate this VM exists to keep.
 # This global file lives in mise's own default-trusted location.
 #
-# How much that gate covers is version-dependent, and mise is installed from a
-# floating repo at build time. On 2026.6.2 (verified in a guest) even a config
-# holding nothing but a `[tools]` pin is refused until trusted; a later release
-# may narrow the gate to env vars, hooks and templates. Check the mise your image
-# actually shipped before relying on the wider reading.
+# How wide that gate is depends on the mise release, and mise comes from a
+# floating repo at build time. On 2026.6.2 a config holding nothing but a
+# `[tools]` pin is refused until trusted (verified in a guest); read
+# `mise --version` in the image before relying on that.

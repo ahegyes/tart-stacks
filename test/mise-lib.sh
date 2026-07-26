@@ -126,6 +126,24 @@ assert_contains "absent extension marked missing" "$OUT" "imagick      (missing)
 assert_contains "count reported"                  "$OUT" "1 of the expected PHP extensions did not load"
 assert_contains "present siblings still reported" "$OUT" "bcmath       loaded"
 
+# A listing past the 64 KiB pipe buffer with the needle on the FIRST line: read
+# through `printf | grep -q`, grep exits at the match, printf takes SIGPIPE, and
+# pipefail reports 141 — so a name that IS there reads as missing.
+big_listing() {
+  printf '[PHP Modules]\nimagick\n'
+  local i=0
+  while [ "$i" -lt 20000 ]; do printf 'filler%06d\n' "$i"; i=$((i + 1)); done
+}
+BIG="$(big_listing)"
+if [ "${#BIG}" -gt 65536 ]; then
+  ok "the large-listing fixture exceeds the pipe buffer (${#BIG} bytes)"
+else
+  bad "the large-listing fixture exceeds the pipe buffer" "only ${#BIG} bytes — too small to expose a SIGPIPE read"
+fi
+run_membership "$BIG" imagick
+assert_eq       "a match early in a large listing → exit 0" 0 "$rc"
+assert_contains "a match early in a large listing is reported loaded" "$OUT" "imagick      loaded"
+
 run_membership "$(php_m_warning_polluted)" bcmath imagick redis
 assert_eq       "warning-polluted stdout → exit 1" 1 "$rc"
 assert_contains "the warning is not read as the extension" "$OUT" "imagick      (missing)"

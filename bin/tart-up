@@ -145,11 +145,12 @@ MOUNTS_CONFIG=$(tart_config_path mounts)
 dir_args() {
   local vm="$1"
   [ -f "$MOUNTS_CONFIG" ] || return 0
-  # Fails closed like the gui plane: an unreadable file would otherwise drop
-  # every share silently, and a VM missing its mounts is indistinguishable from
-  # one that has them until something reads an empty /mnt/shared.
+  # An unreadable file would otherwise drop every share silently, and a VM
+  # missing its mounts is indistinguishable from one that has them until
+  # something reads an empty /mnt/shared. The caller decides what to do with the
+  # refusal: only a boot can be started without its shares.
   if [ ! -r "$MOUNTS_CONFIG" ]; then
-    echo "${prog:-tart-up}: $MOUNTS_CONFIG: file exists but is not readable — refusing to start; starting the VM without its configured mounts is worse than not starting it at all." >&2
+    echo "${prog:-tart-up}: $MOUNTS_CONFIG: file exists but is not readable, so this VM's shares cannot be resolved. Fix it with: chmod 600 $MOUNTS_CONFIG" >&2
     return 1
   fi
   local raw line pattern rest path ro name
@@ -406,8 +407,18 @@ fi
 DIR_ARGS=()
 # Captured the same way as the net-policy above, and for the same reason: read
 # from a process substitution, dir_args' refusal would be discarded and the VM
-# would start with none of its shares.
-dir_tokens=$(dir_args "$VM")
+# would start with none of its shares. The refusal is fatal only where it can
+# still change the outcome — a `--dir` attaches at boot, so on a VM that is
+# already up an unresolvable mounts file cannot alter what is mounted, and
+# refusing there would block a login over a file that no longer decides anything.
+dir_tokens=""
+if ! dir_tokens=$(dir_args "$VM"); then
+  if [ "$STATE" = "stopped" ]; then
+    echo "$prog: refusing to start '$VM' without the shares it is configured for." >&2
+    exit 1
+  fi
+  echo "$prog: '$VM' is already $STATE, so its mounts are whatever that boot attached — continuing." >&2
+fi
 if [ -n "$dir_tokens" ]; then
   while IFS= read -r d; do
     DIR_ARGS+=("$d")
@@ -520,9 +531,6 @@ for _ in $(seq 1 30); do
       [ "$(tart exec "$VM" hostname -s 2>/dev/null)" = "$VM" ] || \
         echo "$prog: warning: could not set guest hostname to '$VM' — hostname-keyed lookups in downstream tooling may resolve wrong." >&2
     fi
-    # Per-VM host keys are the image's job: host-keys.sh installs a first-boot
-    # oneshot that regenerates them before sshd's first start, so a clone never
-    # serves the base's key even once. Nothing to do from here.
     case "$GUI_MODE" in
       window)
         # Tart refits a native window's framebuffer in host device pixels, so

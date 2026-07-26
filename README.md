@@ -36,7 +36,7 @@ orientation.
 ## Prerequisites
 
 - **Apple Silicon Mac**, M1 or later. M3+ is only needed for nested virtualization (not enabled here).
-- **macOS 26 Tahoe or later.** The floor is set by OpenSSH: the generated SSH config's auto-start hook uses `Match sessiontype`, which needs **OpenSSH 10.0+** and which older ssh rejects as a fatal parse error. macOS 26 is the first release to ship it (26.5 has 10.2). `tart-ssh-sync` checks `ssh -V` and refuses to write the config rather than break every ssh on the host — on an older macOS everything else here still works, you just start VMs with `tart-up <name>` instead of on connect.
+- **macOS 26 Tahoe or later.** The floor is set by OpenSSH: the generated SSH config's auto-start hook uses `Match sessiontype`, which needs **OpenSSH 10.0+** and which older ssh rejects as a fatal parse error — in an Included file, that takes down every `ssh` on the host. macOS 26 is the first release to ship it (26.5 has 10.2). `tart-ssh-sync` probes for the keyword and, failing it, writes nothing at all: on an older macOS you get no `tart-<name>` alias, no identity pinning and no connect-time IP resolution, so you reach a VM as `ssh admin@$(tart ip <name>)`. Building and running images works; the SSH ergonomics are what you lose.
 - **8 GB RAM minimum**; 16 GB+ recommended for multiple concurrent VMs.
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
@@ -92,7 +92,7 @@ Two caveats: **(1)** "no auth while unlocked" is *no prompt*, not *no protection
 make setup
 ```
 
-Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm` and `tart-down` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm` and `tart-down` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below the first `Host`/`Match` line, where ssh either skips it or lets that block outrank it), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
 
 Stopping a VM is `tart-down <name>` — `tart stop` with the same gates as the rest: it accepts the bare or `tart-`-prefixed name and refuses stack base images. Several settings here (mounts, net-policy, gui mode) apply at boot, so `tart-down <name>` followed by a fresh `ssh tart-<name>` is how you pick up a change to them.
 
@@ -170,7 +170,7 @@ build-vm /Users/me/code/project      # writable project dir, one VM
 build-vm cfg=/Users/me/.config/app   # renamed share -> /mnt/shared/cfg
 ```
 
-Provisioning adds the mount point and an `/etc/fstab` entry (`nofail`), so the share mounts automatically on boot — a boot with no share attached is a no-op. The equivalent by hand:
+Provisioning adds the mount point, an `/etc/fstab` entry, and a unit condition that skips the mount when the host attached no share — `nofail` alone would leave a shareless VM reporting `degraded` with a permanently failed unit. An unreadable `mounts` file makes `tart-up` refuse to start the VM rather than start it without its shares (the same fail-closed rule as the net-policy below). The equivalent by hand:
 
 ```bash
 sudo mkdir -p /mnt/shared
@@ -222,7 +222,7 @@ tart-new gui-a php fedora kde   # same, from the GUI flavor fedora-php-kde
 ssh tart-app-a                  # auto-starts the stopped clone and connects
 ```
 
-`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) and the virtual display geometry (`--display`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/gui/README.md](./shared/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
+`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses a name in the reserved base-image namespace (`<distro>-base`, `<distro>-<stack>`, `<distro>-<stack>-<de>` — those are clone sources, and the rest of the toolchain declines to touch them), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) and the virtual display geometry (`--display`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/gui/README.md](./shared/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
 
 **Per-clone tweaks** (no rebuild required):
 

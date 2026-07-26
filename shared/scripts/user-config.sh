@@ -59,33 +59,36 @@ if ! grep -qF 'com.apple.virtio-fs.automount' /etc/fstab 2>/dev/null; then
 fi
 
 # `nofail` above stops a shareless boot from FAILING; it does not stop the UNIT
-# from failing. Without an attached device the mount errors out and systemd holds
-# the VM at `degraded` for the whole boot, with a red "Failed Units: 1" on every
-# login — and since mounts are opt-in, that was the default state of every VM.
-# The condition is evaluated at unit start, so a boot WITH a share still mounts
-# it; /sys/fs/virtiofs holds one entry per attached device, which makes an empty
-# directory exactly "no share on this boot".
+# from failing. With no device attached the mount errors out and systemd holds the
+# VM at `degraded` for the whole boot, with a red "Failed Units: 1" on every
+# login — and mounts are opt-in, so that is the state of every VM started without
+# a share. The condition is evaluated at unit start, so a boot WITH a share still
+# mounts it.
+#
+# The probe is the driver's bind directory, not /sys/fs/virtiofs: the latter is a
+# 6.9 ABI, and a condition that silently cannot hold would skip the mount on an
+# older kernel with nothing to show for it (systemd records a skip, not a
+# failure). One virtioN entry appears there per attached device.
 echo "==> Skipping the virtiofs mount on boots with no share attached..."
 install -d -m 755 /etc/systemd/system/mnt-shared.mount.d
 cat > /etc/systemd/system/mnt-shared.mount.d/tart-stacks-skip-when-absent.conf <<'EOF'
 # tart-stacks — skip /mnt/shared when the host attached no --dir share, so a
 # shareless boot reports `running` instead of `degraded`.
 [Unit]
-ConditionPathExistsGlob=/sys/fs/virtiofs/*
+ConditionPathExistsGlob=/sys/bus/virtio/drivers/virtiofs/virtio*
 EOF
 chmod 644 /etc/systemd/system/mnt-shared.mount.d/tart-stacks-skip-when-absent.conf
 
 # Additional forwarded SSH agents arrive as RemoteForwards at
-# /run/tart/agent-<name>.sock (the paths tart-ssh-sync emits for every agent
-# past the primary). sshd binds the socket as the session user but never creates
-# its parent, and /run is root-owned 0755 — so the forward failed with EACCES,
-# silently, because the same generated block sets LogLevel ERROR. /run is a
-# tmpfs, so tmpfiles.d is what owns the directory across boots; the dev user owns
-# it because a root-owned 0755 parent still refuses the bind.
+# /run/tart/agent-<name>.sock (the paths tart-ssh-sync emits for every agent past
+# the primary). sshd binds the socket as the session user and never creates its
+# parent, so the directory has to exist before the forward: /run is a tmpfs, hence
+# tmpfiles.d, and the dev user owns it because a root-owned 0755 parent refuses
+# the bind with EACCES — which the generated config's LogLevel ERROR hides.
 echo "==> Registering /run/tart for forwarded agent sockets..."
 install -d -m 755 /etc/tmpfiles.d
 cat > /etc/tmpfiles.d/tart-stacks.conf <<EOF
-# tart-stacks — parent directory for the per-session SSH agent sockets that
+# tart-stacks — parent directory for the per-agent SSH sockets that
 # tart-ssh-sync's RemoteForward lines bind. Recreated every boot (/run is tmpfs).
 d /run/tart 0700 ${TARGET_USER} ${TARGET_USER} -
 EOF

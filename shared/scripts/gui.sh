@@ -153,13 +153,11 @@ EOF
     # GDM reads one GKeyFile whose path differs per family, and duplicate
     # [daemon] groups are a parse error — merge into the shipped section.
     #
-    # WaylandEnable=false is what makes the autologin land in the X11 session
-    # this layer asserts. sddm and lightdm below pin the session by name; GDM has
-    # no equivalent for an autologin, and left to itself it prefers the Wayland
-    # session — where the scale applier's X11/XSETTINGS key is ignored, the
-    # applier still exits 0, and tart-up reports success because its only gate is
-    # `display-manager.service is-active`. Disabling Wayland leaves GDM only
-    # /usr/share/xsessions to choose from, which the assert above proved has one.
+    # WaylandEnable=false is how the autologin lands in the X11 session this layer
+    # asserts: sddm and lightdm below pin the session by name, GDM has no
+    # equivalent for an autologin and otherwise prefers Wayland — where the scale
+    # applier's XSETTINGS key has no effect. Disabling it leaves GDM only
+    # /usr/share/xsessions, which the assert above proved carries one.
     gdm_conf=""
     for f in /etc/gdm/custom.conf /etc/gdm3/daemon.conf /etc/gdm3/custom.conf; do
       [ -f "$f" ] && { gdm_conf="$f"; break; }

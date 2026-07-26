@@ -217,5 +217,20 @@ assert_eq "apt: zero enforce-mode profiles fail"   1 "$(mac_rc "$WORK/u" MOCK_AA
 # aa-status exits nonzero when AppArmor is absent; its output is then not a count.
 assert_eq "apt: an unavailable aa-status fails"    1 "$(mac_rc "$WORK/u" MOCK_AA_ENFORCED= MOCK_AA_STATUS_RC=1)"
 assert_eq "apt: non-numeric profile output fails"  1 "$(mac_rc "$WORK/u" MOCK_AA_ENFORCED=unconfined)"
+# A family with no branch here must fail, not fall off the end of the case: the
+# README's "add a new package family" checklist enumerates the package functions,
+# so the first third family would otherwise ship images whose MAC gate is a no-op.
+# The family is overridden AFTER sourcing, since the lib hard-exits on one it
+# cannot detect — which is exactly the shape a half-added third family takes.
+unknown_family_rc() {
+  local rc=0
+  # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
+  # shellcheck disable=SC2031  # PATH is per-child on purpose; the mocks are the sandbox
+  env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
+    bash -c '. "$1"; _DISTRO_FAMILY=zypper; assert_mac_enforcing' _ \
+      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+assert_eq "an unknown family fails rather than passing" 1 "$(unknown_family_rc)"
 
 echo; echo "  $pass passed, $fail failed"; [ "$fail" -eq 0 ]

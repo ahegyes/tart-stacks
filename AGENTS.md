@@ -21,7 +21,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms (`tart-*` wildcard + per-VM agent blocks from ssh-agents); validates the candidate with `ssh -G` before activation — a failing one lands at tart-vms.rejected, the live file untouched
 │   ├── tart-up                         # Starts a stopped VM (+ mounts + net-policy) and waits for SSH on :22, then sets the guest hostname; the hook the auto-start Match line fires on an interactive `ssh tart-<name>` (also runnable directly to pre-warm). Accepts bare or `tart-`-prefixed name. Also owns the GUI boot plane: `--gui=headless|vnc|window` (or the per-VM `gui` config), the host backing-scale probe it applies in the guest before graphical.target, and the loopback-only classifier that fails a VNC activation closed
 ├── script/
-│   ├── setup                           # Host install run by `make setup` (symlinks the bin/ commands, zsh completion, idempotent SSH Include + catch-all check, forwards + mounts scaffold, closing tart-ssh-sync run); --uninstall is the inverse (keeps per-VM config)
+│   ├── setup                           # Host install run by `make setup` (symlinks the bin/ commands, zsh completion, idempotent SSH Include + placement check, forwards + mounts scaffold, closing tart-ssh-sync run); --uninstall is the inverse (keeps per-VM config)
 │   ├── smoke                           # End-to-end proof of a built image, run by `make smoke`: tart-new clone → tart-up boot → BatchMode ssh → hostname assert → tart-rm teardown (SMOKE_KEEP=1 keeps the VM; optional <de> arg smokes a GUI flavor). Boots a real VM — local only, never CI
 │   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
 ├── completions/
@@ -38,6 +38,8 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   ├── mise-lib.sh                     # Characterization tests for mise-lib's two hard gates: smoke_gate (argv-group grammar, word-split safety, hard-fail path) and membership_gate (line-anchored `php -m` matching, incl. the warning-polluted stdout fixture)
 │   ├── gui-lib.sh                      # Characterization tests for gui-lib's DE × family selectors + the shared/desktops ↔ gui_require_de lockstep
+│   ├── finalize.sh                     # Behavioral tests for 99-finalize.sh's anti-lockout key gate: every private-key format refused, a pubkey whose comment says PRIVATE KEY accepted, and both gates ordered ahead of the install and `passwd -l`
+│   ├── makefile.sh                     # Behavioral tests for the Makefile's check-* gates (the only thing between a mistyped selector and bootstrap's destructive base re-clone); invokes the gate targets only — never build/bootstrap/smoke
 │   └── distro-lib.sh                   # Characterization tests for distro-lib: _detect_family (os-release ID → dnf, ID/ID_LIKE → apt), pkg_install_optional skip recording (incl. the compat-Provides and virtual-package cases), and assert_mac_enforcing
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── distros                         # Supported distro tokens, one per line; consumed by the Makefile, tart-new, the bin/ base-image guard, and the CI matrix

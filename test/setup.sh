@@ -163,11 +163,29 @@ for block in 'Host github.com' 'Match host github.com'; do
   cp "$SSHCFG" "$WORK/s3b.orig"
   run_setup
   assert_rc "Include under '$block' → exit 0" 0
-  assert_contains "Include under '$block' → warned as nested" "$(cat "$ERR")" "inside the block starting on line 1"
+  assert_contains "Include under '$block' → warned as nested" "$(cat "$ERR")" "inside the block that starts on line 1"
   assert_contains "Include under '$block' → names the move target" "$(cat "$ERR")" "above line 1"
   assert_eq "Include under '$block' → no second Include added" "1" "$(grep -cxF "$INC" "$SSHCFG")"
   assert_same "Include under '$block' → file left untouched" "$SSHCFG" "$WORK/s3b.orig"
 done
+
+# A catch-all that is not the FIRST block still has to be the one named: ssh
+# reads the Include here (the catch-all matches everything) and then keeps the
+# catch-all's value for every shared keyword, which is a different failure from
+# being scoped out — and a different fix to explain.
+sandbox s3d
+printf 'Host github.com\n  User git\n\nHost *\n  User bob\n%s\n' "$INC" > "$SSHCFG"
+run_setup
+assert_contains "catch-all below a scoped block → names the catch-all's line" "$(cat "$ERR")" "below the catch-all that starts on line 4"
+assert_contains "catch-all below a scoped block → gives the first-match-wins reason" "$(cat "$ERR")" "First-match-wins"
+assert_absent   "catch-all below a scoped block → not diagnosed as nested" "$(cat "$ERR")" "inside the block"
+assert_contains "catch-all below a scoped block → remedy targets the first block" "$(cat "$ERR")" "above line 1"
+
+# `Match all` is a catch-all too, and ssh treats it the same way.
+sandbox s3e
+printf 'Match all\n  User bob\n%s\n' "$INC" > "$SSHCFG"
+run_setup
+assert_contains "Match all → recognised as a catch-all" "$(cat "$ERR")" "below the catch-all that starts on line 1"
 
 # A top-level Include with a scoped block BELOW it is correct — the placement
 # rule is about the first Host/Match line, not about blocks existing at all.
@@ -267,6 +285,43 @@ run_setup
 assert_eq "overridden generated path → re-run recognizes its own Include" "1" \
   "$(grep -cF 'Include ~/.ssh/alt.d/tart-vms' "$SSHCFG")"
 assert_contains "overridden generated path → re-run reports it placed" "$(cat "$OUT")" "correctly placed"
+# The uninstall has to recognise the same overridden path, or it leaves the
+# Include behind pointing at a file it just deleted.
+run_setup --uninstall
+assert_rc     "overridden generated path → uninstall exit 0" 0
+assert_absent "overridden generated path → uninstall strips its Include" "$(cat "$SSHCFG")" "alt.d/tart-vms"
+assert_no_path "overridden generated path → uninstall removes the generated file" "$ALT_GEN"
+
+# A generated path OUTSIDE $HOME takes the absolute-spelling branch, which no
+# ~/-relative case exercises.
+sandbox s7b
+OUT_GEN="$SB/outside/tart-vms"
+GEN="$OUT_GEN"
+run_setup
+assert_rc       "generated path outside \$HOME → exit 0" 0
+assert_contains "generated path outside \$HOME → Include names it absolutely" "$(cat "$SSHCFG")" "Include $OUT_GEN"
+assert_path     "generated path outside \$HOME → sync wrote there" "$OUT_GEN"
+run_setup
+assert_eq "generated path outside \$HOME → re-run adds no second Include" "1" "$(grep -cF "Include $OUT_GEN" "$SSHCFG")"
+run_setup --uninstall
+assert_absent "generated path outside \$HOME → uninstall strips its Include" "$(cat "$SSHCFG")" "$OUT_GEN"
+
+# ssh_config(5) resolves a bare relative Include against ~/.ssh, so this is a
+# third legal spelling of the same file. Unrecognised, setup adds a second
+# Include — and two Includes of the generated config fire the auto-start twice.
+sandbox s7c
+printf 'Include config.d/tart-vms\nHost github.com\n  User git\n' > "$SSHCFG"
+run_setup
+assert_rc     "relative-form Include → exit 0" 0
+assert_eq     "relative-form Include → no second Include added" "1" "$(grep -c 'config.d/tart-vms' "$SSHCFG")"
+assert_contains "relative-form Include → reported as placed" "$(cat "$OUT")" "correctly placed"
+
+# ...while a neighbour that merely shares a path prefix is not ours.
+sandbox s7d
+printf 'Include ~/.ssh/config.d/tart-vms-extra\nHost *\n  User bob\n' > "$SSHCFG"
+run_setup
+assert_contains "prefix-sharing neighbour → our own Include still added" "$(cat "$SSHCFG")" "$INC"
+assert_contains "prefix-sharing neighbour → left in place" "$(cat "$SSHCFG")" "tart-vms-extra"
 
 # setup is run through a symlink by anything that puts script/ on a path; the
 # repo it links the commands from must still be this checkout.

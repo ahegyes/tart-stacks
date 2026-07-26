@@ -94,10 +94,9 @@ assert_contains "no kwriteconfig → names both tools" "$(cat "$ERR")" "kwriteco
 KWRITE_CALLS="$WORK/kwrite-calls"
 export KWRITE_CALLS
 
-# kconfig_mock <dir> <tool> — a KConfig editor that records WHICH tool ran.
-# Production prefers kwriteconfig6 and falls back to 5, so a fallback section
-# sharing a directory with the 6 mock exercises the preferred path while every
-# assertion still reads "kwriteconfig5"; the logged name is what tells them apart.
+# kconfig_mock <dir> <tool> — a KConfig editor that records WHICH tool ran. The
+# logged name is the only thing that distinguishes the preferred tool from the
+# fallback: every assertion below reads the same either way.
 kconfig_mock() {
   mkdir -p "$1"
   cat > "$1/$2" <<'EOF'
@@ -152,6 +151,16 @@ echo "display-scale — KDE falls back to kwriteconfig5:"
 KWRITE5_BIN="$WORK/kwrite5-bin"
 kconfig_mock "$KWRITE5_BIN" kwriteconfig5
 kde_writes_through kwriteconfig5 "$KWRITE5_BIN" "$WORK/kwrite5-home" "KDE with kwriteconfig5"
+
+# Each section above holds exactly one tool, so neither can see the ORDER between
+# them — and a Plasma 6 image commonly carries kf5's kwriteconfig5 alongside its
+# own, where writing through 5 would set keys Plasma 6 never reads.
+echo "display-scale — KDE prefers 6 when both tools are present:"
+BOTH_BIN="$WORK/kwrite-both-bin"
+kconfig_mock "$BOTH_BIN" kwriteconfig6
+kconfig_mock "$BOTH_BIN" kwriteconfig5
+kde_writes_through kwriteconfig6 "$BOTH_BIN" "$WORK/kwrite-both-home" "KDE with both tools"
+assert_eq "with both present, kwriteconfig5 is never called" 0 "$(grep -c '^kwriteconfig5 ' "$KWRITE_CALLS")"
 
 echo "display-scale — GNOME private dconf session:"
 GNOME_BIN="$WORK/gnome-bin"

@@ -53,6 +53,10 @@ mise_runtime_setup() {
 # match reads that warning as proof the extension loaded, passing the gate in
 # exactly the case it exists to catch (measured on a live clone: `grep -qiF`
 # matches an extension absent from [PHP Modules], `grep -qixF` does not).
+#
+# A herestring, not `printf | grep`: `grep -q` exits at the first match, and on a
+# listing past the pipe buffer printf then takes SIGPIPE, which pipefail reports
+# as 141 — a found name would read as missing.
 membership_gate() {
   local label="$1" listing="$2"
   shift 2
@@ -61,7 +65,7 @@ membership_gate() {
   local missing=0 name
   for name in "$@"; do
     printf "  %-12s " "$name"
-    if printf '%s\n' "$listing" | grep -qixF "$name"; then
+    if grep -qixF "$name" <<<"$listing"; then
       echo "loaded"
     else
       echo "(missing)"
