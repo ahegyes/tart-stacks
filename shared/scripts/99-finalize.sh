@@ -82,6 +82,15 @@ if [ ! -f /tmp/authorized_key.pub ]; then
   echo "ERROR: /tmp/authorized_key.pub not found. Did the Packer file provisioner run?" >&2
   exit 1
 fi
+# The private half needs its own gate ahead of the parse check: `ssh-keygen -l
+# -f` prints a fingerprint and exits 0 for a private key too — plain,
+# passphrase-protected, PEM and PKCS8 alike — so the parse check cannot see it.
+# Authorizing one bakes a private key into every clone and authenticates nobody,
+# which the irreversible passwd -l below then makes unrecoverable.
+if grep -q 'PRIVATE KEY' /tmp/authorized_key.pub; then
+  echo "ERROR: /tmp/authorized_key.pub holds a PRIVATE key. Refusing to proceed (it would authorize no one and ship the private half in every clone) — point var.ssh_pubkey_path at the .pub half." >&2
+  exit 1
+fi
 # Parse-check before the irreversible passwd -l below — bad upload = no way in.
 if ! ssh-keygen -l -f /tmp/authorized_key.pub >/dev/null 2>&1; then
   echo "ERROR: /tmp/authorized_key.pub is not a valid SSH public key. Refusing to proceed (would lock out ${TARGET_USER})." >&2
