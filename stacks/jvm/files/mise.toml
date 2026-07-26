@@ -54,6 +54,10 @@ uv = "latest"
 node = "lts"
 
 [settings]
+# Corepack shims are installed after every node install, not just the global
+# one — a project-pinned node otherwise lacks the pnpm/yarn the READMEs promise.
+node.corepack = true
+
 # Set to true while debugging tool installs.
 verbose = false
 

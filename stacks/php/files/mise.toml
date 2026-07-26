@@ -13,22 +13,34 @@ node = "lts"
 # sort higher than the bare patch they precede); run `mise ls-remote php`
 # inside the VM to see options before bumping.
 #
-# The backend is named in full rather than left to mise's `php` shorthand.
-# Two plugins can serve that shorthand and they read PHP_CONFIGURE_OPTIONS
-# with opposite meanings — vfox-php treats it as the whole configure line,
-# asdf-php as an override of one default group. mise's registry reorders
-# them between releases, so the shorthand silently changes what gets built:
-# a distro whose packaged mise is one release newer compiles a PHP with no
-# pear (hence no pecl) and no --with-config-file-scan-dir. Naming the plugin
-# pins the contract that mise-install.sh's configure flags are written for.
-"vfox:jdx/vfox-php" = "8.5.6"
+# The plugin is pinned in [tool_alias] below rather than by naming it here: a
+# backend-qualified key ("vfox:jdx/vfox-php" = …) makes THAT string the tool's
+# name, so the php it installs satisfies nothing the config asked for — `mise ls`
+# reports the entry `(missing)` and the `php` shim has no version to resolve,
+# which is what leaves a non-interactive `ssh <vm> php -v` with no PHP at all.
+php = "8.5.6"
 
 # Per-project examples (do not enable globally):
 # python = "<major.minor>"
 # ruby   = "<major.minor>"
 # go     = "<major.minor>"
 
+# Which plugin builds php, pinned for the short name so the tool stays `php`.
+# Two plugins serve that name and they read PHP_CONFIGURE_OPTIONS with opposite
+# meanings — vfox-php treats it as the whole configure line, asdf-php as an
+# override of one default group — and mise's registry reorders them between
+# releases. Unpinned, `mise tool php` resolves to asdf:php (measured on the mise
+# these images ship, 2026.6.2), which compiles a PHP with no pear (hence no
+# pecl) and no --with-config-file-scan-dir: every flag mise-install.sh sets is
+# written for the vfox contract.
+[tool_alias]
+php = "vfox:jdx/vfox-php"
+
 [settings]
+# Corepack shims are installed after every node install, not just the global
+# one — a project-pinned node otherwise lacks the pnpm/yarn the READMEs promise.
+node.corepack = true
+
 # Set to true while debugging tool installs (especially PHP, which compiles from source).
 verbose = false
 

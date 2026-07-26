@@ -32,6 +32,10 @@ mise_runtime_setup() {
   if command -v corepack >/dev/null 2>&1; then
     echo "==> Enabling Corepack for per-project pnpm/yarn shimming..."
     corepack enable
+    # corepack writes pnpm/yarn into the node install's bin dir AFTER mise's last
+    # reshim, so they ship with no shim of their own — invisible to any PATH that
+    # carries only the shims dir, which is every non-interactive `ssh <vm> <cmd>`.
+    mise reshim
   else
     echo "==> corepack not present (no Node in this stack) — skipping Corepack."
   fi

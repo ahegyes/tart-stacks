@@ -11,8 +11,10 @@ TARGET_HOME="/home/${TARGET_USER}"
 echo "==> Setting zsh as default shell for ${TARGET_USER}..."
 chsh -s /usr/bin/zsh "${TARGET_USER}"
 
-# Activate mise in bash too — so non-zsh sessions (SSH command invocations,
-# scripts, manual `bash`) still get per-directory tool version switching.
+# Activate mise for an interactive `bash` too, so it gets the same per-directory
+# version switching as zsh. That case only: bash reads .bashrc when interactive,
+# and `ssh <vm> <cmd>` runs the LOGIN shell — zsh — so neither a script nor a
+# remote command is served from here. The .zshenv PATH below covers those.
 BASHRC="${TARGET_HOME}/.bashrc"
 if [ ! -f "${BASHRC}" ] || ! grep -q "mise activate" "${BASHRC}"; then
   cat >> "${BASHRC}" <<'EOF'
@@ -22,14 +24,20 @@ EOF
   chown "${TARGET_USER}:${TARGET_USER}" "${BASHRC}"
 fi
 
-# Ensure ~/.local/bin is on PATH for every zsh session. .zshenv loads before
-# .zshrc and runs for both interactive and non-interactive shells (so PATH is
-# set even when an editor, mise, or another tool spawns a non-interactive zsh).
+# Put ~/.local/bin and mise's shims on PATH for every zsh session. .zshenv loads
+# before .zshrc and runs for non-interactive shells too, which is the
+# load-bearing case: `ssh <vm> <cmd>` runs the LOGIN shell — zsh — and reads only
+# .zshenv, so mise's activate hook (which lives in .zshrc) never fires there. The
+# shims are then the only thing putting php/node/npm on PATH for a remote
+# command; without them `ssh <vm> composer install` finds composer in
+# ~/.local/bin and dies on its `#!/usr/bin/env php` shebang. Shims come after
+# ~/.local/bin so an explicitly installed binary still wins.
 ZSHENV="${TARGET_HOME}/.zshenv"
-if [ ! -f "${ZSHENV}" ] || ! grep -q "HOME/.local/bin" "${ZSHENV}"; then
+if [ ! -f "${ZSHENV}" ] || ! grep -q 'mise/shims' "${ZSHENV}"; then
   cat >> "${ZSHENV}" <<'EOF'
-# Added by tart-stacks provisioning — ensures user-local binaries are on PATH.
-export PATH="$HOME/.local/bin:$PATH"
+# Added by tart-stacks provisioning — user-local binaries and mise's shims on
+# PATH, including for non-interactive `ssh <vm> <cmd>` sessions.
+export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
 EOF
   chown "${TARGET_USER}:${TARGET_USER}" "${ZSHENV}"
 fi
