@@ -42,7 +42,28 @@ for s in $(gui_session_candidates "$DE"); do
   [ -f "/usr/share/xsessions/${s}.desktop" ] && { SESSION="$s"; break; }
 done
 [ -n "$SESSION" ] || {
-  echo "ERROR: no X session found for '$DE' (tried: $(gui_session_candidates "$DE") under /usr/share/xsessions/) — this distro × DE cell is unsupported by the Xvnc-based GUI layer." >&2
+  # Which sessions DID materialize is the diagnosis, so report them. Upstream
+  # desktops are retiring their X11 sessions one release at a time and this layer
+  # serves the desktop over Xvnc, which is X11-only — so a guest offering only a
+  # Wayland session is that retirement arriving for this cell, not a packaging
+  # slip, and the two want different responses. Reading it from the guest keeps
+  # the check release-agnostic: no table of which release dropped what can go
+  # stale, and none has to be maintained ahead of the base image moving.
+  # shellcheck disable=SC1091  # guest-only file, absent at lint time
+  rel="$( . /etc/os-release 2>/dev/null && printf '%s %s' "${ID:-?}" "${VERSION_ID:-?}" )"
+  present=""
+  for f in /usr/share/xsessions/*.desktop; do
+    [ -e "$f" ] || continue
+    present="${present}${f##*/} "
+  done
+  present="${present% }"
+  echo "ERROR: no X11 session for '$DE' on ${rel}." >&2
+  echo "       tried:   $(gui_session_candidates "$DE") (as <name>.desktop under /usr/share/xsessions/)" >&2
+  echo "       present: ${present:-none}" >&2
+  echo "       The GUI layer serves the desktop over Xvnc, so it needs an X11 session file to" >&2
+  echo "       start. If this DE ships only Wayland on this release, the cell cannot be baked as" >&2
+  echo "       it stands: build a DE that still has an X11 session here, or leave the cell out" >&2
+  echo "       until the layer grows a Wayland path. Contract: shared/gui/README.md." >&2
   exit 1
 }
 echo "==> X session: ${SESSION}"

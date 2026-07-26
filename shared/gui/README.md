@@ -202,6 +202,13 @@ needs its DE to ship an X11 session — a cell that doesn't **fails loud at
 build time** (preflight or the post-install session assert), it never bakes a
 desktop that can't start.
 
+The session assert reads the guest rather than consulting a table of which
+release dropped what, so it stays correct as upstreams retire X11 without anyone
+maintaining a list here. Its refusal names the release, the session basenames it
+looked for, and the ones the guest actually has — which is what separates "this
+DE has gone Wayland-only on this release" from a packaging slip, since the two
+need different responses.
+
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
 | `kde` (default) | ⏳ re-verify | ⏳ re-verify | ⏳ re-verify | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
