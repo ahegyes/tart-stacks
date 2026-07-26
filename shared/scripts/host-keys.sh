@@ -5,12 +5,10 @@
 # first connection a clone ever serves already presents its own key — no
 # restart step, no marker-ordering hazard, no host→guest vsock call.
 #
-# The marker (/etc/ssh/.tart-keys) is shared with tart-up's host-side regen,
-# which stays as the fallback for images built before this unit existed:
-# whichever path runs first creates the marker and the other no-ops. The image
-# must ship WITHOUT the marker so each clone's first boot triggers the unit;
-# the build VM never reboots after provisioning, so the unit cannot fire
-# during the build. Runs as root via sudo from Packer.
+# This is the only regeneration path — nothing on the host repeats it. The image
+# must ship WITHOUT the marker (/etc/ssh/.tart-keys) so each clone's first boot
+# triggers the unit; the build VM never reboots after provisioning, so the unit
+# cannot fire during the build. Runs as root via sudo from Packer.
 set -euo pipefail
 
 echo "==> Installing first-boot host-key regeneration..."

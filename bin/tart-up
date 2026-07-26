@@ -145,6 +145,13 @@ MOUNTS_CONFIG=$(tart_config_path mounts)
 dir_args() {
   local vm="$1"
   [ -f "$MOUNTS_CONFIG" ] || return 0
+  # Fails closed like the gui plane: an unreadable file would otherwise drop
+  # every share silently, and a VM missing its mounts is indistinguishable from
+  # one that has them until something reads an empty /mnt/shared.
+  if [ ! -r "$MOUNTS_CONFIG" ]; then
+    echo "${prog:-tart-up}: $MOUNTS_CONFIG: file exists but is not readable — refusing to start; starting the VM without its configured mounts is worse than not starting it at all." >&2
+    return 1
+  fi
   local raw line pattern rest path ro name
   while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw%%#*}"
@@ -397,22 +404,28 @@ if [ -n "$np_tokens" ]; then
 fi
 
 DIR_ARGS=()
-while IFS= read -r d; do
-  [ -n "$d" ] && DIR_ARGS+=("$d")
-done < <(dir_args "$VM")
+# Captured the same way as the net-policy above, and for the same reason: read
+# from a process substitution, dir_args' refusal would be discarded and the VM
+# would start with none of its shares.
+dir_tokens=$(dir_args "$VM")
+if [ -n "$dir_tokens" ]; then
+  while IFS= read -r d; do
+    DIR_ARGS+=("$d")
+  done <<< "$dir_tokens"
+fi
 
 GUI_FILE_MODE=$(gui_file_mode "$VM")
 GUI_MODE="${GUI_OVERRIDE:-$GUI_FILE_MODE}"
 
-# Guest-agent provisioning (hostname + host-key regen, below) runs only on a
-# boot this script starts: it is once-per-boot work, and each `tart exec` opens
-# a guest-vsock connection, which can trip an Apple Virtualization.framework trap
-# that aborts the whole VM. An already-running VM was provisioned on the boot
-# that started it, so re-probing it every login is waste and risk. (A clone's
-# first boot goes through tart-up in the normal flow — tart-new leaves it
-# stopped; the first ssh/tart-up starts it. A clone first-started by a bare
-# `tart run` would miss host-key regen until its next tart-up-driven start.)
+# Guest-agent provisioning (the hostname, below) runs only on a boot this script
+# starts: it is once-per-boot work, and each `tart exec` opens a guest-vsock
+# connection, which can trip an Apple Virtualization.framework trap that aborts
+# the whole VM. An already-running VM was provisioned on the boot that started
+# it, so re-probing it every login is waste and risk.
 STARTED=0
+# Set by the start path below. Empty everywhere else: the log is truncated per
+# `tart run`, so on a VM this invocation did not start it describes another boot.
+run_log=""
 
 if [ "$STATE" = "running" ]; then
   # A Tart crash can leave the listed state wedged at "running" with no live
@@ -453,9 +466,11 @@ elif [ "$STATE" = "stopped" ]; then
   run_log="$run_log_dir/${VM}.run.log"
   # Logging must never be why a VM fails to start (this is the only start path):
   # probe the actual target — if the dir or the file itself can't be opened for
-  # writing, drop stderr rather than let the redirect fail the launch.
-  : >>"$run_log" 2>/dev/null || run_log="/dev/null"
-  ( "${run_cmd[@]}" >/dev/null 2>"$run_log" & disown )
+  # writing, drop stderr rather than let the redirect fail the launch. Clearing
+  # run_log is what stops the timeout diagnostics below pointing at a log that
+  # captured nothing.
+  : >>"$run_log" 2>/dev/null || run_log=""
+  ( "${run_cmd[@]}" >/dev/null 2>"${run_log:-/dev/null}" & disown )
   STARTED=1
 else
   # Any other state (e.g. another invocation already started it) — don't issue
@@ -472,6 +487,9 @@ for _ in $(seq 1 60); do
 done
 if [ -z "$IP" ]; then
   echo "$prog: VM '$VM' did not get an IP within 60 s." >&2
+  # The launch is detached, so a `tart run` that failed outright looks exactly
+  # like a slow DHCP lease from here — its real error is only in the log.
+  [ -n "$run_log" ] && echo "$prog: if it never started, tart's own error for this boot is in $run_log." >&2
   exit 1
 fi
 
@@ -502,18 +520,9 @@ for _ in $(seq 1 30); do
       [ "$(tart exec "$VM" hostname -s 2>/dev/null)" = "$VM" ] || \
         echo "$prog: warning: could not set guest hostname to '$VM' — hostname-keyed lookups in downstream tooling may resolve wrong." >&2
     fi
-    # Per-VM host keys: clones share the base's baked-in key, so regenerate once
-    # (marker-gated, over vsock — no Touch ID). Stage to .new then swap so sshd is
-    # never keyless; restart is synchronous, so :22 is back when tart exec returns.
-    # The unit is `sshd` on dnf-family guests and `ssh` on apt-family — try both.
-    # The marker lands only after a successful restart: sshd serves the old key
-    # until restarted, so marking earlier would pin a stale key on the host and
-    # never retry the restart. Staging left by an interrupted run is cleared
-    # first — ssh-keygen would otherwise prompt to overwrite and die on the
-    # vsock channel's /dev/null stdin, wedging every retry.
-    # shellcheck disable=SC2016  # $t/${t} are for the GUEST shell — keep single-quoted
-    regen='test -e /etc/ssh/.tart-keys && exit 0; cd /etc/ssh || exit 1; rm -f ssh_host_*_key.new ssh_host_*_key.new.pub; for t in rsa ecdsa ed25519; do ssh-keygen -q -N "" -t "$t" -f "ssh_host_${t}_key.new" || exit 1; done; for t in rsa ecdsa ed25519; do mv -f "ssh_host_${t}_key.new" "ssh_host_${t}_key"; mv -f "ssh_host_${t}_key.new.pub" "ssh_host_${t}_key.pub"; done; { systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; } && touch .tart-keys'
-    tart exec "$VM" sudo sh -c "$regen" >/dev/null 2>&1 || true
+    # Per-VM host keys are the image's job: host-keys.sh installs a first-boot
+    # oneshot that regenerates them before sshd's first start, so a clone never
+    # serves the base's key even once. Nothing to do from here.
     case "$GUI_MODE" in
       window)
         # Tart refits a native window's framebuffer in host device pixels, so
@@ -566,4 +575,5 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 echo "$prog: $VM ($IP) did not accept SSH on :22 in time." >&2
+[ -n "$run_log" ] && echo "$prog: if it never started, tart's own error for this boot is in $run_log." >&2
 exit 1

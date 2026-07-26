@@ -202,7 +202,7 @@ if ! image_built "$STACK" "$DISTRO" "$DE"; then
 fi
 
 # Drop any stale known_hosts entry for this alias: a recreated VM gets a fresh
-# per-VM host key (tart-up regenerates it), which would otherwise trip accept-new.
+# per-VM host key (its first boot regenerates them), which would otherwise trip accept-new.
 # The scrub precedes the clone — the collision gate has proven the name free, so
 # any surviving pin is stale by definition, and a failure between clone and set
 # can't strand it.

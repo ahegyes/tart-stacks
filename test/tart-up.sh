@@ -230,6 +230,21 @@ assert_contains "stopped → run carries netpolicy flag"  "$calls" "--net-softne
 assert_contains "stopped → run carries dir-mount flag"  "$calls" "--dir=data:/srv/data:ro"
 assert_contains "stopped → :22 probe uses \$TART_NC_BIN" "$calls" "nc -z -G 3 10.0.0.9 22"
 assert_contains "stopped → provisions over vsock (hostname probe)" "$calls" "hostname -s"
+# Host keys belong to the image's first-boot oneshot, which runs before sshd
+# ever starts. A host-side repeat would restart sshd under the connection this
+# very probe just proved, for keys the clone already rotated.
+assert_absent   "stopped → no host-side host-key regeneration" "$calls" "ssh_host_"
+
+# An unreadable mounts file fails closed like the gui plane: a VM missing its
+# shares is indistinguishable from one that has them until something reads an
+# empty /mnt/shared.
+chmod 000 "$MNTS"
+runup stopped app-a "$EMPTY" "$MNTS" "$EMPTY" app-a
+assert_rc       "unreadable mounts file → exit 1" 1
+assert_contains "unreadable mounts file → names readability" "$(cat "$ERR")" "file exists but is not readable"
+assert_contains "unreadable mounts file → uses fail-closed voice" "$(cat "$ERR")" "refusing to start"
+assert_absent   "unreadable mounts file → refuses boot" "$(cat "$CALLS")" "tart run"
+chmod 600 "$MNTS"
 
 # tart's own stderr is captured to a per-VM log (truncate-on-start) so a crash's
 # `fixme:` line survives; the mock `tart run` emits a stderr marker.
@@ -530,11 +545,21 @@ assert_rc       "no DHCP lease → exit 1" 1
 assert_contains "no-IP diagnostic names the VM and the window" "$(cat "$ERR")" "did not get an IP within 60 s"
 assert_eq       "no-IP path polls its full 60 intervals" 60 "$(grep -c '^sleep 1$' "$CALLS")"
 assert_absent   "no-IP path never probes :22" "$(cat "$CALLS")" "nc "
+# The launch is detached, so a `tart run` that failed outright is indistinguishable
+# from slow DHCP here — its real error only exists in the log.
+assert_contains "no-IP diagnostic names this boot's run log" "$(cat "$ERR")" "app-a.run.log"
 
 MOCK_NC_RC=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_rc       "sshd never accepts on :22 → exit 1" 1
 assert_contains "ssh-timeout diagnostic names VM and IP" "$(cat "$ERR")" "app-a (10.0.0.9) did not accept SSH on :22 in time"
 assert_eq       "ssh probe retries its full 30 intervals" 30 "$(grep -c '^nc -z -G 3 10.0.0.9 22$' "$CALLS")"
+assert_contains "ssh-timeout diagnostic names this boot's run log" "$(cat "$ERR")" "app-a.run.log"
+
+# A boot this invocation did not start has no log of its own — the file is
+# truncated per `tart run`, so naming it would point at another boot.
+MOCK_NC_RC=1 runup running app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "already-running VM unreachable on :22 → exit 1" 1
+assert_absent   "already-running VM's timeout names no run log" "$(cat "$ERR")" "run.log"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
