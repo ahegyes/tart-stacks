@@ -2,9 +2,10 @@
 # smoke — end-to-end proof of a BUILT stack image: clone a throwaway VM, boot it,
 # ssh in, then attest that the image IS the cell that was asked for, and destroy
 # it. One passing run exercises the whole chain — tart-new's gates, clone, boot,
-# DHCP, sshd, key auth, tart-up's hostname provisioning, the provenance manifest,
-# the guest's own os-release, the stack's toolchain over a NON-interactive ssh
-# (the shape a script or agent uses), and sshd's effective hardening — none of
+# DHCP, sshd, key auth, the tart-guest-agent vsock channel `tart exec` rides on,
+# tart-up's hostname provisioning, the provenance manifest, the guest's own
+# os-release, the stack's toolchain over a NON-interactive ssh (the shape a
+# script or agent uses), and sshd's effective hardening — none of
 # which `packer validate` or the mocked tests can reach. Needs the
 # <distro>-<stack> image already built and the host tools wired (`make setup`);
 # boots a real VM (~1 min). Run via `make smoke STACK=<stack> DISTRO=<distro>` —
@@ -60,6 +61,31 @@ cleanup() {
 trap cleanup EXIT
 
 "$SMOKE_BIN/tart-up" "$VM"
+
+# `tart exec` is a host->guest vsock call served by tart-guest-agent inside the
+# guest — a different channel from the ssh every other check here uses, and one
+# nothing in this repo installs: it is inherited from the base image. tart-up
+# drives the guest hostname, the display scale and all GUI activation through
+# it, so an image whose agent is absent still answers ssh while `tart-up --gui`
+# hard-fails for a consumer. This runs before the hostname assert below because
+# a wrong hostname is that failure's downstream symptom, and reporting the
+# symptom sends the reader after the wrong thing entirely.
+if ! agent_reply=$(tart exec "$VM" hostname -s 2>&1); then
+  echo "$prog: FAIL — 'tart exec' does not answer in '$VM': ${agent_reply:-no output}. That is tart-guest-agent's vsock channel, not ssh — without it tart-up cannot set the guest hostname and every GUI activation fails. Check 'systemctl status tart-guest-agent' in the VM (re-run with SMOKE_KEEP=1 to keep it)." >&2
+  exit 1
+fi
+printf '%s: ok   %-22s %s\n' "$prog" "tart exec (vsock)" "$agent_reply" >&2
+
+# tart-up escalates over that same channel — hostnamectl, systemctl isolate,
+# the VNC unit — which needs the NOPASSWD sudoers 99-finalize installs and the
+# agent running as a user it covers. An agent that answers unprivileged calls
+# but cannot escalate breaks only the GUI cells, so the plain path above would
+# still look healthy.
+if ! sudo_err=$(tart exec "$VM" sudo -n true 2>&1); then
+  echo "$prog: FAIL — 'tart exec' cannot escalate in '$VM': ${sudo_err:-no output}. tart-up sets the hostname, applies the display scale and activates every GUI mode privileged over the guest agent, so this image's GUI cells cannot come up." >&2
+  exit 1
+fi
+printf '%s: ok   %-22s %s\n' "$prog" "tart exec (sudo)" "passwordless" >&2
 
 # BatchMode so a broken auth chain fails fast instead of hanging on a prompt.
 got=$(ssh -o BatchMode=yes "tart-$VM" hostname -s) || {
@@ -187,4 +213,4 @@ if [ -n "$DE" ]; then
   done <<< "$listeners"
 fi
 
-echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, ssh, hostname, manifest, os-release, toolchain, sshd posture${DE:+, vnc}." >&2
+echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, guest agent, ssh, hostname, manifest, os-release, toolchain, sshd posture${DE:+, vnc}." >&2

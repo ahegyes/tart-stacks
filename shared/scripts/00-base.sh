@@ -20,6 +20,24 @@ if [ -n "${DISTRO:-}" ] && [ "$guest_id" != "$DISTRO" ]; then
   exit 1
 fi
 
+# The other thing inherited from the base rather than built here: the agent that
+# serves `tart exec`. That is a host->guest vsock RPC, NOT ssh — and ssh is all
+# Packer and the toolchain checks ever use, so a base without the agent produces
+# an image that builds clean, smokes its toolchain clean, and then fails the
+# first time tart-up sets a guest hostname or activates a desktop (a hard exit
+# for --gui). Nothing downstream of here would notice, so check the substrate
+# while it still costs a minute. Enabled, not merely installed: a clone's first
+# boot is where it has to come up.
+if ! command -v tart-guest-agent >/dev/null 2>&1 ||
+   ! systemctl is-enabled --quiet tart-guest-agent.service 2>/dev/null; then
+  echo "ERROR: this base image has no enabled tart-guest-agent.service." >&2
+  echo "       'tart exec' is a host->guest vsock call served by that agent inside the guest;" >&2
+  echo "       the host's own tart install cannot supply it. Without it, tart-up cannot set a" >&2
+  echo "       clone's hostname and every GUI activation fails, yet this build would succeed." >&2
+  echo "       Install tart-guest-agent in the base image before building a stack on it." >&2
+  exit 1
+fi
+
 echo "==> Updating system packages..."
 pkg_refresh
 
