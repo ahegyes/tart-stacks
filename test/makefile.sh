@@ -87,13 +87,39 @@ while IFS= read -r de; do
   assert_accepts "shared/desktops token '$de' accepted with GUI=1" check-de GUI=1 DE="$de"
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
 
-# scaffold refuses an existing stack — reached only after the token gate, so this
-# also proves the two are wired in that order.
 echo "Makefile — scaffold refuses to overwrite:"
 assert_rejects "scaffold over an existing stack rejected" scaffold STACK=php
 gate scaffold STACK=php
 assert_contains "scaffold names the directory it will not clobber" "$(cat "$ERR")" "stacks/php/ already exists"
-assert_rejects "scaffold applies the token gate too" scaffold STACK=.
+# `STACK=.` would be refused by the existing-directory guard as well, proving
+# nothing about the wiring. An uppercase token has no directory of its own, so
+# only the token gate can be what rejects it — and the message says which did.
+gate scaffold STACK=Foo
+assert_contains "scaffold rejects an invalid token via the shared gate" "$(cat "$ERR")" "must be a lowercase alphanumeric token"
+
+# Behavioural tests cannot reach build/rebuild past their gates without risking
+# the destructive `bootstrap` recipe, so the wiring itself is asserted from the
+# makefile: these prerequisites are what keep a bad selector away from
+# `tart delete` + `tart clone`.
+echo "Makefile — the destructive targets keep their gates:"
+prereqs_of() { sed -n "s/^$1:[[:space:]]*//p" "$REPO/Makefile" | head -n1; }
+for target in build rebuild smoke; do
+  line="$(prereqs_of "$target")"
+  # A loop variable named `gate` would shadow the helper above for a reader.
+  for g in check-stack check-distro check-gui check-de; do
+    case " $line " in
+      *" $g "*) ok "$target requires $g" ;;
+      *)         bad "$target requires $g" "prerequisites are: ${line:-<none>}" ;;
+    esac
+  done
+done
+for target in check-stack scaffold; do
+  line="$(prereqs_of "$target")"
+  case " $line " in
+    *" check-stack-token "*) ok "$target requires check-stack-token" ;;
+    *)                       bad "$target requires check-stack-token" "prerequisites are: ${line:-<none>}" ;;
+  esac
+done
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

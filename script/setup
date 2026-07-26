@@ -118,31 +118,45 @@ ours_or_absent() {
   return 0
 }
 
-# include_scan <file> — print four line numbers, 0 each for "not found":
-#   <first Host/Match>  <block enclosing our Include>  <first catch-all above it>  <our Include>
+# include_scan <file> — print four values, 0 each for "not found":
+#   <first Host/Match>  <block enclosing our Include>  <1 if that block is a catch-all>  <our Include>
+#
+# Only the ENCLOSING block decides what goes wrong, which `ssh -G` settles: with
+# `Host *` directly above, the Include is read and merely loses its keywords to
+# the catch-all; with a scoped block above — even when a catch-all precedes THAT
+# — the Include is not read for a tart-* alias at all. So the flag describes the
+# enclosing block, not the first catch-all in the file.
 #
 # The Include's path is matched as a whole field against the three spellings ssh
 # accepts for the generated file, so a neighbour like `…/tart-vms-extra` is never
-# mistaken for ours. The other three numbers are what the placement verdict needs:
-# an Include below the first Host/Match is nested in that block, and whether a
-# catch-all sits above it decides whether ssh skips the Include entirely or reads
-# it and then discards its keywords.
+# mistaken for ours. Lines are normalized first because ssh_config's grammar is
+# wider than a bare field split: the keyword may be separated from its argument
+# by whitespace OR one `=`, arguments may be double-quoted, and leading
+# indentation is allowed — all four verified honoured by OpenSSH 10.2, and an
+# Include this missed would get a second one added beside it.
 include_scan() {
   awk -v t1="$INCLUDE_TARGET" -v t2="$GENERATED" -v t3="$INCLUDE_TARGET_REL" '
-    tolower($1)=="host" || tolower($1)=="match" {
+    {
+      l = $0
+      gsub(/^[ \t]+|[ \t\r]+$/, "", l)
+      if (l ~ /^[A-Za-z]+[ \t]*=/) sub(/[ \t]*=[ \t]*/, " ", l)
+      gsub(/"/, "", l)
+      n = split(l, f, /[ \t]+/)
+      kw = tolower(f[1])
+    }
+    kw=="host" || kw=="match" {
       if (!inc) {
         if (!first) first=NR
         enclosing=NR
-        if (!catchall) {
-          if (tolower($1)=="host") { for (i=2; i<=NF; i++) if ($i=="*") catchall=NR }
-          else if (tolower($2)=="all") catchall=NR
-        }
+        enclosing_catchall=0
+        if (kw=="host") { for (i=2; i<=n; i++) if (f[i]=="*") enclosing_catchall=1 }
+        else if (tolower(f[2])=="all") enclosing_catchall=1
       }
     }
-    tolower($1)=="include" && !inc {
-      for (i=2; i<=NF; i++) if ($i==t1 || $i==t2 || $i==t3) { inc=NR; break }
+    kw=="include" && !inc {
+      for (i=2; i<=n; i++) if (f[i]==t1 || f[i]==t2 || f[i]==t3) { inc=NR; break }
     }
-    END { print first+0, enclosing+0, catchall+0, inc+0 }
+    END { print first+0, enclosing+0, enclosing_catchall+0, inc+0 }
   ' "$1"
 }
 
@@ -316,12 +330,12 @@ fi
 mkdir -p "$(dirname "$SSH_CONFIG")"
 touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
-read -r firstblock enclosing catchall inc < <(include_scan "$SSH_CONFIG")
+read -r firstblock enclosing enclosing_catchall inc < <(include_scan "$SSH_CONFIG")
 if [ "$inc" -gt 0 ]; then
   if [ "$firstblock" -gt 0 ] && [ "$inc" -gt "$firstblock" ]; then
-    if [ "$catchall" -gt 0 ]; then
-      warn "Include is on line $inc, below the catch-all that starts on line $catchall."
-      warn "First-match-wins means the catch-all overrides the Tart VM settings (e.g. wrong User)."
+    if [ "$enclosing_catchall" -eq 1 ]; then
+      warn "Include is on line $inc, inside the catch-all that starts on line $enclosing."
+      warn "ssh reads it there, then keeps the catch-all's value for every keyword they share (e.g. the wrong User)."
     else
       warn "Include is on line $inc, inside the block that starts on line $enclosing."
       warn "ssh reads a nested Include only for the hosts that block matches, so it never applies to tart-* aliases."

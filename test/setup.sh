@@ -169,23 +169,50 @@ for block in 'Host github.com' 'Match host github.com'; do
   assert_same "Include under '$block' → file left untouched" "$SSHCFG" "$WORK/s3b.orig"
 done
 
-# A catch-all that is not the FIRST block still has to be the one named: ssh
-# reads the Include here (the catch-all matches everything) and then keeps the
-# catch-all's value for every shared keyword, which is a different failure from
-# being scoped out — and a different fix to explain.
+# Only the ENCLOSING block decides the failure, and the two failures differ. With
+# a catch-all directly above, `ssh -G` shows the Include IS read (a keyword it
+# alone sets arrives) and only shared keywords lose — so the message must say
+# that, and must name line 4, not the first block in the file.
 sandbox s3d
 printf 'Host github.com\n  User git\n\nHost *\n  User bob\n%s\n' "$INC" > "$SSHCFG"
 run_setup
-assert_contains "catch-all below a scoped block → names the catch-all's line" "$(cat "$ERR")" "below the catch-all that starts on line 4"
-assert_contains "catch-all below a scoped block → gives the first-match-wins reason" "$(cat "$ERR")" "First-match-wins"
-assert_absent   "catch-all below a scoped block → not diagnosed as nested" "$(cat "$ERR")" "inside the block"
-assert_contains "catch-all below a scoped block → remedy targets the first block" "$(cat "$ERR")" "above line 1"
+assert_contains "catch-all encloses → names the catch-all's own line" "$(cat "$ERR")" "inside the catch-all that starts on line 4"
+assert_contains "catch-all encloses → says the keywords are outranked" "$(cat "$ERR")" "keeps the catch-all's value"
+assert_contains "catch-all encloses → remedy targets the first block" "$(cat "$ERR")" "above line 1"
 
-# `Match all` is a catch-all too, and ssh treats it the same way.
+# The inverse arrangement is the one that reads alike and behaves differently: a
+# catch-all FIRST but a scoped block enclosing the Include. `ssh -G` shows the
+# Include is not read at all there, so naming the catch-all would give the wrong
+# mechanism and send the reader looking for a keyword conflict that isn't there.
+sandbox s3d2
+printf 'Host *\n  User bob\nHost github.com\n  User git\n%s\n' "$INC" > "$SSHCFG"
+run_setup
+assert_contains "scoped block encloses despite an earlier catch-all → names the scoped block" "$(cat "$ERR")" "inside the block that starts on line 3"
+assert_absent   "scoped block encloses despite an earlier catch-all → not called a catch-all" "$(cat "$ERR")" "catch-all that starts"
+assert_contains "scoped block encloses despite an earlier catch-all → gives the scoping reason" "$(cat "$ERR")" "never applies to tart-* aliases"
+
+# `Match all` matches every host, so ssh treats it as the catch-all case.
 sandbox s3e
 printf 'Match all\n  User bob\n%s\n' "$INC" > "$SSHCFG"
 run_setup
-assert_contains "Match all → recognised as a catch-all" "$(cat "$ERR")" "below the catch-all that starts on line 1"
+assert_contains "Match all → recognised as a catch-all" "$(cat "$ERR")" "inside the catch-all that starts on line 1"
+
+# ssh_config separates a keyword from its argument by whitespace OR one `=`,
+# accepts double-quoted arguments, and allows leading indentation — all four
+# verified honoured by OpenSSH 10.2. An Include this scanner failed to see would
+# get a second one added beside it, and two Includes fire the auto-start twice.
+for spelling in 'Include=~/.ssh/config.d/tart-vms' 'Include = ~/.ssh/config.d/tart-vms' 'Include "~/.ssh/config.d/tart-vms"' '   Include ~/.ssh/config.d/tart-vms' 'include ~/.ssh/config.d/tart-vms'; do
+  sandbox "s3g-$(printf '%s' "$spelling" | tr -cd 'a-z=" ' | tr ' =\"' '___')"
+  printf '%s\nHost github.com\n  User git\n' "$spelling" > "$SSHCFG"
+  run_setup
+  assert_eq "an existing '$spelling' is recognised, not duplicated" "1" "$(grep -c 'config.d/tart-vms' "$SSHCFG")"
+done
+
+# `Host=*` is the same keyword/argument grammar on the block side.
+sandbox s3h
+printf 'Host=*\n  User bob\n%s\n' "$INC" > "$SSHCFG"
+run_setup
+assert_contains "Host=* → recognised as a catch-all block" "$(cat "$ERR")" "inside the catch-all that starts on line 1"
 
 # A top-level Include with a scoped block BELOW it is correct — the placement
 # rule is about the first Host/Match line, not about blocks existing at all.
