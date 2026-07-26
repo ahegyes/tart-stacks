@@ -107,16 +107,31 @@ if [ -n "$DE" ]; then
   # SecurityTypes=None, so the loopback bind IS the authentication; assert the
   # listener's actual address, which is the only thing that distinguishes a
   # confined desktop from one exposed to the VM's network.
-  listeners=$(ssh -o BatchMode=yes "tart-$VM" "ss -tln 2>/dev/null || sudo ss -tln" 2>/dev/null | awk '$4 ~ /:5901$/ { print $4 }')
-  if [ -z "$listeners" ]; then
-    echo "$prog: FAIL — nothing listening on :5901 inside 'tart-$VM' after the RFB banner answered (could not read the listener table)." >&2
+  #
+  # The read is captured on its own so a failed `ss` cannot be reported as
+  # "nothing is listening": under set -o pipefail it would abort the assignment
+  # instead, and the two states need different verdicts — one is a defective
+  # image, the other an unverified one.
+  if ! listener_table=$(ssh -o BatchMode=yes "tart-$VM" "ss -tln 2>/dev/null || sudo ss -tln" 2>/dev/null); then
+    echo "$prog: FAIL — could not read the guest TCP listener table with ss inside 'tart-$VM', so the VNC bind is unverified (re-run with SMOKE_KEEP=1 and try 'ss -tln' in the VM)." >&2
     exit 1
   fi
-  case "$listeners" in
-    *0.0.0.0:5901*|*'[::]:5901'*|*'*:5901'*)
-      echo "$prog: FAIL — VNC on 'tart-$VM' is bound beyond loopback ($listeners). The unit uses no VNC password, so a non-loopback bind is an unauthenticated desktop on the VM's network." >&2
-      exit 1 ;;
-  esac
+  listeners=$(printf '%s\n' "$listener_table" | awk '$4 ~ /:5901$/ { print $4 }')
+  if [ -z "$listeners" ]; then
+    echo "$prog: FAIL — nothing listening on :5901 inside 'tart-$VM' after the RFB banner answered (re-run with SMOKE_KEEP=1 to inspect)." >&2
+    exit 1
+  fi
+  # An allowlist, per line — the classifier tart-up already applies at boot.
+  # Enumerating the wildcard spellings instead accepts a bind to the VM's own
+  # address (192.168.64.7:5901), which is exposure too.
+  while IFS= read -r addr; do
+    case "$addr" in
+      127.0.0.1:5901|'[::1]:5901') ;;
+      *)
+        echo "$prog: FAIL — VNC on 'tart-$VM' is bound beyond loopback ($addr). The unit uses no VNC password, so a non-loopback bind is an unauthenticated desktop on the VM's network." >&2
+        exit 1 ;;
+    esac
+  done <<< "$listeners"
 fi
 
 echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, ssh, hostname${DE:+, vnc}." >&2

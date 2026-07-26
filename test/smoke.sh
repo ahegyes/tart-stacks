@@ -70,7 +70,9 @@ case "$*" in
     printf '%s' "${MOCK_VNC_BANNER:-RFB}" ;;
   *"ss -tln"*)
     # Default is the loopback bind the image contract promises; the knob stages
-    # the bind the RFB banner cannot distinguish from it.
+    # the bind the RFB banner cannot distinguish from it. MOCK_VNC_SS_RC fails
+    # the read itself, which must not read as "nothing is listening".
+    [ "${MOCK_VNC_SS_RC:-0}" -eq 0 ] || exit "$MOCK_VNC_SS_RC"
     printf '%s\n' "${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" ;;
   *)
     printf '%s\n' "${MOCK_SSH_HOSTNAME:-smoke-vm}" ;;
@@ -89,6 +91,7 @@ run_smoke() { # args... — exit code in $rc, stderr in $ERR, recorded calls in 
     MOCK_VNC_BANNER="${MOCK_VNC_BANNER-RFB}" \
     MOCK_VNC_BANNER_RC="${MOCK_VNC_BANNER_RC-0}" \
     MOCK_VNC_LISTENERS="${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
+    MOCK_VNC_SS_RC="${MOCK_VNC_SS_RC-0}" \
     SMOKE_VNC_TRIES=2 SMOKE_VNC_DELAY=0 \
     SMOKE_KEEP="${SMOKE_KEEP-}" \
     bash "$SMOKE" "$@" >"$WORK/out" 2>"$ERR" || rc=$?
@@ -193,9 +196,39 @@ assert_contains "non-loopback bind → explains why it matters" "$(cat "$ERR")" 
 MOCK_VNC_LISTENERS='LISTEN 0 5 [::]:5901 [::]:*' run_smoke php fedora kde
 assert_rc       "ipv6 wildcard vnc bind → smoke FAILS" 1
 
+# The gate is an allowlist, so a bind to one specific non-loopback address — the
+# VM's own, which no enumeration of wildcard spellings covers — fails too.
+MOCK_VNC_LISTENERS='LISTEN 0 5 192.168.64.7:5901 0.0.0.0:*' run_smoke php fedora kde
+assert_rc       "specific non-loopback vnc bind → smoke FAILS" 1
+assert_contains "specific bind → names the address" "$(cat "$ERR")" "192.168.64.7:5901"
+
+MOCK_VNC_LISTENERS='LISTEN 0 5 [fd00::5]:5901 [::]:*' run_smoke php fedora kde
+assert_rc       "specific non-loopback v6 vnc bind → smoke FAILS" 1
+
+MOCK_VNC_LISTENERS='LISTEN 0 5 *:5901 *:*' run_smoke php fedora kde
+assert_rc       "bare-star vnc bind → smoke FAILS" 1
+
+# Both loopback families together is the normal shape once Xvnc has bound v4 and
+# v6 — a classifier that accepted only one form would fail a healthy image.
+MOCK_VNC_LISTENERS='LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*
+LISTEN 0 5 [::1]:5901 [::]:*' run_smoke php fedora kde
+assert_rc       "v4+v6 loopback binds → smoke passes" 0
+
+# An unsafe listener alongside a loopback one must still fail: the check is
+# per-line, not "does any loopback listener exist".
+MOCK_VNC_LISTENERS='LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*
+LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*' run_smoke php fedora kde
+assert_rc       "loopback plus wildcard bind → smoke FAILS" 1
+
+# "The table read failed" and "the table has no :5901 row" are different
+# verdicts: one is an unverified image, the other a defective one.
+MOCK_VNC_SS_RC=1 run_smoke php fedora kde
+assert_rc       "listener-table read failure → smoke FAILS" 1
+assert_contains "listener-table read failure → says the bind is unverified" "$(cat "$ERR")" "unverified"
+
 MOCK_VNC_LISTENERS='' run_smoke php fedora kde
-assert_rc       "unreadable listener table → smoke FAILS" 1
-assert_contains "unreadable listener table → says so" "$(cat "$ERR")" "could not read the listener table"
+assert_rc       "no :5901 listener → smoke FAILS" 1
+assert_contains "no :5901 listener → says nothing is listening" "$(cat "$ERR")" "nothing listening on :5901"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
