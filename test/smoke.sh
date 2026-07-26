@@ -68,9 +68,28 @@ case "$*" in
   */dev/tcp/127.0.0.1/5901*)
     [ "${MOCK_VNC_BANNER_RC:-0}" -eq 0 ] || exit "${MOCK_VNC_BANNER_RC}"
     printf '%s' "${MOCK_VNC_BANNER:-RFB}" ;;
+  *tart-stacks-release*)
+    # The provenance the attestation reads. Each field is a knob so a mislabeled
+    # image can be staged — which is the whole point of the check.
+    printf 'built: 2026-01-01T00:00:00Z\n'
+    printf 'stack: %s\n'  "${MOCK_MANIFEST_STACK:-php}"
+    printf 'distro: %s\n' "${MOCK_MANIFEST_DISTRO:-fedora}"
+    printf 'gui: %s\n'    "${MOCK_MANIFEST_GUI:-none}"
+    printf 'os-id: %s\n'  "${MOCK_MANIFEST_OSID:-fedora}" ;;
+  *"sshd -T"*)
+    [ "${MOCK_SSHD_T_RC:-0}" -eq 0 ] || exit "$MOCK_SSHD_T_RC"
+    printf '%s\n' "${MOCK_SSHD_T-passwordauthentication no
+permitrootlogin no
+kbdinteractiveauthentication no
+pubkeyauthentication yes
+streamlocalbindunlink yes}" ;;
+  *--version*|*-version*)
+    exit "${MOCK_TOOL_RC:-0}" ;;
   *"ss -tln"*)
     # Default is the loopback bind the image contract promises; the knob stages
-    # the bind the RFB banner cannot distinguish from it.
+    # the bind the RFB banner cannot distinguish from it. MOCK_VNC_SS_RC fails
+    # the read itself, which must not read as "nothing is listening".
+    [ "${MOCK_VNC_SS_RC:-0}" -eq 0 ] || exit "$MOCK_VNC_SS_RC"
     printf '%s\n' "${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" ;;
   *)
     printf '%s\n' "${MOCK_SSH_HOSTNAME:-smoke-vm}" ;;
@@ -89,6 +108,18 @@ run_smoke() { # args... — exit code in $rc, stderr in $ERR, recorded calls in 
     MOCK_VNC_BANNER="${MOCK_VNC_BANNER-RFB}" \
     MOCK_VNC_BANNER_RC="${MOCK_VNC_BANNER_RC-0}" \
     MOCK_VNC_LISTENERS="${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
+    MOCK_VNC_SS_RC="${MOCK_VNC_SS_RC-0}" \
+    MOCK_MANIFEST_STACK="${MOCK_MANIFEST_STACK-php}" \
+    MOCK_MANIFEST_DISTRO="${MOCK_MANIFEST_DISTRO-fedora}" \
+    MOCK_MANIFEST_GUI="${MOCK_MANIFEST_GUI-none}" \
+    MOCK_MANIFEST_OSID="${MOCK_MANIFEST_OSID-fedora}" \
+    MOCK_SSHD_T="${MOCK_SSHD_T-passwordauthentication no
+permitrootlogin no
+kbdinteractiveauthentication no
+pubkeyauthentication yes
+streamlocalbindunlink yes}" \
+    MOCK_SSHD_T_RC="${MOCK_SSHD_T_RC-0}" \
+    MOCK_TOOL_RC="${MOCK_TOOL_RC-0}" \
     SMOKE_VNC_TRIES=2 SMOKE_VNC_DELAY=0 \
     SMOKE_KEEP="${SMOKE_KEEP-}" \
     bash "$SMOKE" "$@" >"$WORK/out" 2>"$ERR" || rc=$?
@@ -114,31 +145,32 @@ assert_contains "verdict line says OK"          "$(cat "$ERR")" "OK"
 # GUI flavor: the optional <de> rides through to tart-new (flavor image
 # selection is tart-new's job), the VNC surface is exercised (unit start +
 # loopback RFB banner), and the verdict says so
-run_smoke php fedora kde
+MOCK_MANIFEST_GUI=kde run_smoke php fedora kde
 assert_rc       "GUI flavor → exit 0" 0
 assert_contains "de reaches tart-new"        "$(cat "$CALLS")" "tart-new smoke-vm php fedora kde"
 assert_contains "GUI smoke starts the VNC unit" "$(cat "$CALLS")" "tart-stacks-vnc.service"
 assert_contains "GUI smoke probes loopback 5901" "$(cat "$CALLS")" "/dev/tcp/127.0.0.1/5901"
 assert_contains "verdict names the flavor"   "$(cat "$ERR")" "fedora-php-kde"
-assert_contains "verdict includes the vnc stage" "$(cat "$ERR")" "hostname, vnc"
+assert_contains "verdict includes the vnc stage" "$(cat "$ERR")" "sshd posture, vnc"
+assert_contains "verdict names the attestation stages" "$(cat "$ERR")" "manifest, os-release, toolchain"
 
 # non-GUI run never touches the VNC surface
 run_smoke php fedora
 assert_absent   "plain smoke does not start the VNC unit" "$(cat "$CALLS")" "tart-stacks-vnc"
 
 # VNC unit fails to start → smoke fails, teardown still fires
-MOCK_VNC_START_RC=9 run_smoke php fedora kde
+MOCK_MANIFEST_GUI=kde MOCK_VNC_START_RC=9 run_smoke php fedora kde
 assert_rc       "vnc start failure → exit 9" 9
 assert_contains "vnc start failure names the unit" "$(cat "$ERR")" "tart-stacks-vnc.service failed to start"
 assert_contains "vnc start failure still tears down" "$(cat "$CALLS")" "tart-rm smoke-vm"
 
 # wrong banner on 5901 → smoke fails naming the port
-MOCK_VNC_BANNER=XXX run_smoke php fedora kde
+MOCK_MANIFEST_GUI=kde MOCK_VNC_BANNER=XXX run_smoke php fedora kde
 assert_rc       "bad RFB banner → exit 1" 1
 assert_contains "bad banner names the loopback port" "$(cat "$ERR")" "127.0.0.1:5901"
 
 # listener never answers (probe rc!=0 through all retries) → smoke fails
-MOCK_VNC_BANNER_RC=1 run_smoke php fedora kde
+MOCK_MANIFEST_GUI=kde MOCK_VNC_BANNER_RC=1 run_smoke php fedora kde
 assert_rc       "dead listener → exit 1" 1
 assert_contains "dead listener reports nothing received" "$(cat "$ERR")" "got 'nothing'"
 
@@ -181,21 +213,96 @@ assert_contains "tart-new's own error surfaces" "$(cat "$ERR")" "already exists"
 # The RFB probe dials 127.0.0.1, so it answers identically whether Xvnc bound
 # loopback or 0.0.0.0 — it passes in exactly the failure case. The unit ships
 # SecurityTypes=None, so the bind address IS the authentication.
-run_smoke php fedora kde
+MOCK_MANIFEST_GUI=kde run_smoke php fedora kde
 assert_rc       "loopback bind → smoke passes" 0
 assert_contains "loopback bind → listener table read" "$(cat "$CALLS")" "ss -tln"
 
-MOCK_VNC_LISTENERS='LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*' run_smoke php fedora kde
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*' run_smoke php fedora kde
 assert_rc       "non-loopback vnc bind → smoke FAILS" 1
 assert_contains "non-loopback bind → names the exposure" "$(cat "$ERR")" "bound beyond loopback"
 assert_contains "non-loopback bind → explains why it matters" "$(cat "$ERR")" "no VNC password"
 
-MOCK_VNC_LISTENERS='LISTEN 0 5 [::]:5901 [::]:*' run_smoke php fedora kde
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='LISTEN 0 5 [::]:5901 [::]:*' run_smoke php fedora kde
 assert_rc       "ipv6 wildcard vnc bind → smoke FAILS" 1
 
-MOCK_VNC_LISTENERS='' run_smoke php fedora kde
-assert_rc       "unreadable listener table → smoke FAILS" 1
-assert_contains "unreadable listener table → says so" "$(cat "$ERR")" "could not read the listener table"
+# The gate is an allowlist, so a bind to one specific non-loopback address — the
+# VM's own, which no enumeration of wildcard spellings covers — fails too.
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='LISTEN 0 5 192.168.64.7:5901 0.0.0.0:*' run_smoke php fedora kde
+assert_rc       "specific non-loopback vnc bind → smoke FAILS" 1
+assert_contains "specific bind → names the address" "$(cat "$ERR")" "192.168.64.7:5901"
+
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='LISTEN 0 5 [fd00::5]:5901 [::]:*' run_smoke php fedora kde
+assert_rc       "specific non-loopback v6 vnc bind → smoke FAILS" 1
+
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='LISTEN 0 5 *:5901 *:*' run_smoke php fedora kde
+assert_rc       "bare-star vnc bind → smoke FAILS" 1
+
+# Both loopback families together is the normal shape once Xvnc has bound v4 and
+# v6 — a classifier that accepted only one form would fail a healthy image.
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*
+LISTEN 0 5 [::1]:5901 [::]:*' run_smoke php fedora kde
+assert_rc       "v4+v6 loopback binds → smoke passes" 0
+
+# An unsafe listener alongside a loopback one must still fail: the check is
+# per-line, not "does any loopback listener exist".
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*
+LISTEN 0 5 0.0.0.0:5901 0.0.0.0:*' run_smoke php fedora kde
+assert_rc       "loopback plus wildcard bind → smoke FAILS" 1
+
+# "The table read failed" and "the table has no :5901 row" are different
+# verdicts: one is an unverified image, the other a defective one.
+MOCK_MANIFEST_GUI=kde MOCK_VNC_SS_RC=1 run_smoke php fedora kde
+assert_rc       "listener-table read failure → smoke FAILS" 1
+assert_contains "listener-table read failure → says the bind is unverified" "$(cat "$ERR")" "unverified"
+
+MOCK_MANIFEST_GUI=kde MOCK_VNC_LISTENERS='' run_smoke php fedora kde
+assert_rc       "no :5901 listener → smoke FAILS" 1
+assert_contains "no :5901 listener → says nothing is listening" "$(cat "$ERR")" "nothing listening on :5901"
+
+# Attestation: booting and answering does not prove the image IS the cell asked
+# for. tart-new checks only the image NAME and tart-up supplies the hostname, so
+# without these a mislabeled or stale image passes every earlier stage.
+echo "  -- image attestation --"
+MOCK_MANIFEST_STACK=jvm run_smoke php fedora
+assert_rc       "manifest stack mismatch → FAIL" 1
+assert_contains "stack mismatch names both values" "$(cat "$ERR")" "expected 'php', guest reports 'jvm'"
+assert_contains "stack mismatch → teardown still ran" "$(cat "$CALLS")" "tart-rm smoke-vm"
+
+MOCK_MANIFEST_DISTRO=ubuntu run_smoke php fedora
+assert_rc       "manifest distro mismatch → FAIL" 1
+assert_contains "distro mismatch names both values" "$(cat "$ERR")" "expected 'fedora', guest reports 'ubuntu'"
+
+# The manifest is written from the build's own DISTRO, so it can agree with the
+# request and still be wrong about the guest. os-release is the guest's own answer.
+MOCK_MANIFEST_OSID=ubuntu run_smoke php fedora
+assert_rc       "guest os-release disagrees with the manifest → FAIL" 1
+assert_contains "os-release mismatch is reported separately" "$(cat "$ERR")" "guest os-release id"
+
+MOCK_MANIFEST_GUI=kde run_smoke php fedora
+assert_rc       "a GUI image smoked as headless → FAIL" 1
+MOCK_MANIFEST_GUI=none run_smoke php fedora kde
+assert_rc       "a headless image smoked as a GUI flavor → FAIL" 1
+
+# The toolchain has to answer over a non-interactive ssh — the shape an agent or
+# a script uses, and the one that was broken until the shims landed on PATH.
+MOCK_TOOL_RC=127 run_smoke php fedora
+assert_rc       "toolchain unreachable non-interactively → FAIL" 1
+assert_contains "toolchain failure explains the consequence" "$(cat "$ERR")" "PATH wiring is broken"
+run_smoke php fedora
+assert_contains "php stack probes php"  "$(cat "$CALLS")" "php --version"
+MOCK_MANIFEST_STACK=jvm run_smoke jvm fedora
+assert_contains "jvm stack probes java" "$(cat "$CALLS")" "java -version"
+
+# The hardening posture, read from sshd's effective config rather than the file.
+for missing in "passwordauthentication no" "permitrootlogin no" "kbdinteractiveauthentication no" "streamlocalbindunlink yes"; do
+  MOCK_SSHD_T="$(printf 'passwordauthentication no\npermitrootlogin no\nkbdinteractiveauthentication no\nstreamlocalbindunlink yes\n' | grep -vx "$missing")" \
+    run_smoke php fedora
+  assert_rc       "sshd missing '$missing' → FAIL" 1
+  assert_contains "sshd failure names the setting" "$(cat "$ERR")" "$missing"
+done
+MOCK_SSHD_T_RC=1 run_smoke php fedora
+assert_rc       "sshd -T unreadable → FAIL" 1
+assert_contains "unreadable sshd config says the posture is unverified" "$(cat "$ERR")" "hardening posture is unverified"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

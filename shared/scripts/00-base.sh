@@ -6,6 +6,20 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source /tmp/distro-lib.sh
 
+# Assert the guest is the distro this build calls itself, first thing. The image
+# name and the provenance manifest are both written from the build's own DISTRO,
+# never from the guest — so a build that started from the wrong base would
+# succeed and ship mislabeled, and every clone would inherit the lie. Failing
+# here costs a minute; failing at 99-finalize would cost the whole build.
+# shellcheck disable=SC1091  # guest-only file, absent at lint time
+guest_id="$( . /etc/os-release 2>/dev/null && printf '%s' "${ID:-}" )"
+if [ -n "${DISTRO:-}" ] && [ "$guest_id" != "$DISTRO" ]; then
+  echo "ERROR: this build declares DISTRO=$DISTRO but the guest reports ID=${guest_id:-unknown}." >&2
+  echo "       The image name and /etc/tart-stacks-release both come from DISTRO, so continuing" >&2
+  echo "       would ship a mislabeled image. Re-run 'make bootstrap DISTRO=$DISTRO' first." >&2
+  exit 1
+fi
+
 echo "==> Updating system packages..."
 pkg_refresh
 

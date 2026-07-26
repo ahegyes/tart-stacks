@@ -32,8 +32,50 @@ mise_runtime_setup() {
   if command -v corepack >/dev/null 2>&1; then
     echo "==> Enabling Corepack for per-project pnpm/yarn shimming..."
     corepack enable
+    # corepack writes pnpm/yarn into the node install's bin dir AFTER mise's last
+    # reshim, so they ship with no shim of their own — invisible to any PATH that
+    # carries only the shims dir, which is every non-interactive `ssh <vm> <cmd>`.
+    mise reshim
   else
     echo "==> corepack not present (no Node in this stack) — skipping Corepack."
+  fi
+}
+
+# membership_gate <label> <listing> <name…> — HARD GATE for a stack whose smoke
+# is membership-based rather than command-based: check each <name> against a
+# listing the caller already captured, print one line per name, and exit 1 if any
+# is absent so the Packer build fails rather than shipping a broken toolchain.
+#
+# The match is line-anchored and case-insensitive, and both halves are
+# load-bearing. `php -m` spells opcache "Zend OPcache", hence -i. And PHP CLI's
+# display_errors writes "Warning: PHP Startup: Unable to load dynamic library
+# 'imagick.so'" to the SAME stdout the listing comes from — so an unanchored
+# match reads that warning as proof the extension loaded, passing the gate in
+# exactly the case it exists to catch (measured on a live clone: `grep -qiF`
+# matches an extension absent from [PHP Modules], `grep -qixF` does not).
+#
+# A herestring, not `printf | grep`: `grep -q` exits at the first match, and on a
+# listing past the pipe buffer printf then takes SIGPIPE, which pipefail reports
+# as 141 — a found name would read as missing.
+membership_gate() {
+  local label="$1" listing="$2"
+  shift 2
+  echo ""
+  echo "==> Smoke test (hard gate): $label"
+  local missing=0 name
+  for name in "$@"; do
+    printf "  %-12s " "$name"
+    if grep -qixF "$name" <<<"$listing"; then
+      echo "loaded"
+    else
+      echo "(missing)"
+      missing=$((missing + 1))
+    fi
+  done
+  if [ "$missing" -gt 0 ]; then
+    echo "" >&2
+    echo "ERROR: $missing of the expected $label did not load. Fix the build environment and re-run." >&2
+    exit 1
   fi
 }
 
@@ -42,8 +84,8 @@ mise_runtime_setup() {
 # if any fails, so the Packer build fails rather than shipping a broken
 # toolchain. Argv groups (never strings, never eval) keep arguments word-split-
 # safe for every future stack author. Empty groups (doubled or trailing `--`)
-# are ignored. For command-based stacks (jvm, python). Stacks whose smoke is
-# membership-based (php's `php -m`) keep their own loop.
+# are ignored. For command-based stacks (jvm, python); membership_gate above is
+# the counterpart for a listing (php's `php -m`).
 smoke_gate() {
   local label="$1"; shift
   echo ""
@@ -56,9 +98,12 @@ smoke_gate() {
     if [ "$tok" != "--" ]; then cmd+=("$tok"); continue; fi
     [ "${#cmd[@]}" -gt 0 ] || continue
     printf "  %-26s " "${cmd[*]}"
-    # First non-empty, non-separator line (e.g. `gradle --version` leads with a box border).
+    # First non-empty, non-separator line (e.g. `gradle --version` leads with a box
+    # border). A herestring, not `echo |`: awk exits at the first match, so past the
+    # pipe buffer echo takes SIGPIPE and pipefail turns a passing check into a
+    # build-aborting 141 with nothing printed.
     if output=$("${cmd[@]}" 2>&1); then
-      echo "$output" | awk '/^[^-]/ && NF { print; exit }'
+      awk '/^[^-]/ && NF { print; exit }' <<<"$output"
     else
       echo "FAILED"
       echo "$output" >&2

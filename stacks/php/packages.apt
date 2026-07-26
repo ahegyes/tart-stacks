@@ -4,7 +4,7 @@
 # catches a dropped capability — pair list changes with gate changes. Equivalent
 # capabilities to packages.dnf (names differ); keep the two aligned.
 
-# Build toolchain (autoconf/automake/libtool/pkg-config also come via build-essential)
+# Build toolchain (autoconf/automake/libtool/pkg-config come from pkg_group_devtools)
 re2c bison
 # Core compile deps
 libssl-dev libxml2-dev

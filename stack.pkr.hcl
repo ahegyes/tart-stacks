@@ -49,12 +49,6 @@ variable "de" {
   }
 }
 
-variable "source_image" {
-  type        = string
-  description = "Local Tart image to clone as the source. Defaults to <distro>-base, created by `make bootstrap`."
-  default     = ""
-}
-
 variable "ssh_username" {
   type        = string
   description = "SSH user inside the VM. Cirrus Labs Tart images use 'admin' by default."
@@ -67,8 +61,11 @@ locals {
   # key auth.
   ssh_password = "admin"
 
-  # source_image defaults to <distro>-base (the make-bootstrap intermediate) unless overridden.
-  source_image = var.source_image != "" ? var.source_image : "${var.distro}-base"
+  # The source is <distro>-base, the intermediate `make bootstrap` clones from the
+  # upstream image — derived, never overridable. An override could name a base from
+  # another distro, and since the output name and the provenance manifest both come
+  # from var.distro, that build would succeed and ship mislabeled.
+  source_image = "${var.distro}-base"
 
   # The -<de> suffix keeps GUI flavors distinguishable (and side-by-side
   # buildable) in `tart list`; the provenance manifest records the same fact
@@ -156,7 +153,10 @@ build {
   # the stack's package hook, then mise. One root provisioner block keeps the
   # package-manager transaction sequence unambiguous.
   provisioner "shell" {
-    execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    # {{ .Vars }} is required for environment_vars to reach the script at all;
+    # 00-base.sh asserts the guest it landed in is the distro this build claims.
+    execute_command  = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
+    environment_vars = ["DISTRO=${var.distro}"]
     scripts = [
       "shared/scripts/00-base.sh",
       "stacks/${var.stack}/scripts/00-stack.sh",

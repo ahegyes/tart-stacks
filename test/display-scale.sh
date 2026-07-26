@@ -91,74 +91,76 @@ run_scale "$KDE_SCRIPT" "$FALLBACK_BIN" 2
 assert_rc       "no kwriteconfig → nonzero" 1
 assert_contains "no kwriteconfig → names both tools" "$(cat "$ERR")" "kwriteconfig6 nor kwriteconfig5"
 
+KWRITE_CALLS="$WORK/kwrite-calls"
+export KWRITE_CALLS
+
+# kconfig_mock <dir> <tool> — a KConfig editor that records WHICH tool ran. The
+# logged name is the only thing that distinguishes the preferred tool from the
+# fallback: every assertion below reads the same either way.
+kconfig_mock() {
+  mkdir -p "$1"
+  cat > "$1/$2" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s\n' "${0##*/}" "$*" >> "$KWRITE_CALLS"
+EOF
+  chmod 755 "$1/$2"
+}
+
+# kde_writes_through <tool> <mock-dir> <home> <label> — the whole KConfig
+# contract for one editor: three scale writes at factor 2, three deletes at
+# factor 1, and every call proven to have gone through <tool>.
+kde_writes_through() {
+  local tool="$1" bin="$2" home="$3" label="$4" calls
+  local script="$WORK/$tool-scale"
+  mkdir -p "$home/.config"
+  instantiate kde "$CURRENT_USER" "$home" "$script"
+  : > "$KWRITE_CALLS"
+  run_scale "$script" "$bin:/usr/bin:/bin" 2
+  assert_rc "$label factor 2 → exit 0" 0
+  calls="$(cat "$KWRITE_CALLS")"
+  assert_eq "$label receives three writes" 3 "$(wc -l < "$KWRITE_CALLS" | tr -d ' ')"
+  assert_eq "$label writes went through $tool" 3 "$(grep -c "^$tool " "$KWRITE_CALLS")"
+  assert_contains "$label writes verified font key" "$calls" "--group General --key forceFontDPI 192"
+  assert_contains "$label writes verified global scale key" "$calls" "--group KScreen --key ScaleFactor 2"
+  assert_contains "$label writes verified connector key" "$calls" "--key ScreenScaleFactors Virtual-1=2;"
+
+  # Deletes deliberately require existing files: the applier must not make empty
+  # KDE configs merely to reset defaults on a fresh clone.
+  : > "$home/.config/kcmfonts"
+  : > "$home/.config/kdeglobals"
+  : > "$KWRITE_CALLS"
+  run_scale "$script" "$bin:/usr/bin:/bin" 1
+  assert_rc "$label factor 1 → exit 0" 0
+  calls="$(cat "$KWRITE_CALLS")"
+  assert_eq "$label receives three deletes" 3 "$(grep -c -- '--delete' "$KWRITE_CALLS")"
+  assert_eq "$label deletes went through $tool" 3 "$(grep -c "^$tool " "$KWRITE_CALLS")"
+  assert_contains "$label reset deletes font key" "$calls" "--group General --key forceFontDPI --delete"
+  assert_contains "$label reset deletes global scale key" "$calls" "--group KScreen --key ScaleFactor --delete"
+  assert_contains "$label reset deletes connector key" "$calls" "--key ScreenScaleFactors --delete"
+}
+
 echo "display-scale — KDE writes through the KConfig tool:"
-KWRITE_BIN="$WORK/kwrite-bin"
-mkdir -p "$KWRITE_BIN" "$WORK/kwrite-home/.config"
-KWRITE_CALLS="$WORK/kwrite-calls"
-export KWRITE_CALLS
-cat > "$KWRITE_BIN/kwriteconfig6" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$KWRITE_CALLS"
-EOF
-chmod 755 "$KWRITE_BIN/kwriteconfig6"
-KWRITE_SCRIPT="$WORK/kwrite-scale"
-instantiate kde "$CURRENT_USER" "$WORK/kwrite-home" "$KWRITE_SCRIPT"
-: > "$KWRITE_CALLS"
-run_scale "$KWRITE_SCRIPT" "$KWRITE_BIN:/usr/bin:/bin" 2
-assert_rc "KDE with kwriteconfig6 factor 2 → exit 0" 0
-kwrite_calls="$(cat "$KWRITE_CALLS")"
-assert_eq "KDE preferred editor receives three writes" 3 "$(wc -l < "$KWRITE_CALLS" | tr -d ' ')"
-assert_contains "kwrite writes verified font key" "$kwrite_calls" "--group General --key forceFontDPI 192"
-assert_contains "kwrite writes verified global scale key" "$kwrite_calls" "--group KScreen --key ScaleFactor 2"
-assert_contains "kwrite writes verified connector key" "$kwrite_calls" "--key ScreenScaleFactors Virtual-1=2;"
+KWRITE_BIN="$WORK/kwrite6-bin"
+kconfig_mock "$KWRITE_BIN" kwriteconfig6
+kde_writes_through kwriteconfig6 "$KWRITE_BIN" "$WORK/kwrite6-home" "KDE with kwriteconfig6"
 
-# Deletes deliberately require existing files: the applier must not make empty
-# KDE configs merely to reset defaults on a fresh clone.
-: > "$WORK/kwrite-home/.config/kcmfonts"
-: > "$WORK/kwrite-home/.config/kdeglobals"
-: > "$KWRITE_CALLS"
-run_scale "$KWRITE_SCRIPT" "$KWRITE_BIN:/usr/bin:/bin" 1
-assert_rc "KDE with kwriteconfig6 factor 1 → exit 0" 0
-kwrite_calls="$(cat "$KWRITE_CALLS")"
-assert_eq "KDE preferred editor receives three deletes" 3 "$(grep -c -- '--delete' "$KWRITE_CALLS")"
-assert_contains "kwrite reset deletes font key" "$kwrite_calls" "--group General --key forceFontDPI --delete"
-assert_contains "kwrite reset deletes global scale key" "$kwrite_calls" "--group KScreen --key ScaleFactor --delete"
-assert_contains "kwrite reset deletes connector key" "$kwrite_calls" "--key ScreenScaleFactors --delete"
-
-# Plasma 5 images carry kwriteconfig5 instead; same CLI, same contract.
+# Plasma 5 images carry kwriteconfig5 instead; same CLI, same contract. Its own
+# directory, holding no kwriteconfig6, is what makes this the fallback path —
+# apt-family KDE is where Plasma 5 is still live.
 echo "display-scale — KDE falls back to kwriteconfig5:"
-KWRITE5_BIN="$WORK/kwrite-bin"
-mkdir -p "$KWRITE5_BIN" "$WORK/kwrite-home/.config"
-KWRITE_CALLS="$WORK/kwrite-calls"
-export KWRITE_CALLS
-cat > "$KWRITE5_BIN/kwriteconfig5" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$KWRITE_CALLS"
-EOF
-chmod 755 "$KWRITE5_BIN/kwriteconfig5"
-KWRITE_SCRIPT="$WORK/kwrite-scale"
-instantiate kde "$CURRENT_USER" "$WORK/kwrite-home" "$KWRITE_SCRIPT"
-: > "$KWRITE_CALLS"
-run_scale "$KWRITE_SCRIPT" "$KWRITE5_BIN:/usr/bin:/bin" 2
-assert_rc "KDE with kwriteconfig5 factor 2 → exit 0" 0
-kwrite_calls="$(cat "$KWRITE_CALLS")"
-assert_eq "KDE preferred editor receives three writes" 3 "$(wc -l < "$KWRITE_CALLS" | tr -d ' ')"
-assert_contains "kwrite writes verified font key" "$kwrite_calls" "--group General --key forceFontDPI 192"
-assert_contains "kwrite writes verified global scale key" "$kwrite_calls" "--group KScreen --key ScaleFactor 2"
-assert_contains "kwrite writes verified connector key" "$kwrite_calls" "--key ScreenScaleFactors Virtual-1=2;"
+KWRITE5_BIN="$WORK/kwrite5-bin"
+kconfig_mock "$KWRITE5_BIN" kwriteconfig5
+kde_writes_through kwriteconfig5 "$KWRITE5_BIN" "$WORK/kwrite5-home" "KDE with kwriteconfig5"
 
-# Deletes deliberately require existing files: the applier must not make empty
-# KDE configs merely to reset defaults on a fresh clone.
-: > "$WORK/kwrite-home/.config/kcmfonts"
-: > "$WORK/kwrite-home/.config/kdeglobals"
-: > "$KWRITE_CALLS"
-run_scale "$KWRITE_SCRIPT" "$KWRITE5_BIN:/usr/bin:/bin" 1
-assert_rc "KDE with kwriteconfig5 factor 1 → exit 0" 0
-kwrite_calls="$(cat "$KWRITE_CALLS")"
-assert_eq "KDE preferred editor receives three deletes" 3 "$(grep -c -- '--delete' "$KWRITE_CALLS")"
-assert_contains "kwrite reset deletes font key" "$kwrite_calls" "--group General --key forceFontDPI --delete"
-assert_contains "kwrite reset deletes global scale key" "$kwrite_calls" "--group KScreen --key ScaleFactor --delete"
-assert_contains "kwrite reset deletes connector key" "$kwrite_calls" "--key ScreenScaleFactors --delete"
+# Each section above holds exactly one tool, so neither can see the ORDER between
+# them — and a Plasma 6 image commonly carries kf5's kwriteconfig5 alongside its
+# own, where writing through 5 would set keys Plasma 6 never reads.
+echo "display-scale — KDE prefers 6 when both tools are present:"
+BOTH_BIN="$WORK/kwrite-both-bin"
+kconfig_mock "$BOTH_BIN" kwriteconfig6
+kconfig_mock "$BOTH_BIN" kwriteconfig5
+kde_writes_through kwriteconfig6 "$BOTH_BIN" "$WORK/kwrite-both-home" "KDE with both tools"
+assert_eq "with both present, kwriteconfig5 is never called" 0 "$(grep -c '^kwriteconfig5 ' "$KWRITE_CALLS")"
 
 echo "display-scale — GNOME private dconf session:"
 GNOME_BIN="$WORK/gnome-bin"

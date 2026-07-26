@@ -74,8 +74,14 @@ jobs:
           done
 
   tests:
-    name: tests
-    runs-on: ubuntu-latest
+    name: tests (${{ matrix.os }})
+    # macOS too: everything under bin/ and script/ runs on the developer's Mac,
+    # against bash 3.2 and the BSD userland that only this runner provides.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: run test suite

@@ -168,9 +168,11 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
     TART_NC_BIN="$MOCKBIN/nc" TART_NETPOLICY="$netpolicy" TART_MOUNTS="$mounts" TART_GUI="$gui" \
     TART_LOG_DIR="${RUNUP_LOG_DIR:-$WORK/logs}" \
     bash "$BIN/tart-up" "$@" >/dev/null 2>"$ERR" || rc=$?
-  # The stopped-VM `tart run` is backgrounded (& disown); give the mock up to ~2s to log it.
+  # The stopped-VM `tart run` is backgrounded (& disown), so wait for the mock to
+  # log it. The loop exits the moment the line lands; the bound is generous
+  # because a loaded machine has been seen to need more than a second.
   if [ "$rc" -eq 0 ] && [ "$state" = stopped ]; then
-    local _; for _ in $(seq 1 20); do grep -q 'tart run' "$CALLS" 2>/dev/null && break; sleep 0.1; done
+    local _; for _ in $(seq 1 100); do grep -q 'tart run' "$CALLS" 2>/dev/null && break; sleep 0.1; done
   fi
 }
 
@@ -230,6 +232,45 @@ assert_contains "stopped → run carries netpolicy flag"  "$calls" "--net-softne
 assert_contains "stopped → run carries dir-mount flag"  "$calls" "--dir=data:/srv/data:ro"
 assert_contains "stopped → :22 probe uses \$TART_NC_BIN" "$calls" "nc -z -G 3 10.0.0.9 22"
 assert_contains "stopped → provisions over vsock (hostname probe)" "$calls" "hostname -s"
+# Host keys belong to the image's first-boot oneshot, which runs before sshd ever
+# starts. Pinned as a count, not as the absence of a spelling: the property is
+# that a started boot spends exactly one vsock call — the hostname probe — so any
+# added `tart exec`, however written, shows up here.
+assert_eq       "stopped → exactly one provisioning vsock call" 1 "$(grep -c '^tart exec ' "$CALLS")"
+assert_absent   "stopped → no host-side host-key regeneration" "$calls" "ssh_host_"
+
+# A selector outside the documented grammar matched nothing and was silently a
+# non-match, so the VM started without the share — and work written to the
+# expected path in the guest dies with the clone. The forwards parser already
+# validates the same grammar; this is the mounts plane catching up.
+printf -- 'app-* /srv/data\n' > "$WORK/mounts-badpattern"
+runup stopped app-a "$EMPTY" "$WORK/mounts-badpattern" "$EMPTY" app-a
+assert_rc       "unsupported mounts selector → VM still starts" 0
+assert_contains "unsupported selector is named"        "$(cat "$ERR")" "selector 'app-*' is not"
+assert_contains "unsupported selector says the mount is dropped" "$(cat "$ERR")" "NOT attached"
+assert_absent   "unsupported selector attaches no --dir" "$(cat "$CALLS")" "--dir="
+# A comma list with one bad element is refused as a whole, not partially applied.
+printf -- 'app-a,app-* /srv/data\n' > "$WORK/mounts-badlist"
+runup stopped app-a "$EMPTY" "$WORK/mounts-badlist" "$EMPTY" app-a
+assert_absent   "a comma list with a bad element attaches nothing" "$(cat "$CALLS")" "--dir="
+# The documented forms still work. `*` is the wildcard on its own only — inside a
+# comma list it is not a valid element, which is why the list below spells names.
+printf -- 'app-a /srv/one\napp-a,other /srv/two\n* /srv/three\n' > "$WORK/mounts-good"
+runup stopped app-a "$EMPTY" "$WORK/mounts-good" "$EMPTY" app-a
+assert_contains "an exact-name selector still attaches"  "$(cat "$CALLS")" "--dir=one:/srv/one"
+assert_contains "a comma list of names still attaches"   "$(cat "$CALLS")" "--dir=two:/srv/two"
+assert_contains "the bare wildcard still attaches"       "$(cat "$CALLS")" "--dir=three:/srv/three"
+
+# An unreadable mounts file fails closed like the gui plane: a VM missing its
+# shares is indistinguishable from one that has them until something reads an
+# empty /mnt/shared.
+chmod 000 "$MNTS"
+runup stopped app-a "$EMPTY" "$MNTS" "$EMPTY" app-a
+assert_rc       "unreadable mounts file → exit 1" 1
+assert_contains "unreadable mounts file → names readability" "$(cat "$ERR")" "file exists but is not readable"
+assert_contains "unreadable mounts file → uses fail-closed voice" "$(cat "$ERR")" "refusing to start"
+assert_absent   "unreadable mounts file → refuses boot" "$(cat "$CALLS")" "tart run"
+chmod 600 "$MNTS"
 
 # tart's own stderr is captured to a per-VM log (truncate-on-start) so a crash's
 # `fixme:` line survives; the mock `tart run` emits a stderr marker.
@@ -530,11 +571,21 @@ assert_rc       "no DHCP lease → exit 1" 1
 assert_contains "no-IP diagnostic names the VM and the window" "$(cat "$ERR")" "did not get an IP within 60 s"
 assert_eq       "no-IP path polls its full 60 intervals" 60 "$(grep -c '^sleep 1$' "$CALLS")"
 assert_absent   "no-IP path never probes :22" "$(cat "$CALLS")" "nc "
+# The launch is detached, so a `tart run` that failed outright is indistinguishable
+# from slow DHCP here — its real error only exists in the log.
+assert_contains "no-IP diagnostic names this boot's run log" "$(cat "$ERR")" "app-a.run.log"
 
 MOCK_NC_RC=1 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_rc       "sshd never accepts on :22 → exit 1" 1
 assert_contains "ssh-timeout diagnostic names VM and IP" "$(cat "$ERR")" "app-a (10.0.0.9) did not accept SSH on :22 in time"
 assert_eq       "ssh probe retries its full 30 intervals" 30 "$(grep -c '^nc -z -G 3 10.0.0.9 22$' "$CALLS")"
+assert_contains "ssh-timeout diagnostic names this boot's run log" "$(cat "$ERR")" "app-a.run.log"
+
+# A boot this invocation did not start has no log of its own — the file is
+# truncated per `tart run`, so naming it would point at another boot.
+MOCK_NC_RC=1 runup running app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "already-running VM unreachable on :22 → exit 1" 1
+assert_absent   "already-running VM's timeout names no run log" "$(cat "$ERR")" "run.log"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -54,6 +54,10 @@ uv = "latest"
 node = "lts"
 
 [settings]
+# Corepack shims land after every node install, not just the global one, so a
+# project-pinned node gets the pnpm/yarn this stack's README advertises.
+node.corepack = true
+
 # Set to true while debugging tool installs.
 verbose = false
 
@@ -61,3 +65,8 @@ verbose = false
 # a cloned repo's config is executable (tool installs, env hooks on activation),
 # and the per-project prompt is the supply-chain gate this VM exists to keep.
 # This global file lives in mise's own default-trusted location.
+#
+# How wide that gate is depends on the mise release, and mise comes from a
+# floating repo at build time. On 2026.6.2 a config holding nothing but a
+# `[tools]` pin is refused until trusted (verified in a guest); read
+# `mise --version` in the image before relying on that.

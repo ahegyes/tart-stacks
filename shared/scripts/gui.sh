@@ -21,6 +21,7 @@ fi
 
 DE="${DE:?DE must be set when GUI=true}"
 gui_require_de "$DE"
+gui_require_cell "$DE"
 
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"
@@ -152,15 +153,21 @@ EOF
   gdm.service|gdm3.service)
     # GDM reads one GKeyFile whose path differs per family, and duplicate
     # [daemon] groups are a parse error — merge into the shipped section.
+    #
+    # WaylandEnable=false is how the autologin lands in the X11 session this layer
+    # asserts: sddm and lightdm below pin the session by name, GDM has no
+    # equivalent for an autologin and otherwise prefers Wayland — where the scale
+    # applier's XSETTINGS key has no effect. Disabling it leaves GDM only
+    # /usr/share/xsessions, which the assert above proved carries one.
     gdm_conf=""
     for f in /etc/gdm/custom.conf /etc/gdm3/daemon.conf /etc/gdm3/custom.conf; do
       [ -f "$f" ] && { gdm_conf="$f"; break; }
     done
     [ -n "$gdm_conf" ] || { echo "ERROR: no GDM config file found to bake autologin into." >&2; exit 1; }
     if grep -q '^\[daemon\]' "$gdm_conf"; then
-      sed -i "/^\[daemon\]/a AutomaticLoginEnable=True\nAutomaticLogin=${TARGET_USER}" "$gdm_conf"
+      sed -i "/^\[daemon\]/a WaylandEnable=false\nAutomaticLoginEnable=True\nAutomaticLogin=${TARGET_USER}" "$gdm_conf"
     else
-      printf '\n[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=%s\n' "${TARGET_USER}" >> "$gdm_conf"
+      printf '\n[daemon]\nWaylandEnable=false\nAutomaticLoginEnable=True\nAutomaticLogin=%s\n' "${TARGET_USER}" >> "$gdm_conf"
     fi
     ;;
   lightdm.service)
@@ -194,10 +201,7 @@ EOF
     # loudly instead of silently shipping an unpinned browser.
     kde_browser_desktop=""
     if pkg_installed "$(gui_browser_packages)"; then
-      case "$_DISTRO_FAMILY" in
-        dnf) kde_browser_desktop="org.mozilla.firefox.desktop" ;;
-        apt) kde_browser_desktop="firefox-esr.desktop" ;;
-      esac
+      kde_browser_desktop="$(gui_browser_desktop_id)"
     fi
     echo "==> Pinning the KDE panel launchers..."
     # Launcher pins are cosmetic, and the transform rewrites a template Plasma

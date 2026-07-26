@@ -73,10 +73,15 @@ usage() {
 # The screen a GUI clone is born with, absent an explicit --display.
 DEFAULT_DISPLAY_GEOMETRY="1920x1080"
 
-# need_value <flag> <argc> — usage error (64) for a space-form flag with no
-# value; an unguarded "$2" read dies as an opaque set -u error instead.
+# need_value <flag> <value> — usage error (64) unless the flag carries a
+# non-empty value. Call sites pass "${2:-}" for the space form, so a missing
+# argument reports the flag instead of dying as an opaque set -u error. Empty is
+# refused for a separate reason: every consumer below reads "" as "flag absent"
+# and drops it, so `--cpu=` would report success for a resource it never set.
+# Called as a statement: inside `CPU=$(need_value …)` the exit would leave the
+# subshell, not the script, and parsing would carry on with an empty value.
 need_value() {
-  [ "$2" -ge 2 ] && return 0
+  [ -n "$2" ] && return 0
   echo "$prog: option '$1' requires a value" >&2
   usage
   exit 64
@@ -85,18 +90,18 @@ need_value() {
 tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
 tart_need_cmd jq   "Install: brew install jq"
 
-CPU="" MEM="" DISK="" DISPLAY_GEOMETRY="" DISPLAY_GIVEN=0
+CPU="" MEM="" DISK="" DISPLAY_GEOMETRY=""
 positionals=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --cpu)         need_value "$1" $#; CPU="$2"; shift 2 ;;
-    --memory)      need_value "$1" $#; MEM="$2"; shift 2 ;;
-    --disk-size)   need_value "$1" $#; DISK="$2"; shift 2 ;;
-    --display)     need_value "$1" $#; DISPLAY_GEOMETRY="$2"; DISPLAY_GIVEN=1; shift 2 ;;
-    --cpu=*)       CPU="${1#*=}"; shift ;;
-    --memory=*)    MEM="${1#*=}"; shift ;;
-    --disk-size=*) DISK="${1#*=}"; shift ;;
-    --display=*)   DISPLAY_GEOMETRY="${1#*=}"; DISPLAY_GIVEN=1; shift ;;
+    --cpu)         need_value "$1" "${2:-}"; CPU="$2"; shift 2 ;;
+    --memory)      need_value "$1" "${2:-}"; MEM="$2"; shift 2 ;;
+    --disk-size)   need_value "$1" "${2:-}"; DISK="$2"; shift 2 ;;
+    --display)     need_value "$1" "${2:-}"; DISPLAY_GEOMETRY="$2"; shift 2 ;;
+    --cpu=*)       need_value "${1%%=*}" "${1#*=}"; CPU="${1#*=}"; shift ;;
+    --memory=*)    need_value "${1%%=*}" "${1#*=}"; MEM="${1#*=}"; shift ;;
+    --disk-size=*) need_value "${1%%=*}" "${1#*=}"; DISK="${1#*=}"; shift ;;
+    --display=*)   need_value "${1%%=*}" "${1#*=}"; DISPLAY_GEOMETRY="${1#*=}"; shift ;;
     -h|--help)     usage; exit 0 ;;
     -*)            echo "$prog: unknown option '$1'" >&2; usage; exit 64 ;;
     *)             positionals+=("$1"); shift ;;
@@ -118,13 +123,19 @@ if ! tart_valid_vm_name "$NAME"; then
   exit 1
 fi
 
-# 1b. Geometry must be WIDTHxHEIGHT. `tart set` runs after `tart clone`, so a
+# 1b. The base-image namespace is reserved. tart-up, tart-down and tart-rm all
+#     refuse a name of this shape, so creating one mints a VM the rest of the
+#     toolchain declines to start, stop or delete. It also keeps the collision
+#     message below honest: a name tart-rm would refuse cannot reach it.
+if tart_is_base_image "$NAME" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
+  echo "$prog: '$NAME' is a reserved base-image name (<distro>-base, <distro>-<stack>, or <distro>-<stack>-<de>) — those are clone sources, not dev VMs. Pick a project name instead." >&2
+  exit 1
+fi
+
+# 1c. Geometry must be WIDTHxHEIGHT. `tart set` runs after `tart clone`, so a
 #     malformed value rejected there would leave a created-but-unconfigured VM
 #     behind under `set -e`; catching it here costs nothing and never clones.
-#     Keyed on the flag being present, not on the value being non-empty: the
-#     default below substitutes for an empty one, so `--display=` would silently
-#     clone at 1920x1080 instead of reporting the geometry it was handed.
-if [ "$DISPLAY_GIVEN" -eq 1 ]; then
+if [ -n "$DISPLAY_GEOMETRY" ]; then
   case "$DISPLAY_GEOMETRY" in
     *[!0-9x]*|x*|*x|*x*x*) display_ok=0 ;;
     *x*)                   display_ok=1 ;;
@@ -190,7 +201,7 @@ if ! image_built "$STACK" "$DISTRO" "$DE"; then
 fi
 
 # Drop any stale known_hosts entry for this alias: a recreated VM gets a fresh
-# per-VM host key (tart-up regenerates it), which would otherwise trip accept-new.
+# per-VM host key (its first boot regenerates them), which would otherwise trip accept-new.
 # The scrub precedes the clone — the collision gate has proven the name free, so
 # any surviving pin is stale by definition, and a failure between clone and set
 # can't strand it.
@@ -212,6 +223,20 @@ set_args=()
 # makes both flags inert there rather than different.
 display="${DISPLAY_GEOMETRY:-${DE:+$DEFAULT_DISPLAY_GEOMETRY}}"
 [ -n "$display" ] && set_args+=(--display "$display" --display-refit)
-[ "${#set_args[@]}" -gt 0 ] && tart set "$NAME" "${set_args[@]}"
+if [ "${#set_args[@]}" -gt 0 ]; then
+  set_rc=0
+  tart set "$NAME" "${set_args[@]}" || set_rc=$?
+  if [ "$set_rc" -ne 0 ]; then
+    # The collision gate proved this name was free, so the clone above is ours
+    # and half-configured. Left behind, it makes the next attempt die at that
+    # same gate, with nothing in that message pointing back here. `tart delete`,
+    # not `tart-rm`: the VM never ran, and the alias's known_hosts pin was
+    # already scrubbed before the clone.
+    echo "$prog: 'tart set' failed for '$NAME' — deleting the clone it left behind." >&2
+    tart delete "$NAME" \
+      || echo "$prog: warning: '$NAME' is still there and half-configured — see tart's error above, then: tart delete $NAME" >&2
+    exit "$set_rc"
+  fi
+fi
 
 echo "$prog: created '$NAME' from $img — next: ssh tart-$NAME" >&2

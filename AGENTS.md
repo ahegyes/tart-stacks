@@ -13,16 +13,16 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 ├── .gitignore                          # Packer build artifacts + editor/OS noise (Tart images live in ~/.tart/, never here)
 ├── bin/
 │   ├── lib/
-│   │   ├── common.sh                   # Sourced leaf helpers, never on PATH: tart_need_cmd, tart_vm_state, tart_resolve_vm, tart_is_base_image, the vm-pattern pair (tart_pattern_matches/tart_resolve_pattern), tart_vm_alive (process liveness)
+│   │   ├── common.sh                   # Sourced leaf helpers, never on PATH: tart_need_cmd, tart_vm_state, tart_resolve_vm, tart_valid_vm_name, tart_ssh_has_sessiontype, tart_is_base_image, the vm-pattern pair (tart_pattern_matches/tart_resolve_pattern), tart_vm_alive (process liveness)
 │   │   └── config.sh                   # Single source of truth for the ~/.config/tart-stacks/* config paths (tart_config_dir/tart_config_path; TART_* env overrides)
 │   ├── tart-new                        # Creates a project VM by cloning a stack base image — `<name> <stack> <distro> [<de>]`, the optional <de> selecting a GUI flavor — with the validation `tart clone` lacks (stack exists, image built, no name collision) + `--cpu`/`--memory`/`--disk-size` pass-through; scrubs the stale host-key pin before cloning
 │   ├── tart-rm                         # Deletes a project VM with the teardown `tart delete` lacks: refuses base images, stops a running VM, scrubs the host-key pin — the destroy-side mirror of tart-new
 │   ├── tart-down                       # Stops a VM: resolves the `tart-` alias form, refuses base images, then `tart stop`
 │   ├── tart-ssh-sync                   # Regenerates ~/.ssh/config.d/tart-vms (`tart-*` wildcard + per-VM agent blocks from ssh-agents); validates the candidate with `ssh -G` before activation — a failing one lands at tart-vms.rejected, the live file untouched
-│   ├── tart-up                         # Starts a stopped VM (+ mounts + net-policy) and waits for SSH on :22; the hook the auto-start Match line fires on an interactive `ssh tart-<name>` (also runnable directly to pre-warm). Accepts bare or `tart-`-prefixed name
+│   ├── tart-up                         # Starts a stopped VM (+ mounts + net-policy) and waits for SSH on :22, then sets the guest hostname; the hook the auto-start Match line fires on an interactive `ssh tart-<name>` (also runnable directly to pre-warm). Accepts bare or `tart-`-prefixed name. Also owns the GUI boot plane: `--gui=headless|vnc|window` (or the per-VM `gui` config), the host backing-scale probe it applies in the guest before graphical.target, and the loopback-only classifier that fails a VNC activation closed
 ├── script/
-│   ├── setup                           # Host install run by `make setup` (symlinks the bin/ commands, zsh completion, idempotent SSH Include + catch-all check, forwards + mounts scaffold, closing tart-ssh-sync run); --uninstall is the inverse (keeps per-VM config)
-│   ├── smoke                           # End-to-end proof of a built image, run by `make smoke`: tart-new clone → tart-up boot → BatchMode ssh → hostname assert → tart-rm teardown (SMOKE_KEEP=1 keeps the VM; optional <de> arg smokes a GUI flavor). Boots a real VM — local only, never CI
+│   ├── setup                           # Host install run by `make setup` (symlinks the bin/ commands, zsh completion, idempotent SSH Include + placement check, forwards + mounts scaffold, closing tart-ssh-sync run); --uninstall is the inverse (keeps per-VM config)
+│   ├── smoke                           # End-to-end proof of a built image, run by `make smoke`: tart-new clone → tart-up boot → BatchMode ssh → hostname assert → image attestation (manifest + os-release vs the requested cell, the stack's toolchain over a non-interactive ssh, sshd -T's effective hardening) → VNC surface for a GUI flavor → tart-rm teardown (SMOKE_KEEP=1 keeps the VM). Boots a real VM — local only, never CI
 │   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
 ├── completions/
 │   └── _tart-new                       # Zsh completion for tart-new (stack + distro tokens, resource flags); installed by `make setup`
@@ -36,9 +36,11 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── display-scale.sh                # Guest display-scale applier tests: exact installed template instantiated per DE against temp homes; KDE config preservation/reset, GNOME private-dbus writes, XFCE XML preservation/reset
 │   ├── kde-panel.sh                    # Behavioral tests for kde-panel.sh against synthetic Plasma 5/6 templates (anchor counts, launcher gates, indentation, rerun stability)
 │   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
-│   ├── mise-lib.sh                     # Characterization tests for mise-lib's smoke_gate (argv-group grammar, word-split safety, hard-fail path)
+│   ├── mise-lib.sh                     # Characterization tests for mise-lib's two hard gates: smoke_gate (argv-group grammar, word-split safety, hard-fail path) and membership_gate (line-anchored `php -m` matching, incl. the warning-polluted stdout fixture)
 │   ├── gui-lib.sh                      # Characterization tests for gui-lib's DE × family selectors + the shared/desktops ↔ gui_require_de lockstep
-│   └── distro-lib.sh                   # Characterization test for distro-lib's _detect_family (os-release ID/ID_LIKE → dnf|apt) + pkg_install_optional skip recording
+│   ├── finalize.sh                     # Behavioral tests for 99-finalize.sh's anti-lockout key gate: every private-key format refused, a pubkey whose comment says PRIVATE KEY accepted, and both gates ordered ahead of the install and `passwd -l`
+│   ├── makefile.sh                     # Behavioral tests for the Makefile's check-* gates (the only thing between a mistyped selector and bootstrap's destructive base re-clone); invokes the gate targets only — never build/bootstrap/smoke
+│   └── distro-lib.sh                   # Characterization tests for distro-lib: _detect_family (os-release ID → dnf, ID/ID_LIKE → apt), pkg_install_optional skip recording (incl. the compat-Provides and virtual-package cases), and assert_mac_enforcing
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
 │   ├── distros                         # Supported distro tokens, one per line; consumed by the Makefile, tart-new, the bin/ base-image guard, and the CI matrix
 │   ├── desktops                        # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de), tart-new (+ its zsh completion), and the bin/ base-image guard
@@ -50,12 +52,12 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   │   ├── kde-panel.sh                # Install template for the KDE default-panel launcher pinning; gui.sh runs it for the kde DE only, standalone so its template transform is testable
 │   │   ├── distro-lib.sh               # Package-manager abstraction: pkg_install/pkg_refresh/repo_add_mise/install_zellij etc. for dnf (Fedora) and apt (Debian/Ubuntu) families
 │   │   ├── gui.sh                      # Optional desktop layer (no-op unless -var gui=true): DE + display manager + loopback-only VNC session unit; netpolicy-neutral by design (root)
-│   │   ├── gui-lib.sh                  # DE × family abstraction sourced by gui.sh: package sets, DM units, X session candidates, TigerVNC session-starter paths
+│   │   ├── gui-lib.sh                  # DE × family abstraction sourced by gui.sh: the gui_require_de/gui_require_cell gates (the latter refuses fedora × gnome — no X11 session from F43 on), package sets, DM units, X session candidates, TigerVNC session-starter paths
 │   │   ├── host-keys.sh                # Installs the first-boot oneshot that regenerates a clone's SSH host keys before its sshd ever starts (root)
-│   │   ├── mise-lib.sh                 # Shared helpers sourced by each stack's mise-install.sh (uploaded to /tmp; not run directly)
+│   │   ├── mise-lib.sh                 # Shared helpers sourced by each stack's mise-install.sh: mise_runtime_setup + the smoke_gate/membership_gate hard gates (uploaded to /tmp; not run directly)
 │   │   ├── mise.sh                     # mise install system-wide via repo_add_mise (uses COPR on dnf, signed apt repo on apt) (root)
 │   │   ├── terminfo.sh                 # Compile vendored xterm-ghostty terminfo, which ncurses-term omits (root)
-│   │   └── user-config.sh              # zsh default shell + bash mise activation + .zshenv PATH + virtiofs fstab entry; chowns the uploaded ~/.zshrc and ~/.config (root)
+│   │   └── user-config.sh              # zsh default shell + bash mise activation + .zshenv PATH (incl. mise's shims) + virtiofs fstab entry and its skip-when-shareless drop-in + the /run/tart tmpfiles.d entry for forwarded agent sockets; chowns the uploaded ~/.zshrc and ~/.config (root)
 │   └── files/
 │       ├── xterm-ghostty.terminfo      # Ghostty terminfo source; compiled by terminfo.sh into the image
 │       └── zshrc                       # In-VM shell baseline, incl. the zsh-side mise activation; uploaded to /home/admin/.zshrc
@@ -66,7 +68,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   │   │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
 │   │   ├── files/
 │   │   │   └── mise.toml               # In-VM global tool versions (pinned PHP patch + Node LTS)
-│   │   ├── packages.dnf                # Native build deps for dnf-family (Fedora/RHEL); one or more per line, comments stripped
+│   │   ├── packages.dnf                # Native build deps for dnf-family (Fedora); one or more per line, comments stripped
 │   │   ├── packages.apt                # Native build deps for apt-family (Debian/Ubuntu); equivalent capabilities to packages.dnf
 │   │   └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
 │   └── jvm/                            # JVM stack — same shape; Temurin 25 + Maven/Gradle/sbt/Kotlin/scala-cli + uv + Node
@@ -94,21 +96,21 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 
 The root `stack.pkr.hcl` (one parameterized template, built with `make build STACK=<name> DISTRO=<distro>` from the repo root) defines the provisioner chain combining shared and stack-specific scripts. `DISTRO` is mandatory — there is no default. The supported distros are listed in `shared/distros`. Only two scripts have hard ordering constraints — `shared/scripts/00-base.sh` must run first and `shared/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block; it sources `shared/scripts/distro-lib.sh` and reads the stack's `packages.<family>` file to install native build deps in a distro-agnostic way.
 
-`shared/scripts/distro-lib.sh` is the package-manager abstraction layer. It detects the package family from `/etc/os-release` (`dnf` for Fedora/RHEL, `apt` for Debian/Ubuntu) and exposes functions (`pkg_install`, `pkg_refresh`, `repo_add_mise`, `install_zellij`, etc.) that every provisioner uses. Provisioners do not call `dnf` or `apt` directly; the family-abstraction libraries (`distro-lib.sh`, `gui-lib.sh`) are where those calls live.
+`shared/scripts/distro-lib.sh` is the package-manager abstraction layer. It detects the package family from `/etc/os-release` (`dnf` for Fedora — ID only, since that branch is Fedora-specific; `apt` for Debian/Ubuntu and their derivatives, via ID_LIKE too) and exposes functions (`pkg_install`, `pkg_refresh`, `repo_add_mise`, `install_zellij`, etc.) that every provisioner uses. Provisioners do not call `dnf` or `apt` directly; the family-abstraction libraries (`distro-lib.sh`, `gui-lib.sh`) are where those calls live.
 
-Native build deps for each stack live in `stacks/<name>/packages.dnf` (Fedora/RHEL names) and `stacks/<name>/packages.apt` (Debian/Ubuntu names). Adding or removing a package there takes effect on the next rebuild for the relevant distro family.
+Native build deps for each stack live in `stacks/<name>/packages.dnf` (Fedora names) and `stacks/<name>/packages.apt` (Debian/Ubuntu names). Adding or removing a package there takes effect on the next rebuild for the relevant distro family.
 
 Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts share a provisioner block; user scripts share another), not by filename. The table below shows the execution order for the `php` stack.
 
 | Exec | Script | Privilege | Why this position |
 |---|---|---|---|
-| 1 | `shared/scripts/00-base.sh` | root | First (`00-` sentinel). System update, core dev packages, build toolchain, zellij — all via `distro-lib.sh`. Foundation for everything else |
+| 1 | `shared/scripts/00-base.sh` | root | First (`00-` sentinel). Asserts the guest's os-release ID matches the build's `DISTRO` before anything else — the image name and manifest are both written from `DISTRO`, so a wrong base would ship mislabeled. Then system update, core dev packages, build toolchain, zellij — all via `distro-lib.sh` |
 | 2 | `stacks/php/scripts/00-stack.sh` | root | Same root provisioner block as 00-base; reads `packages.<family>` and installs stack-specific native build deps via `pkg_install_optional`. Bundled with 00-base so the toolchain group and compile headers land in one transaction |
 | 3 | `shared/scripts/mise.sh` | root | Same root block; installs mise system-wide via `repo_add_mise` (COPR on dnf, signed apt repo on apt) |
 | 3b | `shared/scripts/gui.sh` | root | Own root block (needs GUI/DE as `environment_vars`); exits immediately unless `-var gui=true`. Desktop + display manager + loopback-only VNC unit per shared/gui/README.md — keep it netpolicy-neutral |
 | 4 | `shared/scripts/user-config.sh` | root | Root block between the file uploads and the user-level install: needs root (`chsh`, the virtiofs `/etc/fstab` entry) and the uploaded `~/.zshrc` + `~/.config` already on disk — it chowns both to the build user |
 | 5 | `shared/scripts/terminfo.sh` | root | Same root block as user-config; compiles the uploaded `xterm-ghostty.terminfo` into the system terminfo (`ncurses-term` omits it) |
-| 6 | `shared/scripts/host-keys.sh` | root | Same root block; installs + enables the first-boot oneshot that regenerates a clone's SSH host keys before sshd starts (marker-gated — shared with tart-up's host-side fallback for images built without it) |
+| 6 | `shared/scripts/host-keys.sh` | root | Same root block; installs + enables the first-boot oneshot that regenerates a clone's SSH host keys before sshd starts (marker-gated at `/etc/ssh/.tart-keys`; the image's oneshot is the only regeneration path — nothing on the host repeats it) |
 | 7 | `stacks/php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
 | 8 | `shared/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
 

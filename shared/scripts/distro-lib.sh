@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # distro-lib.sh — package-manager + MAC-posture primitives so the shared/ and
-# stacks/ provisioners never call dnf or apt directly. Families: dnf (Fedora/RHEL),
+# stacks/ provisioners never call dnf or apt directly. Families: dnf (Fedora),
 # apt (Debian/Ubuntu). SOURCED, not run — uploaded to /tmp and sourced at the top of
 # each system provisioner, like mise-lib.sh. An unrecognized distro is a hard error.
 
@@ -11,8 +11,15 @@ _detect_family() {
   local ID="" ID_LIKE="" f="${OS_RELEASE:-/etc/os-release}"
   # shellcheck disable=SC1090
   [ -r "$f" ] && . "$f"
+  # ID alone on the dnf side, ID_LIKE too on the apt side: the apt branch is
+  # portable apt/dpkg, so a Debian derivative works, while the dnf branch needs
+  # Fedora specifically (`rpm -E %fedora` for a COPR URL, `copr enable`, the
+  # `development-tools` group). Every enterprise rebuild declares
+  # ID_LIKE=fedora and would pass a laxer gate, then fail mid-build.
+  case " ${ID} " in
+    *" fedora "*) printf 'dnf'; return 0 ;;
+  esac
   case " ${ID} ${ID_LIKE} " in
-    *" fedora "*|*" rhel "*)   printf 'dnf' ;;
     *" debian "*|*" ubuntu "*) printf 'apt' ;;
     *) return 1 ;;
   esac
@@ -40,28 +47,35 @@ pkg_install() {
   esac
 }
 
+# pkg_installed <pkg> — 0 iff the capability named by <pkg> is present. Consumers
+# of the optional install path need this to tell "the family does not ship it"
+# from "it is here under a name I did not expect", which look identical from a
+# file probe. Resolved through Provides, the same way pkg_install_optional's
+# post-check is: an exact-name query reads a compat rename as absent, and the one
+# caller then silently drops a capability the image is carrying.
+pkg_installed() {
+  case "$_DISTRO_FAMILY" in
+    dnf) rpm -q --whatprovides "$1" >/dev/null 2>&1 ;;
+    apt) dpkg -s "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
 # pkg_install_optional <pkg…> — install what's available, warn on the rest
 # (dnf has --skip-unavailable; apt has no equivalent, so loop per package).
 # Skips are also appended to ${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped} so
 # 99-finalize can record them in /etc/tart-stacks-release. dnf's flag is silent
 # about WHICH packages it skipped, so that branch detects skips by post-checking
 # the rpm database; apt's per-package loop knows directly.
-# pkg_installed <pkg> — 0 iff the package is present. Consumers of the optional
-# install path need this to tell "the family does not ship it" from "it is here
-# under a name I did not expect", which look identical from a file probe.
-pkg_installed() {
-  case "$_DISTRO_FAMILY" in
-    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
-    apt) dpkg -s "$1" >/dev/null 2>&1 ;;
-  esac
-}
-
 pkg_install_optional() {
-  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p policy
+  local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p policy showpkg
   case "$_DISTRO_FAMILY" in
     dnf) dnf install -y --skip-unavailable "$@"
          for p in "$@"; do
-           rpm -q "$p" >/dev/null 2>&1 || {
+           # --whatprovides, not the bare name: dnf resolves a renamed package
+           # through a compat `Provides`, which installs the capability under a
+           # different rpm name. An exact-name post-check cannot see that and
+           # would record a capability the image is carrying as skipped.
+           rpm -q --whatprovides "$p" >/dev/null 2>&1 || {
              echo "distro-lib: optional package '$p' unavailable — skipped." >&2
              echo "$p" >> "$skipfile"
            }
@@ -77,9 +91,18 @@ pkg_install_optional() {
            # would reintroduce the same lie one layer up.
            policy=$(apt-cache policy "$p") || return 1
            if [ -z "$(printf '%s\n' "$policy" | awk '/Candidate:/ && $2 != "(none)" { print $2 }')" ]; then
-             echo "distro-lib: optional package '$p' unavailable — skipped." >&2
-             echo "$p" >> "$skipfile"
-             continue
+             # `Candidate: (none)` is also what a pure VIRTUAL package looks
+             # like — no version of its own, but providers that apt-get install
+             # resolves. So ask who provides it before believing the policy:
+             # with providers, let the install decide (one resolves; several is
+             # an ambiguous name in packages.apt, which must fail loudly rather
+             # than drop a capability the archive carries).
+             showpkg=$(apt-cache showpkg "$p") || return 1
+             if [ -z "$(printf '%s\n' "$showpkg" | awk '/^Reverse Provides:/ { f = 1; next } f && NF { print $1 }')" ]; then
+               echo "distro-lib: optional package '$p' unavailable — skipped." >&2
+               echo "$p" >> "$skipfile"
+               continue
+             fi
            fi
            # Propagate explicitly rather than leaning on the caller's `set -e`:
            # reaching here means the archive has it, so a failure now is a
@@ -174,12 +197,19 @@ install_zellij() {
 # assert_mac_enforcing — fail if the inherited mandatory-access-control layer isn't
 # actively enforcing: SELinux in Enforcing mode on dnf; AppArmor with >0 profiles in
 # enforce mode on apt (a loaded module alone wouldn't prove enforcement is happening).
+# Every path here fails closed, including the two that mean "cannot tell": a query
+# that errors, and a family with no branch. An assertion whose whole job is to fail
+# a build must not pass by falling off the end of a case.
 assert_mac_enforcing() {
+  local m n
   case "$_DISTRO_FAMILY" in
-    dnf) local m; m="$(getenforce 2>/dev/null || true)"
+    dnf) m="$(getenforce 2>/dev/null)" \
+           || { echo "ERROR: getenforce failed or is unavailable — cannot confirm SELinux is enforcing." >&2; return 1; }
          [ "$m" = "Enforcing" ] || { echo "ERROR: SELinux is '${m:-unavailable}', expected 'Enforcing' — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
-    apt) local n; n="$(aa-status --enforced 2>/dev/null || true)"
+    apt) n="$(aa-status --enforced 2>/dev/null)" \
+           || { echo "ERROR: 'aa-status --enforced' failed or is unavailable — cannot confirm AppArmor is enforcing." >&2; return 1; }
          case "$n" in ''|*[!0-9]*) n=0 ;; esac
          [ "$n" -gt 0 ] || { echo "ERROR: AppArmor has no enforce-mode profiles — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
+    *)   echo "ERROR: no MAC assertion for package family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
   esac
 }

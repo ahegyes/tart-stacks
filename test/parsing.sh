@@ -59,6 +59,7 @@ run_sync() { # forwards-file-content -> stdout of --dry-run (stderr -> $SYNC_ERR
   TART_FORWARDS="$WORK/forwards" \
   TART_SSH_AGENTS="$WORK/ssh-agents" \
   TART_SSH_CONFIG_D="$WORK/out" \
+  TART_VM_USER="${TART_VM_USER:-}" \
     bash "$BIN/tart-ssh-sync" --dry-run 2>"$SYNC_ERR"
 }
 run_sync_with_agents() { # ssh-agents-content -> stdout of --dry-run with empty forwards
@@ -77,6 +78,11 @@ echo "bin/tart-ssh-sync — forwards parser:"
 out=$(run_sync "")
 assert_contains  "common block uses the tart-* wildcard"       "$out" "Host tart-*"
 assert_contains  "common block sets User admin"                "$out" "User admin"
+# The build parameterizes the guest account (-var ssh_username); the host half
+# has to move with it or a non-default build is unreachable by name.
+out=$(TART_VM_USER=builder run_sync "")
+assert_contains  "TART_VM_USER overrides the login user"       "$out" "User builder"
+out=$(run_sync "")
 assert_contains  "common block sets SSH keepalive interval"    "$out" "ServerAliveInterval 15"
 assert_contains  "common block caps unanswered keepalives"     "$out" "ServerAliveCountMax 3"
 assert_contains  "ProxyCommand resolves the IP at connect time" "$out" "ProxyCommand /bin/sh -c"

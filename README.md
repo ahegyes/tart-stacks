@@ -13,7 +13,7 @@ Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images fo
 
 `<distro>` is the distribution token (e.g. `fedora`). `shared/distros` lists the supported values.
 
-All stacks share a common base: mise + zellij + standard dev utilities, wired through a distro-abstraction layer (`shared/scripts/distro-lib.sh`) that handles dnf (Fedora/RHEL) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
+All stacks share a common base: mise + zellij + standard dev utilities, wired through a distro-abstraction layer (`shared/scripts/distro-lib.sh`) that handles dnf (Fedora) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
 ## Repo layout
 
@@ -36,12 +36,11 @@ orientation.
 ## Prerequisites
 
 - **Apple Silicon Mac**, M1 or later. M3+ is only needed for nested virtualization (not enabled here).
-- **macOS 13 Ventura or later.**
+- **macOS 26 Tahoe or later.** The floor is set by OpenSSH: the generated SSH config's auto-start hook uses `Match sessiontype`, which needs **OpenSSH 10.0+** and which older ssh rejects as a fatal parse error — in an Included file, that takes down every `ssh` on the host. macOS 26 is the first release to ship it (26.5 has 10.2). `tart-ssh-sync` probes for the keyword and, failing it, writes nothing at all: on an older macOS you get no `tart-<name>` alias, no identity pinning and no connect-time IP resolution, so you reach a VM as `ssh admin@$(tart ip <name>)`. Building and running images works; the SSH ergonomics are what you lose.
 - **8 GB RAM minimum**; 16 GB+ recommended for multiple concurrent VMs.
 - [Tart](https://tart.run/): `brew install cirruslabs/cli/tart`
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
-- [jq](https://jqlang.org/): `brew install jq` — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`) parse `tart list --format json` with it. macOS 15+ ships a system jq, but the floor here is macOS 13, so install it explicitly.
-- **OpenSSH 10.0 or later** (`ssh -V`) — the generated SSH config's auto-start hook uses `Match sessiontype`, which older ssh rejects as a fatal parse error. Current macOS updates ship 10.x; `tart-ssh-sync` checks and refuses to write the config rather than break your ssh.
+- [jq](https://jqlang.org/) — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`) parse `tart list --format json` with it. macOS 15+ ships one at `/usr/bin/jq`, so this is normally already satisfied; `brew install jq` if `jq --version` fails.
 
 ## Setup
 
@@ -49,7 +48,7 @@ orientation.
 
 Every stack's Packer build authorizes a Secure-Enclave-backed SSH key for `admin@<vm>` and disables password auth — one key serves every VM cloned from any stack, and the private key never leaves the Enclave. Whether that key prompts for Touch ID on use is your call (see below).
 
-Use [Secretive](https://github.com/maxgoedjen/secretive) (macOS 13+):
+Use [Secretive](https://github.com/maxgoedjen/secretive):
 
 ```bash
 brew install --cask secretive
@@ -93,7 +92,9 @@ Two caveats: **(1)** "no auth while unlocked" is *no prompt*, not *no protection
 make setup
 ```
 
-Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm` and `tart-down` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below a `Host *` catch-all where it can't take effect), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+Idempotent — run once, re-run anytime. It symlinks `tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm` and `tart-down` into `~/.local/bin`, installs the zsh completion for `tart-new` (detecting your Homebrew prefix), adds `Include ~/.ssh/config.d/tart-vms` to the top of `~/.ssh/config` (and warns, without editing, if an existing one sits below the first `Host`/`Match` line, where ssh either skips it or lets that block outrank it), scaffolds `~/.config/tart-stacks/forwards` and `~/.config/tart-stacks/mounts`, and finishes by running `tart-ssh-sync` to generate `~/.ssh/config.d/tart-vms` (when Tart is installed — without it, setup warns and you run `tart-ssh-sync` yourself once Tart is in). Reload completion once afterward: `rm -f ~/.zcompdump* && exec zsh`.
+
+Stopping a VM is `tart-down <name>` — `tart stop` with the same gates as the rest: it accepts the bare or `tart-`-prefixed name and refuses stack base images. Several settings here (mounts, net-policy, gui mode) apply at boot, so `tart-down <name>` followed by a fresh `ssh tart-<name>` is how you pick up a change to them.
 
 `make uninstall` is the inverse: it removes only what verifiably points into this repo (the command symlinks, the completion, the exact Include block setup wrote, the generated config), keeps every per-VM config file (`forwards`, `mounts`, `gui`, `ssh-agents`, `netpolicy` — they carry your opt-ins).
 
@@ -169,7 +170,7 @@ build-vm /Users/me/code/project      # writable project dir, one VM
 build-vm cfg=/Users/me/.config/app   # renamed share -> /mnt/shared/cfg
 ```
 
-Provisioning adds the mount point and an `/etc/fstab` entry (`nofail`), so the share mounts automatically on boot — a boot with no share attached is a no-op. The equivalent by hand:
+Provisioning adds the mount point, an `/etc/fstab` entry, and a unit condition that skips the mount when the host attached no share — `nofail` alone would leave a shareless VM reporting `degraded` with a permanently failed unit. An unreadable `mounts` file makes `tart-up` refuse to start the VM rather than start it without its shares (the same fail-closed rule as the net-policy below). The equivalent by hand:
 
 ```bash
 sudo mkdir -p /mnt/shared
@@ -209,7 +210,7 @@ tart list                             # confirm fedora-php is present
 make build STACK=php DISTRO=fedora GUI=1 DE=kde    # builds fedora-php-kde (~+10 min, ~+2 GB)
 ```
 
-The image still boots headless by default; a boot opts into the desktop by starting `tart-stacks-vnc.service` (VNC on `127.0.0.1:5901`, reach it through `ssh -L 5901:127.0.0.1:5901 tart-<vm>`) or isolating `graphical.target` — the latter shows a window only when the VM was launched with one (plain `tart run <vm>`, or `tart-up` and the `ssh` auto-start when the VM's entry in the gui config selects `window` — they boot `--no-graphics` otherwise, and VNC works either way). Autologin is baked (the image locks the account password, so a greeter would be a dead end), and the desktop deliberately changes nothing about the network posture. The full contract — boot modes, VNC surface, support matrix (every distro × DE cell builds and is image-verified) — is [shared/gui/README.md](./shared/gui/README.md).
+The image still boots headless by default; a boot opts into the desktop by starting `tart-stacks-vnc.service` (VNC on `127.0.0.1:5901`, reach it through `ssh -L 5901:127.0.0.1:5901 tart-<vm>`) or isolating `graphical.target` — the latter shows a window only when the VM was launched with one (plain `tart run <vm>`, or `tart-up` and the `ssh` auto-start when the VM's entry in the gui config selects `window` — they boot `--no-graphics` otherwise, and VNC works either way). Autologin is baked (the image locks the account password, so a greeter would be a dead end), and the desktop deliberately changes nothing about the network posture. The full contract — boot modes, VNC surface, support matrix (every cell but fedora × gnome, which Fedora's Wayland-only GNOME rules out) — is [shared/gui/README.md](./shared/gui/README.md).
 
 ## Daily use
 
@@ -221,7 +222,7 @@ tart-new gui-a php fedora kde   # same, from the GUI flavor fedora-php-kde
 ssh tart-app-a                  # auto-starts the stopped clone and connects
 ```
 
-`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) and the virtual display geometry (`--display`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/gui/README.md](./shared/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
+`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses a name in the reserved base-image namespace (`<distro>-base`, `<distro>-<stack>`, `<distro>-<stack>-<de>` — those are clone sources, and the rest of the toolchain declines to touch them), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) and the virtual display geometry (`--display`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/gui/README.md](./shared/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
 
 **Per-clone tweaks** (no rebuild required):
 
@@ -244,7 +245,7 @@ za logs          # attach to (or create) "logs" session — independent
 
 Detach (leaving the session running) with `Ctrl-o` then `d`; reconnect later from any new `ssh tart-<name>` with `za <name>`. Run `za` with no args to list sessions. Don't use `Ctrl-q` to leave — it quits zellij and ends the session.
 
-**Multi-tab gotcha:** running plain `zellij` (without a name) in two host tabs attaches both to the same default session — both tabs mirror each other, useless for parallel work. Always use named sessions (`za <name>`) when working across tabs.
+**Name your sessions.** Plain `zellij` starts a *new* session each time, under a generated name (`glowing-donkey`, …), so a second tab does get its own state — but after a disconnect nothing points you back at the one you were in, and `zellij list-sessions` is all you have. `za <name>` attaches to that name or creates it, which is what makes a tab's work findable again.
 
 ### Iterate a stack base
 
@@ -309,7 +310,7 @@ nobody is talking to.
 
 1. Add the distro token (one line) to `shared/distros`.
 2. Confirm a `ghcr.io/cirruslabs/<distro>` Tart image exists (Cirrus must publish it).
-3. A distro in an existing family (dnf or apt) needs nothing further — `rocky` works with the steps above. A **new package family** is a code change, not configuration: add a branch to `shared/scripts/distro-lib.sh` exporting `_DISTRO_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `stack.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
+3. Another **apt-family** distro needs nothing further — the apt branch is portable apt/dpkg only, so a Debian or Ubuntu derivative works with the steps above. The dnf branch is **Fedora-specific** (`rpm -E %fedora` builds a Fedora-release COPR URL, plus `copr enable` and the `development-tools` group), so an enterprise rebuild such as `rocky` is refused by `_detect_family` rather than failed partway through a build. A **new package family** is a code change, not configuration: add a branch to `shared/scripts/distro-lib.sh` exporting `_DISTRO_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `stack.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
 4. For each stack that has native build deps, add the equivalent packages to `packages.<new-family>` in that stack's directory.
 5. CI picks up the new distro automatically (matrix is `stacks/*` × `shared/distros`).
 
@@ -318,7 +319,7 @@ nobody is talking to.
 - **`packer init` fails with "no plugins for github.com/cirruslabs/tart"** → upgrade Packer (`brew upgrade hashicorp/tap/packer`); the tart plugin requires Packer 1.7+.
 - **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip <distro>-base` (e.g. `tart ip fedora-base`). If blank, the VM didn't get DHCP — `tart stop <distro>-base; tart delete <distro>-base; make bootstrap DISTRO=<distro>` to start over.
 - **`ssh tart-<name>` triggers Touch ID more than once** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below a `Host *` catch-all), so ssh falls back to defaults and offers every key in Secretive's agent — one Touch ID prompt per key tried. The generated config pins just the Tart VM key (`IdentityFile` + `IdentitiesOnly yes`), so a match is what collapses it to a single prompt. Re-run `make setup` — it adds the `Include` line and warns if an existing one is misplaced. See [Setup §2](#2-install-the-host-tools).
-- **All SSH sessions to a VM drop at once / "broken pipe", and the VM loses forwarded host services** → the VM's `tart run` process crashed (often an Apple Virtualization.framework trap; check `~/Library/Logs/tart-stacks/<name>.run.log` and `~/Library/Logs/DiagnosticReports/tart-*.ips`). Bring it back with `tart stop <name>` then `ssh tart-<name>`, or have it restart itself — see [Keep a VM alive across crashes](#keep-a-vm-alive-across-crashes).
+- **All SSH sessions to a VM drop at once / "broken pipe", and the VM loses forwarded host services** → the VM's `tart run` process crashed (often an Apple Virtualization.framework trap; check `~/Library/Logs/tart-stacks/<name>.run.log` and `~/Library/Logs/DiagnosticReports/tart-*.ips`). Bring it back with `tart stop <name>` then `ssh tart-<name>`. Recovery is manual by design — see [When a VM crashes](#when-a-vm-crashes).
 
 Stack-specific troubleshooting lives in each stack's README.
 

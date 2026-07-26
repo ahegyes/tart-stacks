@@ -60,11 +60,41 @@ assert_eq "apt agent"     "spice-vdagent"                                       
 assert_eq "dnf browser"   "firefox"                                                 "$(with_family dnf gui_browser_packages)"
 assert_eq "apt browser"   "firefox-esr"                                             "$(with_family apt gui_browser_packages)"
 
+# The browser's package name and its desktop-file id are one fact per family:
+# gui.sh decides whether to pin a launcher from the package, then names the file
+# from the id, and kde-panel.sh fails the build if that file is absent. Pin both
+# halves so a rename cannot move one without the other.
+echo "gui-lib — the browser package and its desktop id agree per family:"
+assert_eq "dnf browser desktop id" "org.mozilla.firefox.desktop" "$(with_family dnf gui_browser_desktop_id)"
+assert_eq "apt browser desktop id" "firefox-esr.desktop"         "$(with_family apt gui_browser_desktop_id)"
+for fam in dnf apt; do
+  pkg="$(with_family "$fam" gui_browser_packages)"
+  id="$(with_family "$fam" gui_browser_desktop_id)"
+  # The id is not derivable from the package name (dnf reverses the domain), so
+  # the check is that both are populated and the id is a .desktop file.
+  case "$id" in *.desktop) ok "$fam browser id is a desktop file ($id)" ;; *) bad "$fam browser id is a desktop file" "want » *.desktop « got » $id «" ;; esac
+  # gui.sh passes this list accessor's output to pkg_installed as ONE argument,
+  # which is only correct while every branch returns a single token.
+  assert_eq "$fam browser package list is a single token" 1 "$(printf '%s' "$pkg" | wc -w | tr -d ' ')"
+done
+
 echo "gui-lib — gui_require_de gate:"
 with_family dnf gui_require_de kde; rc=$?
 assert_eq "kde accepted" 0 "$rc"
 with_family dnf gui_require_de cinnamon; rc=$?
 if [ "$rc" -ne 0 ]; then ok "unknown de hard-fails"; else bad "unknown de hard-fails" "want » rc!=0 « got » rc=0 «"; fi
+
+# gui_require_de accepts a DE this layer supports somewhere; gui_require_cell is
+# the narrower gate on the family x DE pairing. Fedora ships no GNOME X11 session
+# from F43 on and the layer is Xvnc-based, so that one cell has no session to bake
+# — refused by name rather than left to fail as a missing package.
+echo "gui-lib — gui_require_cell:"
+with_family dnf gui_require_cell gnome; rc=$?
+if [ "$rc" -ne 0 ]; then ok "dnf/gnome refused"; else bad "dnf/gnome refused" "want rc!=0 got rc=0"; fi
+for cell in dnf/kde dnf/xfce apt/kde apt/gnome apt/xfce; do
+  with_family "${cell%%/*}" gui_require_cell "${cell##*/}"; rc=$?
+  assert_eq "$cell accepted" 0 "$rc"
+done
 
 # The lib's supported set and shared/desktops must not drift apart: the
 # Makefile validates against the file, the lib is the in-VM backstop.

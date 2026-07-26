@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-name list-stacks check-distro check-gui check-de
+.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-token list-stacks check-distro check-gui check-de
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php DISTRO=fedora`.
 STACK ?=
@@ -62,33 +62,30 @@ uninstall:
 test:
 	@"$(CURDIR)/script/test"
 
-# Validate that STACK is set and the requested stack directory exists.
-# build/rebuild depend on this.
-check-stack:
+# STACK is set and is a bare lowercase-alphanumeric token — the shared gate
+# behind check-stack (an existing stack) and scaffold (a new one). The token
+# rule is load-bearing for scaffold, which interpolates STACK into mkdir paths
+# and a sed replacement: a '/' or '&' would mkdir a nested tree or corrupt every
+# stamped file, and the half-scaffolded dir then blocks reruns and gets
+# discovered by CI as a stack. build needs it too — `STACK=.` satisfies the
+# directory test below and reaches bootstrap's destructive base re-clone before
+# Packer rejects the token.
+check-stack-token:
 	@if [ -z "$(STACK)" ]; then \
-		echo "ERROR: STACK is required (e.g., make build STACK=php DISTRO=fedora). Available stacks:" >&2; \
+		echo "ERROR: STACK is required (e.g., make build STACK=php DISTRO=fedora, make scaffold STACK=python). Available stacks:" >&2; \
 		ls -1 stacks 2>/dev/null | sed 's/^/  /' >&2 || echo "  (none)" >&2; \
-		exit 1; \
-	fi
-	@if [ ! -d "$(STACK_DIR)" ]; then \
-		echo "ERROR: stack '$(STACK)' not found at $(STACK_DIR)/. Available stacks:" >&2; \
-		ls -1 stacks 2>/dev/null | sed 's/^/  /' >&2 || echo "  (none)" >&2; \
-		exit 1; \
-	fi
-
-# Like check-stack but for a NEW stack: STACK must be set and a bare
-# lowercase-alphanumeric token; the dir must NOT exist. The token gate is
-# load-bearing: scaffold interpolates STACK into mkdir paths and a sed
-# replacement, so a '/' or '&' would mkdir a nested tree or corrupt every
-# stamped file — and the half-scaffolded dir then blocks reruns and gets
-# discovered by CI as a stack.
-check-stack-name:
-	@if [ -z "$(STACK)" ]; then \
-		echo "ERROR: STACK is required (e.g., make scaffold STACK=python)." >&2; \
 		exit 1; \
 	fi
 	@if ! printf '%s\n' "$(STACK)" | grep -qE '^[a-z0-9]+$$'; then \
-		echo "ERROR: STACK must be a lowercase alphanumeric token, got '$(STACK)' (e.g., make scaffold STACK=python)." >&2; \
+		echo "ERROR: STACK must be a lowercase alphanumeric token, got '$(STACK)' (e.g., make build STACK=php DISTRO=fedora)." >&2; \
+		exit 1; \
+	fi
+
+# The requested stack directory exists. build/rebuild/smoke depend on this.
+check-stack: check-stack-token
+	@if [ ! -d "$(STACK_DIR)" ]; then \
+		echo "ERROR: stack '$(STACK)' not found at $(STACK_DIR)/. Available stacks:" >&2; \
+		ls -1 stacks 2>/dev/null | sed 's/^/  /' >&2 || echo "  (none)" >&2; \
 		exit 1; \
 	fi
 
@@ -165,7 +162,7 @@ smoke: check-stack check-distro check-gui check-de
 # Scaffold a new stack from templates/stack/ (substitutes __STACK__). Refuses to
 # clobber an existing dir; the root template + dynamic CI then cover it with no
 # further wiring.
-scaffold: check-stack-name
+scaffold: check-stack-token
 	@if [ -d "$(STACK_DIR)" ]; then \
 		echo "ERROR: $(STACK_DIR)/ already exists — refusing to overwrite." >&2; \
 		exit 1; \

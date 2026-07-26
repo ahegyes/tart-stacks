@@ -16,6 +16,17 @@ gui_require_de() {
   esac
 }
 
+# gui_require_cell <de> — hard-fail on a family x DE combination this layer cannot
+# serve, ahead of any package work. Separate from gui_require_de: the DE itself is
+# supported, the pairing is not.
+gui_require_cell() {
+  case "$_DISTRO_FAMILY/$1" in
+    dnf/gnome)
+      echo "gui-lib: the fedora x gnome cell is not supported. Fedora ships no GNOME X11 session from F43 on (FESCo WaylandOnlyGNOME), and this layer is Xvnc-based, so there is no session to bake. Use kde or xfce on fedora, or gnome on ubuntu/debian." >&2
+      exit 1 ;;
+  esac
+}
+
 # gui_pkg_install <pkg…> — like pkg_install but WITH weak deps / Recommends:
 # DE metapackages express most of a working desktop (fonts, greeters, session
 # helpers) through Recommends, so --no-install-recommends here would bake a
@@ -101,6 +112,18 @@ gui_browser_packages() {
   esac
 }
 
+# gui_browser_desktop_id — the desktop-file id of the browser gui_browser_packages
+# installs, used by the KDE launcher pinning. It lives beside that package name
+# because the two are one fact per family: a rename that moved only one of them
+# leaves kde-panel.sh pinning a launcher for a file the image does not have, which
+# it refuses to do — and gui.sh downgrades that refusal to the stock Plasma panel.
+gui_browser_desktop_id() {
+  case "$_DISTRO_FAMILY" in
+    dnf) echo "org.mozilla.firefox.desktop" ;;
+    apt) echo "firefox-esr.desktop" ;;
+  esac
+}
+
 # gui_scale_packages <de> — runtime needed by the pre-session scale applier.
 # KDE and GNOME already carry their native config tools with the desktop;
 # XFCE's XML must be changed structurally while xfconfd is not running.
@@ -136,9 +159,10 @@ gui_dm_unit() {
 # gui_session_candidates <de> — X session names (basenames under
 # /usr/share/xsessions) to try, most specific first. gui.sh resolves the first
 # one present AFTER the package install and hard-fails if none is — the VNC
-# layer is Xvnc-based, so a cell whose DE ships no X11 session (e.g. Plasma 6
-# on Debian 13, Wayland-only) is unsupported and must fail the build, not bake
-# a desktop that can't start.
+# layer is Xvnc-based, so a cell whose DE ships only a Wayland session is
+# unsupported and must fail the build, not bake a desktop that can't start.
+# Resolution reads /usr/share/xsessions, not package names — the session file is
+# what a cell actually needs, and the two do not track each other.
 gui_session_candidates() {
   case "$1" in
     kde)   echo "plasmax11 plasma" ;; # Plasma 6 splits X11 out (plasmax11); Plasma 5's plasma IS X11

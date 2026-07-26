@@ -49,8 +49,11 @@ tart_resolve_vm() {
 # separators, `*` is the wildcard). Letters/digits/_/-, alphanumeric head.
 # The `tart-` prefix itself is reserved for SSH aliases; alias-aware commands
 # may strip it before resolving the bare stored VM name. Pure-bash glob
-# classes: byte-exact in any locale, no subprocess per check.
+# classes: no subprocess per check. LC_ALL=C is what makes the ranges
+# byte-exact — under a UTF-8 collation `[A-Za-z0-9_-]` also admits accented
+# letters, so `café` would pass here and then fail as a hostname downstream.
 tart_valid_vm_name() {
+  local LC_ALL=C
   case "$1" in
     ''|*[!A-Za-z0-9_-]*|[_-]*|tart-*) return 1 ;;
   esac
