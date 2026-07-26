@@ -204,9 +204,9 @@ desktop that can't start.
 
 | DE | fedora | ubuntu | debian | X session (`/usr/share/xsessions/`) |
 |---|---|---|---|---|
-| `kde` (default) | ✅ image verified | ✅ image verified | ✅ image verified | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
+| `kde` (default) | ⏳ re-verify | ⏳ re-verify | ⏳ re-verify | `plasmax11` (Plasma 6) / `plasma` (Plasma 5) |
 | `gnome` | ❌ **refused** | ✅ image verified | ✅ image verified | `gnome-xorg` / `gnome` |
-| `xfce` | ✅ image verified | ✅ image verified | ✅ image verified | `xfce` |
+| `xfce` | ⏳ re-verify | ⏳ re-verify | ⏳ re-verify | `xfce` |
 
 ❌ **fedora × gnome is refused by `gui_require_cell`, before any package work.**
 Fedora ships no GNOME X11 session from F43 on ([FESCo
@@ -216,13 +216,22 @@ this layer is Xvnc-based — there is no session to bake. Refusing by name keeps
 that a one-line answer rather than a package-not-found failure partway through a
 40-minute build. Use `kde` or `xfce` on fedora, or `gnome` on ubuntu/debian.
 
+⏳ **re-verify** = the cell was image-verified on an earlier revision, but the
+shared guest provisioning has changed since (the `.zshenv` PATH, the mount
+condition, the tmpfiles.d entry, the browser desktop-id selector) and it has not
+been rebuilt and re-booted on this one. Per the rule at the end of this section,
+that status does not carry — treat it as unverified until rebuilt.
+
 ✅ image verified = a full `GUI=1` build was booted and its desktop contract
 asserted in a live session (the status is per source revision, not permanent — a
 change to this layer retires it): the applied scale (`Xft.dpi` 96 → 192 → unscaled),
 the manifest's baked `gui:` line, the browser — or, on ubuntu, the recorded
-`firefox-esr` gap — and for KDE the panel's pinned launchers. ⚠️ = package sets
-and session names were checked against the live distro repos, but no
-end-to-end boot has been run — the build's own asserts are the gate.
+`firefox-esr` gap — and for KDE the panel's pinned launchers. The two ✅ cells
+above were re-earned on this revision: `WaylandEnable=false` present in the gdm
+`[daemon]` block, the autologin session reporting `Type=x11` on a real Xorg, and
+`Xft.dpi: 192` after the applier ran in `tart-up`'s order. ⚠️ = package sets and
+session names were checked against the live distro repos, but no end-to-end boot
+has been run — the build's own asserts are the gate.
 Re-verify a cell after building it the first time, and after a change to the
 contract it vouches for — a status earned before a new code path does not cover
 it.

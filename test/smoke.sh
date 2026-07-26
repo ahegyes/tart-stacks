@@ -151,7 +151,8 @@ assert_contains "de reaches tart-new"        "$(cat "$CALLS")" "tart-new smoke-v
 assert_contains "GUI smoke starts the VNC unit" "$(cat "$CALLS")" "tart-stacks-vnc.service"
 assert_contains "GUI smoke probes loopback 5901" "$(cat "$CALLS")" "/dev/tcp/127.0.0.1/5901"
 assert_contains "verdict names the flavor"   "$(cat "$ERR")" "fedora-php-kde"
-assert_contains "verdict includes the vnc stage" "$(cat "$ERR")" "hostname, vnc"
+assert_contains "verdict includes the vnc stage" "$(cat "$ERR")" "sshd posture, vnc"
+assert_contains "verdict names the attestation stages" "$(cat "$ERR")" "manifest, os-release, toolchain"
 
 # non-GUI run never touches the VNC surface
 run_smoke php fedora

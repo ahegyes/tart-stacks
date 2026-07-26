@@ -187,4 +187,4 @@ if [ -n "$DE" ]; then
   done <<< "$listeners"
 fi
 
-echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, ssh, hostname${DE:+, vnc}." >&2
+echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, ssh, hostname, manifest, os-release, toolchain, sshd posture${DE:+, vnc}." >&2
