@@ -28,7 +28,7 @@ Every stack inherits the same hardened SSH posture from `shared/scripts/99-final
 The base images rely on the following upstream sources for their content. Vulnerabilities in these should be reported upstream, not here:
 
 - `ghcr.io/cirruslabs/<distro>:latest` (fedora/ubuntu/debian per `shared/distros`) — the base distro images; built from [`cirruslabs/linux-image-templates`](https://github.com/cirruslabs/linux-image-templates).
-  - Included in those images, and required by this repo rather than installed by it: [`tart-guest-agent`](https://github.com/openai/tart-guest-agent), the in-guest daemon that answers the host's `tart exec` calls over vsock. It runs as a service inside every VM built here and executes what the host asks of it, so its version is whatever the base image shipped — `shared/scripts/00-base.sh` asserts it is present and enabled, and `script/smoke` proves the channel answers.
+  - Included in those images, and required by this repo rather than installed by it: [`tart-guest-agent`](https://github.com/openai/tart-guest-agent), the in-guest daemon that answers the host's `tart exec` calls over vsock. It runs as a service inside every VM built here and executes what the host asks of it, so its version is whatever the base image shipped — `shared/scripts/00-base.sh` asserts its unit is enabled and running, and `script/smoke` proves the channel answers.
 
 dnf-family (Fedora) sources:
 - `copr.fedorainfracloud.org/coprs/jdxcode/mise` — the [mise](https://mise.jdx.dev/) COPR.

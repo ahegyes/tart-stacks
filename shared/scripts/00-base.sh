@@ -35,9 +35,11 @@ fi
 agent_state=$(systemctl is-enabled tart-guest-agent.service 2>/dev/null || true)
 if [ "$agent_state" != enabled ]; then
   echo "ERROR: this base image has no enabled tart-guest-agent.service (systemctl reports" >&2
-  echo "       '${agent_state:-not-found}'). 'tart exec' is a host->guest vsock call served by that agent" >&2
-  echo "       inside the guest; the host's own tart install cannot supply it. Install and enable" >&2
-  echo "       it in the base image, then re-run 'make bootstrap DISTRO=${DISTRO:-<distro>}'." >&2
+  echo "       '${agent_state:-unreadable}'). 'tart exec' is a host->guest vsock call served by that" >&2
+  echo "       agent inside the guest; the host's own tart install cannot supply it. Either" >&2
+  echo "       re-pull a base that carries one ('make bootstrap DISTRO=${DISTRO:-<distro>}') OR install and" >&2
+  echo "       enable it in the base image and run packer build directly — bootstrap re-clones" >&2
+  echo "       the base from the registry, discarding anything installed into it by hand." >&2
   exit 1
 fi
 # Enabled only promises systemd will try to start it. An agent that dies during

@@ -98,8 +98,11 @@ printf '%s: ok   %-22s %s\n' "$prog" "tart exec (sudo)" "passwordless" >&2
 # Read the guest's own name over the same channel. A failure here is the
 # `hostname` command in the guest, not the channel — which the probe above has
 # already proven — so it gets its own verdict.
-if ! agent_reply=$(tart exec "$VM" hostname -s 2>&1); then
-  echo "$prog: FAIL — 'hostname -s' failed inside '$VM': ${agent_reply:-no output}. The guest agent answers and can escalate, so this is the guest's own hostname command, not the vsock channel." >&2
+# Stderr is dropped rather than merged: this value is compared for equality
+# below, and anything the guest wrote to stderr while still exiting 0 would
+# corrupt that into a bogus "the guest calls itself ..." verdict.
+if ! agent_reply=$(tart exec "$VM" hostname -s 2>/dev/null); then
+  echo "$prog: FAIL — 'hostname -s' failed inside '$VM'. The guest agent answers and can escalate, so this is the guest's own hostname command, not the vsock channel — run 'tart exec $VM hostname -s' to see what it says." >&2
   exit 1
 fi
 

@@ -23,17 +23,21 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 # reimplemented. A copy of the logic here would stay green while a shipped
 # branch lost its `exit 1`. `set -euo pipefail` leads so the block runs under
 # the same options 00-base.sh gives it.
-# The stop anchor is the first real work in the script rather than a count of
-# `fi` lines: counting would run past the end the moment a branch is added or
-# removed, dragging in package installs and failing every case for the wrong
-# reason instead of reporting the branch that went missing.
+# The window is bounded by landmarks, not by counting: it opens after the
+# os-release gate's `fi` and closes at the first real work in the script. Both
+# ends matter. Counting `fi` lines would run past the end the moment a branch is
+# added or removed, dragging package installs into the fixture and failing every
+# case for the wrong reason. Anchoring the start on `agent_state=` instead would
+# make any refusal added ABOVE that line invisible here — the whole
+# substrate-assertion region belongs in the window, not just today's first line
+# of it.
 GATE="$WORK/gate.sh"
 {
   printf 'set -euo pipefail\n'
   awk '
-    /^agent_state=/  { emit=1 }
-    /^echo "==> /    { if (emit) exit }
-    emit             { print }
+    /^fi$/        { if (!open) { open = 1; next } }
+    /^echo "==> / { if (open) exit }
+    open          { print }
   ' "$BASE"
 } > "$GATE"
 
@@ -66,9 +70,9 @@ case "$1" in
   is-enabled)
     printf '%s\n' "${MOCK_IS_ENABLED-enabled}"
     case "${MOCK_IS_ENABLED-enabled}" in
-      enabled|enabled-runtime|static|indirect|generated|transient|alias) exit 0 ;;
-      not-found)                                                        exit 4 ;;
-      *)                                                                exit 1 ;;
+      enabled|enabled-runtime|static|indirect|generated|alias) exit 0 ;;
+      not-found)                                               exit 4 ;;
+      *)                                                       exit 1 ;;
     esac ;;
   is-active) exit "${MOCK_IS_ACTIVE_RC:-0}" ;;
   *) exit 4 ;;
@@ -113,6 +117,12 @@ assert_contains "absent: reports the state it saw"    "$GATE_ERR" "not-found"
 assert_contains "absent: says the channel is vsock"   "$GATE_ERR" "vsock"
 assert_contains "absent: rules out a host-side fix"   "$GATE_ERR" "host's own tart install cannot supply it"
 assert_contains "absent: gives a runnable next step"  "$GATE_ERR" "make bootstrap DISTRO="
+# `make bootstrap` deletes the base image and re-clones it from the registry, so
+# offering it as the step AFTER hand-installing the agent would send the reader
+# in a loop that destroys the fix each time round. It has to read as the
+# alternative to patching, and say what it discards.
+assert_contains "absent: bootstrap is the alternative, not the sequel" "$GATE_ERR" "OR install and"
+assert_contains "absent: warns bootstrap discards a patched base" "$GATE_ERR" "discarding anything installed into it by hand"
 
 gate_verdict disabled 0 >/dev/null
 assert_contains "disabled: reports the state it saw"  "$GATE_ERR" "disabled"
