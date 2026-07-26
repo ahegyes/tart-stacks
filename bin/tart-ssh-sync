@@ -39,6 +39,7 @@
 #   TART_SSH_CONFIG_D    output file.              Default: $HOME/.ssh/config.d/tart-vms
 #   TART_IDENTITY_AGENT  Secretive agent socket.   Default: $HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 #   TART_NC_BIN          nc baked into the ProxyCommand. Default: /usr/bin/nc
+#   TART_VM_USER         in-VM login user.         Default: admin (match the build's -var ssh_username)
 
 set -euo pipefail
 
@@ -54,6 +55,9 @@ OUTPUT="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
 SSH_AGENTS_CONFIG=$(tart_config_path ssh-agents)
 FORWARDS_CONFIG=$(tart_config_path forwards)
 IDENTITY_AGENT="${TART_IDENTITY_AGENT:-$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh}"
+# The build parameterizes the guest account (`-var ssh_username`); this is the
+# host half of the same knob, so a non-default build stays reachable by name.
+VM_USER="${TART_VM_USER:-admin}"
 
 usage() {
   echo "usage: $prog [--dry-run]" >&2
@@ -184,7 +188,7 @@ emit() {
 
   echo "# Common settings — every Tart dev VM (present or future)."
   echo "Host tart-*"
-  echo "  User admin"
+  echo "  User $VM_USER"
   echo "  IdentityAgent $IDENTITY_AGENT"
   echo "  IdentityFile ~/.ssh/tart-vm.pub"
   echo "  IdentitiesOnly yes"
