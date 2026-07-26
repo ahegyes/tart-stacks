@@ -22,19 +22,29 @@ fi
 
 # The other thing inherited from the base rather than built here: the agent that
 # serves `tart exec`. That is a host->guest vsock RPC, NOT ssh — and ssh is all
-# Packer and the toolchain checks ever use, so a base without the agent produces
-# an image that builds clean, smokes its toolchain clean, and then fails the
-# first time tart-up sets a guest hostname or activates a desktop (a hard exit
-# for --gui). Nothing downstream of here would notice, so check the substrate
-# while it still costs a minute. Enabled, not merely installed: a clone's first
-# boot is where it has to come up.
-if ! command -v tart-guest-agent >/dev/null 2>&1 ||
-   ! systemctl is-enabled --quiet tart-guest-agent.service 2>/dev/null; then
-  echo "ERROR: this base image has no enabled tart-guest-agent.service." >&2
-  echo "       'tart exec' is a host->guest vsock call served by that agent inside the guest;" >&2
-  echo "       the host's own tart install cannot supply it. Without it, tart-up cannot set a" >&2
-  echo "       clone's hostname and every GUI activation fails, yet this build would succeed." >&2
-  echo "       Install tart-guest-agent in the base image before building a stack on it." >&2
+# this build ever speaks, so a base whose agent does not work builds clean and
+# then leaves every clone on the base image's hostname (tart-up only warns) and
+# hard-fails any GUI activation. Two failing states with two different fixes, so
+# they are reported apart.
+#
+# The literal string `enabled` is the test rather than is-enabled's exit status,
+# which is also 0 for `static` and `enabled-runtime` — neither of which survives
+# into a clone's first boot, the only boot that matters for an image.
+agent_state=$(systemctl is-enabled tart-guest-agent.service 2>/dev/null || true)
+if [ "$agent_state" != enabled ]; then
+  echo "ERROR: this base image has no enabled tart-guest-agent.service (systemctl reports" >&2
+  echo "       '${agent_state:-not-found}'). 'tart exec' is a host->guest vsock call served by that agent" >&2
+  echo "       inside the guest; the host's own tart install cannot supply it. Install and enable" >&2
+  echo "       it in the base image, then re-run 'make bootstrap DISTRO=${DISTRO:-<distro>}'." >&2
+  exit 1
+fi
+# Enabled only promises systemd will try to start it. An agent that dies during
+# startup in this guest dies the same way on every clone of the image.
+if ! systemctl is-active --quiet tart-guest-agent.service; then
+  echo "ERROR: tart-guest-agent.service is enabled but not running in this guest." >&2
+  echo "       It answers the host's 'tart exec' calls over vsock, so tart-up cannot set a" >&2
+  echo "       clone's hostname and no GUI mode can start. Inspect 'systemctl status" >&2
+  echo "       tart-guest-agent' and its journal in the base image." >&2
   exit 1
 fi
 

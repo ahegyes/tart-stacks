@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Characterization tests for script/smoke — no VM is cloned, booted, sshed, or
 # deleted: tart-new/tart-up/tart-rm are mocks in a dir that TART_SMOKE_BIN
-# (script/smoke's helper-resolution seam) points at, and ssh is the same dir
-# PATH-shimmed; every call records to $CALLS. MOCK_SSH_HOSTNAME fakes the
-# guest's answer, MOCK_TART_NEW_RC fakes a create failure (e.g. a name
+# (script/smoke's helper-resolution seam) points at, and ssh and tart are the
+# same dir PATH-shimmed; every call records to $CALLS. MOCK_SSH_HOSTNAME fakes
+# the guest's answer, MOCK_TART_NEW_RC fakes a create failure (e.g. a name
 # collision). Covers arity, the happy-path stage ordering (create → boot →
-# guest-agent probe → BatchMode ssh → teardown), the hostname-mismatch failure with the EXIT-trap
-# teardown still firing, SMOKE_KEEP=1 skipping teardown, and a tart-new
-# failure propagating with no later stage run (and no teardown — a colliding
-# VM is not ours to delete). Plain bash, no framework. Run via script/test or
-# directly.
+# guest-agent probes → BatchMode ssh → teardown), the hostname-mismatch failure
+# with the EXIT-trap teardown still firing, the three guest-agent verdicts (dead
+# channel, no escalation, hostname that never landed) and their ordering,
+# SMOKE_KEEP=1 skipping teardown, and a tart-new failure propagating with no
+# later stage run (and no teardown — a colliding VM is not ours to delete).
+# Plain bash, no framework. Run via script/test or directly.
 set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
@@ -113,7 +114,9 @@ case "$*" in
       echo "Failed to connect to the VM using its control socket, is the Tart Guest Agent running?" >&2
       exit "${MOCK_TART_EXEC_RC}"
     fi
-    printf '%s\n' "${MOCK_TART_EXEC_HOSTNAME:-smoke-vm}" ;;
+    # `-` not `:-`: an empty answer is a state the probe must reject, so it has
+    # to survive being set deliberately.
+    printf '%s\n' "${MOCK_TART_EXEC_HOSTNAME-smoke-vm}" ;;
 esac
 M
 chmod +x "$MOCKBIN/tart-new" "$MOCKBIN/tart-up" "$MOCKBIN/tart-rm" "$MOCKBIN/ssh" "$MOCKBIN/tart"
@@ -142,6 +145,7 @@ streamlocalbindunlink yes}" \
     MOCK_SSHD_T_RC="${MOCK_SSHD_T_RC-0}" \
     MOCK_TART_EXEC_RC="${MOCK_TART_EXEC_RC-0}" \
     MOCK_TART_SUDO_RC="${MOCK_TART_SUDO_RC-0}" \
+    MOCK_TART_EXEC_HOSTNAME="${MOCK_TART_EXEC_HOSTNAME-smoke-vm}" \
     MOCK_TOOL_RC="${MOCK_TOOL_RC-0}" \
     SMOKE_VNC_TRIES=2 SMOKE_VNC_DELAY=0 \
     SMOKE_KEEP="${SMOKE_KEEP-}" \
@@ -167,37 +171,59 @@ assert_contains "verdict line says OK"          "$(cat "$ERR")" "OK"
 
 # The guest-agent stage. `tart exec` rides tart-guest-agent's vsock channel, not
 # ssh, and nothing in this repo installs that agent — so every other stage here
-# passes on an image that has none, while tart-up's hostname set silently
-# degrades and GUI activation hard-fails. It runs before the hostname assert on
-# purpose: a wrong hostname is this failure's symptom, and reporting the symptom
-# points the reader at provisioning instead of at the missing agent.
+# passes on an image that has none. The three probes are ordered by dependency
+# (channel, then escalation over it, then whether tart-up's hostname landed) so
+# each failure has one remaining explanation, and all three run before the ssh
+# hostname assert, whose bare mismatch is the symptom every one of them causes.
 echo "  -- guest agent (vsock) --"
 assert_order    "tart-up precedes the guest-agent probe" "tart-up smoke-vm" "tart exec smoke-vm hostname"
 assert_order    "guest-agent probe precedes ssh"         "tart exec smoke-vm hostname" "ssh "
-assert_contains "escalation is probed too"      "$(cat "$CALLS")" "tart exec smoke-vm sudo -n true"
+assert_order    "channel is probed before escalation"    "tart exec smoke-vm hostname" "tart exec smoke-vm sudo -n true"
 assert_contains "verdict names the guest agent" "$(cat "$ERR")" "guest agent"
 
-# The guest answers `fedora` here because that is what an agent-less VM really
-# reports: tart-up sets the hostname over this very channel, so when the agent
-# is gone the guest keeps the base image's own name. Staging both halves is what
-# makes the ordering assertion below mean anything — with the probe moved after
-# the ssh block, smoke blames the hostname for the agent's absence.
+# A guest staged the way an agent-less one really answers: the hostname stays at
+# the base image's own name, because tart-up sets it over the very channel that
+# is gone. Both halves matter — with the probes moved after the ssh block, smoke
+# blames the hostname for the agent's absence, which is what these pin against.
 MOCK_TART_EXEC_RC=1 MOCK_SSH_HOSTNAME=fedora run_smoke php fedora
 assert_rc       "absent guest agent → FAIL" 1
 assert_contains "absent agent names the channel"     "$(cat "$ERR")" "'tart exec' does not answer"
 assert_contains "absent agent says it is not ssh"    "$(cat "$ERR")" "not ssh"
 assert_contains "absent agent surfaces tart's reason" "$(cat "$ERR")" "is the Tart Guest Agent running?"
+assert_contains "absent agent offers the ssh route"  "$(cat "$ERR")" "ssh tart-smoke-vm systemctl status"
 assert_absent   "absent agent → hostname mismatch never blamed" "$(cat "$ERR")" "guest hostname: expected"
 assert_absent   "absent agent → no ssh attempted"      "$(cat "$CALLS")" "ssh "
 assert_contains "absent agent → teardown still ran"    "$(cat "$CALLS")" "tart-rm smoke-vm"
 
-# An agent that answers but cannot escalate breaks only the GUI cells, so the
-# unprivileged probe above still reports ok — this is a distinct verdict.
-MOCK_TART_SUDO_RC=1 run_smoke php fedora
+# An agent that answers unprivileged calls but cannot escalate. tart-up needs
+# sudo for `hostnamectl` on EVERY cell, not just GUI ones, so the guest is staged
+# with the hostname unset here too — which is what makes the ordering meaningful:
+# were escalation probed after the hostname comparison, this would be reported as
+# a timing race instead of the sudoers failure it is.
+MOCK_TART_SUDO_RC=1 MOCK_TART_EXEC_HOSTNAME=fedora run_smoke php fedora
 assert_rc       "guest agent without sudo → FAIL" 1
 assert_contains "no-sudo names escalation"       "$(cat "$ERR")" "cannot escalate"
 assert_contains "no-sudo surfaces sudo's reason" "$(cat "$ERR")" "a password is required"
+assert_contains "no-sudo names the every-cell scope" "$(cat "$ERR")" "hostname on every cell"
+assert_contains "no-sudo points at the sudoers"  "$(cat "$ERR")" "sudoers drop-in"
+assert_absent   "no-sudo → not reported as a timing race" "$(cat "$ERR")" "started after tart-up"
+assert_absent   "no-sudo → no ssh attempted"     "$(cat "$CALLS")" "ssh "
 assert_contains "no-sudo → teardown still ran"   "$(cat "$CALLS")" "tart-rm smoke-vm"
+
+# Channel and escalation both healthy, but the hostname never landed — the shape
+# a late-starting agent leaves, since tart-up probes once and only warns. The
+# empty reply is the same branch: a channel that answers with nothing has not
+# proven the guest's identity either.
+MOCK_TART_EXEC_HOSTNAME=fedora run_smoke php fedora
+assert_rc       "agent healthy but hostname stale → FAIL" 1
+assert_contains "stale hostname names both values" "$(cat "$ERR")" "reports hostname 'fedora' instead of 'smoke-vm'"
+assert_contains "stale hostname blames the timing"  "$(cat "$ERR")" "started after tart-up's probe"
+assert_absent   "stale hostname → not blamed on the channel" "$(cat "$ERR")" "does not answer"
+assert_absent   "stale hostname → no ssh attempted" "$(cat "$CALLS")" "ssh "
+
+MOCK_TART_EXEC_HOSTNAME='' run_smoke php fedora
+assert_rc       "empty vsock reply → FAIL" 1
+assert_contains "empty reply is named as empty" "$(cat "$ERR")" "reports hostname 'empty'"
 
 # GUI flavor: the optional <de> rides through to tart-new (flavor image
 # selection is tart-new's job), the VNC surface is exercised (unit start +

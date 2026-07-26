@@ -37,7 +37,7 @@ help:
 	@echo "  make init                                 Install the Packer plugin (run once)"
 	@echo "  make build STACK=<name> DISTRO=<distro>   Bootstrap + build the stack image"
 	@echo "  make rebuild STACK=<name> DISTRO=<distro> Force-rebuild — overwrites existing image"
-	@echo "  make smoke STACK=<name> DISTRO=<distro>   Smoke-test a BUILT image end-to-end: clone, boot a real VM (~1 min), ssh, assert, destroy. Local-only — never run in CI. GUI=1 [DE=<de>] smokes the GUI flavor"
+	@echo "  make smoke STACK=<name> DISTRO=<distro>   Smoke-test a BUILT image end-to-end: clone, boot a real VM (~1 min), guest agent, ssh, assert, destroy. Local-only — never run in CI. GUI=1 [DE=<de>] smokes the GUI flavor"
 	@echo "  make clean                                Remove Packer build artifacts"
 	@echo ""
 	@echo "  DISTRO — required distro token (e.g. fedora). Must be listed in shared/distros."

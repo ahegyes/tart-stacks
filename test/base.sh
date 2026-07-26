@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 # Behavioral tests for 00-base.sh's guest-agent substrate gate — the check that
-# turns an inherited, undeclared dependency into a declared one. `tart exec` is
-# a host->guest vsock call served by tart-guest-agent INSIDE the guest; Packer
-# and every toolchain probe use ssh, so without this gate a base missing the
-# agent builds clean and only fails once a consumer asks tart-up for a hostname
-# or a desktop. The rest of 00-base.sh needs a booted guest (dnf/apt, systemd),
-# so only this gate is driven here; the shipped block is READ OUT of the script
-# rather than restated, so weakening it changes what these cases do. Plain bash,
-# no framework.
+# turns an inherited, undeclared dependency into a declared one. The rest of
+# 00-base.sh needs a booted guest (dnf/apt, systemd), so only this gate is
+# driven here; the shipped block is READ OUT of the script rather than restated,
+# so weakening it changes what these cases do. Plain bash, no framework.
 set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
@@ -19,84 +15,114 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got » $3 «"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
+assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 
-# The gate itself, lifted out of the script and run for real — not
-# reimplemented. A copy of the logic here would stay green while the shipped
-# branch lost its `exit 1`, or its `is-enabled` clause. `set -euo pipefail`
-# leads so the block runs under the same options 00-base.sh gives it.
+# Both gate branches, lifted out of the script and run for real — not
+# reimplemented. A copy of the logic here would stay green while a shipped
+# branch lost its `exit 1`. `set -euo pipefail` leads so the block runs under
+# the same options 00-base.sh gives it.
+# The stop anchor is the first real work in the script rather than a count of
+# `fi` lines: counting would run past the end the moment a branch is added or
+# removed, dragging in package installs and failing every case for the wrong
+# reason instead of reporting the branch that went missing.
 GATE="$WORK/gate.sh"
 {
   printf 'set -euo pipefail\n'
   awk '
-    /^if ! command -v tart-guest-agent /  { emit=1 }
-    emit                                  { print }
-    emit && /^fi$/                        { exit }
+    /^agent_state=/  { emit=1 }
+    /^echo "==> /    { if (emit) exit }
+    emit             { print }
   ' "$BASE"
 } > "$GATE"
 
 # Only that a non-empty block about the right subject came across — enough to
-# rule out every case below passing vacuously against an empty file, and no
-# more. Which clauses it contains and whether it refuses are what the behavioral
-# cases measure; asserting them here too would turn a legitimate refactor of the
-# gate into a failure while proving nothing the cases do not.
+# rule out every case below passing vacuously against an empty extraction. Which
+# clauses the gate holds is what the cases measure.
 if grep -q 'tart-guest-agent' "$GATE"; then
   ok "lifted the guest-agent gate out of 00-base.sh ($(grep -c . "$GATE") lines)"
 else
   bad "lifted the guest-agent gate out of 00-base.sh" \
-      "extraction produced $(grep -c . "$GATE") line(s) — the gate moved or changed shape"
+      "extraction produced $(grep -c . "$GATE") line(s) — the gate moved, or the awk anchor at test/base.sh:31 no longer matches it"
   printf '\n  %d passed, %d failed\n' "$pass" "$fail"
   exit 1
 fi
 
-# The guest side, faked: a `tart-guest-agent` on PATH and a `systemctl` whose
-# is-enabled status is a knob. Both states are real ones — rc=1 is a unit that
-# exists but is disabled (it would never start on a clone's first boot), rc=4 is
-# no such unit at all. Measured on a live guest, where the healthy answer is 0.
+# A `systemctl` that answers per subcommand. Without the case, every subcommand
+# would share one knob and swapping is-enabled for is-active in production would
+# leave all these cases green.
+#
+# is-enabled's exit status is derived from the state it reports, per systemctl(1)
+# — and the derivation is the whole point: the manual returns 0 for `static`,
+# `enabled-runtime`, `indirect`, `generated` and `transient` as well as
+# `enabled`. A mock that failed those would hide the difference between keying
+# the gate on the exit status and keying it on the literal string, which is
+# exactly the distinction the cases below exist to measure.
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
-# shellcheck disable=SC2016  # the knob is written INTO the mock, for the mock to
-# expand when the gate runs it — not for this shell
-printf '#!/usr/bin/env bash\nexit "${MOCK_IS_ENABLED_RC:-0}"\n' > "$MOCKBIN/systemctl"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCKBIN/tart-guest-agent"
-chmod +x "$MOCKBIN/systemctl" "$MOCKBIN/tart-guest-agent"
+cat > "$MOCKBIN/systemctl" <<'M'
+#!/usr/bin/env bash
+case "$1" in
+  is-enabled)
+    printf '%s\n' "${MOCK_IS_ENABLED-enabled}"
+    case "${MOCK_IS_ENABLED-enabled}" in
+      enabled|enabled-runtime|static|indirect|generated|transient|alias) exit 0 ;;
+      not-found)                                                        exit 4 ;;
+      *)                                                                exit 1 ;;
+    esac ;;
+  is-active) exit "${MOCK_IS_ACTIVE_RC:-0}" ;;
+  *) exit 4 ;;
+esac
+M
+chmod +x "$MOCKBIN/systemctl"
 
-# gate_verdict <agent-present:yes|no> <is-enabled-rc> — "pass", or "refuse".
-# Stderr of the last run is left in $GATE_ERR for the message assertions.
+# gate_verdict <is-enabled-state> <is-active-rc> — "pass" or "refuse"; stderr of
+# the run is left in $GATE_ERR for the message assertions.
 GATE_ERR=""
 gate_verdict() {
   local rc=0
-  if [ "$1" = yes ]; then chmod +x "$MOCKBIN/tart-guest-agent"
-  else rm -f "$MOCKBIN/tart-guest-agent"; fi
-  # A PATH of exactly the mocks plus the system dirs: `tart-guest-agent` must be
-  # absent for real in the "no" case, and nothing on this host provides it.
-  GATE_ERR=$(PATH="$MOCKBIN:/usr/bin:/bin" MOCK_IS_ENABLED_RC="$2" bash "$GATE" 2>&1) || rc=$?
-  # Restore for the next case regardless of which branch ran.
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCKBIN/tart-guest-agent"
-  chmod +x "$MOCKBIN/tart-guest-agent"
+  GATE_ERR=$(PATH="$MOCKBIN:/usr/bin:/bin" MOCK_IS_ENABLED="$1" MOCK_IS_ACTIVE_RC="$2" \
+    bash "$GATE" 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then printf 'pass'; else printf 'refuse'; fi
 }
 
 # The healthy substrate — the only combination that may build.
-assert_eq "agent installed and enabled → build proceeds" "pass" "$(gate_verdict yes 0)"
+assert_eq "enabled and running → build proceeds" "pass" "$(gate_verdict enabled 0)"
 
-# Each half alone is insufficient, and for different reasons: an absent binary
-# means the unit cannot run, an unenabled unit means it never starts on the
-# clone. Either way `tart exec` is dead for every VM made from this image.
-assert_eq "agent binary absent → build refused"        "refuse" "$(gate_verdict no 0)"
-assert_eq "unit present but disabled → build refused"  "refuse" "$(gate_verdict yes 1)"
-assert_eq "no such unit (rc 4) → build refused"        "refuse" "$(gate_verdict yes 4)"
-assert_eq "neither present → build refused"            "refuse" "$(gate_verdict no 4)"
+# Anything other than the literal `enabled` fails the first branch. `static` and
+# `enabled-runtime` are the two that matter: real systemctl exits 0 for both, so
+# a gate keyed on exit status would accept them — and neither survives into the
+# clone's first boot, which is the only boot an image is judged on.
+assert_eq "unit disabled → build refused"        "refuse" "$(gate_verdict disabled 0)"
+assert_eq "no such unit → build refused"         "refuse" "$(gate_verdict not-found 0)"
+assert_eq "static unit → build refused"          "refuse" "$(gate_verdict static 0)"
+assert_eq "enabled-runtime → build refused"      "refuse" "$(gate_verdict enabled-runtime 0)"
 
-# The refusal has to send the reader to the base image, not to this build: the
-# fix is never in tart-stacks' provisioners, and "the host has tart installed"
-# is the wrong intuition to leave intact.
-gate_verdict no 4 >/dev/null
-assert_contains "refusal names the missing unit"      "$GATE_ERR" "tart-guest-agent.service"
-assert_contains "refusal says the channel is not ssh" "$GATE_ERR" "vsock"
-assert_contains "refusal rules out a host-side fix"   "$GATE_ERR" "host's own tart install cannot supply it"
-assert_contains "refusal names the consequence"       "$GATE_ERR" "GUI activation fails"
-assert_contains "refusal says where to fix it"        "$GATE_ERR" "base image"
+# The second branch: enabled only promises systemd will try. An agent that dies
+# at startup here dies the same way on every clone, and `tart exec` is dead
+# either way — measured on a live guest, where a stopped-but-enabled unit still
+# reports is-enabled=enabled with exit 0.
+assert_eq "enabled but not running → build refused" "refuse" "$(gate_verdict enabled 3)"
+
+# Each branch has to send the reader somewhere different, because the fixes are
+# different: install-and-enable it versus find out why it dies.
+gate_verdict not-found 0 >/dev/null
+assert_contains "absent: names the missing unit"      "$GATE_ERR" "tart-guest-agent.service"
+assert_contains "absent: reports the state it saw"    "$GATE_ERR" "not-found"
+assert_contains "absent: says the channel is vsock"   "$GATE_ERR" "vsock"
+assert_contains "absent: rules out a host-side fix"   "$GATE_ERR" "host's own tart install cannot supply it"
+assert_contains "absent: gives a runnable next step"  "$GATE_ERR" "make bootstrap DISTRO="
+
+gate_verdict disabled 0 >/dev/null
+assert_contains "disabled: reports the state it saw"  "$GATE_ERR" "disabled"
+
+gate_verdict enabled 3 >/dev/null
+assert_contains "dead agent: distinguishes itself"    "$GATE_ERR" "enabled but not running"
+assert_contains "dead agent: names the consequence"   "$GATE_ERR" "no GUI mode can start"
+assert_contains "dead agent: points at the journal"   "$GATE_ERR" "systemctl status"
+# Re-bootstrapping replaces the base image, which is the wrong move for an agent
+# that IS installed and enabled — so that advice must not leak into this branch.
+assert_absent   "dead agent: does not say re-bootstrap" "$GATE_ERR" "make bootstrap"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

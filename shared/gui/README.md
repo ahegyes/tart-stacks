@@ -66,6 +66,11 @@ desktop RAM. A consumer activates graphics per boot, in one of two ways:
 | vnc | `systemctl start tart-stacks-vnc.service` | a full desktop session on display `:1`, served on **`127.0.0.1:5901`** |
 | window | apply the host backing scale as the dev user, then `systemctl isolate graphical.target` | the display manager autologs the dev user into a correctly scaled desktop on the VM's virtual console |
 
+Every `tart-up`-driven activation in that table travels `tart-guest-agent`'s
+vsock channel (`tart exec`), not ssh. That agent ships inside the base image and
+is asserted at build time by `shared/scripts/00-base.sh`; an image without a
+working one is still reachable over ssh but has no boot mode beyond headless.
+
 Both activations are per-boot (neither the unit nor default target is changed);
 a consumer that wants a desktop on every boot can
 `systemctl enable tart-stacks-vnc.service` or `systemctl set-default

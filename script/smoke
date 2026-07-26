@@ -19,9 +19,10 @@ prog="${0##*/}"
 REPO=$(cd -P "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)
 
 # Helper-resolution seam: test/smoke.sh points TART_SMOKE_BIN at a directory
-# of mocks; real runs resolve the repo's bin/. ssh stays a plain PATH lookup
-# (PATH-shimmable the same way) — the tart-<vm> alias it dials only exists in
-# the user's generated SSH config anyway.
+# of mocks; real runs resolve the repo's bin/. `ssh` and `tart` stay plain PATH
+# lookups (PATH-shimmable the same way) — the tart-<vm> alias ssh dials only
+# exists in the user's generated SSH config anyway, and a missing `tart` fails
+# in tart-new's own preflight before any stage here runs.
 SMOKE_BIN="${TART_SMOKE_BIN:-$REPO/bin}"
 
 usage() {
@@ -65,27 +66,40 @@ trap cleanup EXIT
 # `tart exec` is a host->guest vsock call served by tart-guest-agent inside the
 # guest — a different channel from the ssh every other check here uses, and one
 # nothing in this repo installs: it is inherited from the base image. tart-up
-# drives the guest hostname, the display scale and all GUI activation through
-# it, so an image whose agent is absent still answers ssh while `tart-up --gui`
-# hard-fails for a consumer. This runs before the hostname assert below because
-# a wrong hostname is that failure's downstream symptom, and reporting the
-# symptom sends the reader after the wrong thing entirely.
+# drives the guest hostname on every cell, plus all GUI activation, through it,
+# so an image whose agent is absent still answers ssh while its clones keep the
+# base image's hostname and `tart-up --gui` hard-fails. These run before the
+# hostname assert below because a wrong hostname is their downstream symptom,
+# and reporting the symptom sends the reader after the wrong thing entirely.
+#
+# The three checks are ordered by dependency, so each failure has exactly one
+# remaining explanation: the channel, then escalation over it, then whether
+# tart-up's provisioning actually landed.
 if ! agent_reply=$(tart exec "$VM" hostname -s 2>&1); then
-  echo "$prog: FAIL — 'tart exec' does not answer in '$VM': ${agent_reply:-no output}. That is tart-guest-agent's vsock channel, not ssh — without it tart-up cannot set the guest hostname and every GUI activation fails. Check 'systemctl status tart-guest-agent' in the VM (re-run with SMOKE_KEEP=1 to keep it)." >&2
+  echo "$prog: FAIL — 'tart exec' does not answer in '$VM': ${agent_reply:-no output}. That is tart-guest-agent's vsock channel, not ssh, so the fix is in the base image rather than this build — and ssh still works: try 'ssh tart-$VM systemctl status tart-guest-agent'." >&2
   exit 1
 fi
 printf '%s: ok   %-22s %s\n' "$prog" "tart exec (vsock)" "$agent_reply" >&2
 
-# tart-up escalates over that same channel — hostnamectl, systemctl isolate,
-# the VNC unit — which needs the NOPASSWD sudoers 99-finalize installs and the
-# agent running as a user it covers. An agent that answers unprivileged calls
-# but cannot escalate breaks only the GUI cells, so the plain path above would
-# still look healthy.
+# tart-up escalates over the same channel for `sudo hostnamectl` on every cell,
+# and for `systemctl isolate` plus the VNC unit on GUI ones — which needs the
+# NOPASSWD sudoers 99-finalize installs and the agent running as a user they
+# cover. The display-scale applier is the one call that stays unprivileged.
 if ! sudo_err=$(tart exec "$VM" sudo -n true 2>&1); then
-  echo "$prog: FAIL — 'tart exec' cannot escalate in '$VM': ${sudo_err:-no output}. tart-up sets the hostname, applies the display scale and activates every GUI mode privileged over the guest agent, so this image's GUI cells cannot come up." >&2
+  echo "$prog: FAIL — 'tart exec' cannot escalate in '$VM': ${sudo_err:-no output}. tart-up sets the guest hostname on every cell and activates every GUI mode privileged over this channel, so no clone of this image would get its hostname and none could start a desktop. The agent runs as 'admin' — check the sudoers drop-in 99-finalize.sh writes." >&2
   exit 1
 fi
 printf '%s: ok   %-22s %s\n' "$prog" "tart exec (sudo)" "passwordless" >&2
+
+# With the channel and escalation both proven, a hostname still at the base
+# image's default leaves one explanation: the agent began answering only after
+# tart-up had already probed it. tart-up merely warns in that case, so nothing
+# else fails until the ssh assert below reports a bare mismatch — which reads
+# as a provisioning bug rather than the timing one it is.
+if [ "$agent_reply" != "$VM" ]; then
+  echo "$prog: FAIL — the guest agent in '$VM' answers and can escalate, but reports hostname '${agent_reply:-empty}' instead of '$VM'. tart-up sets that over this channel and only warns when it fails, so the agent most likely started after tart-up's probe. Re-run; if it repeats, the agent is coming up too slowly for tart-up." >&2
+  exit 1
+fi
 
 # BatchMode so a broken auth chain fails fast instead of hanging on a prompt.
 got=$(ssh -o BatchMode=yes "tart-$VM" hostname -s) || {
