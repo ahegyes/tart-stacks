@@ -72,14 +72,18 @@ trap cleanup EXIT
 # hostname assert below because a wrong hostname is their downstream symptom,
 # and reporting the symptom sends the reader after the wrong thing entirely.
 #
-# The three checks are ordered by dependency, so each failure has exactly one
-# remaining explanation: the channel, then escalation over it, then whether
-# tart-up's provisioning actually landed.
-if ! agent_reply=$(tart exec "$VM" hostname -s 2>&1); then
-  echo "$prog: FAIL — 'tart exec' does not answer in '$VM': ${agent_reply:-no output}. That is tart-guest-agent's vsock channel, not ssh, so the fix is in the base image rather than this build — and ssh still works: try 'ssh tart-$VM systemctl status tart-guest-agent'." >&2
+# The checks are ordered by dependency — the channel, then escalation over it,
+# then whether tart-up's provisioning landed — so each failure is narrowed to the
+# causes below it rather than surfacing as one undifferentiated symptom.
+#
+# `true` is the channel probe on purpose: tart exec propagates the GUEST
+# command's own exit status, so probing with anything that can itself fail would
+# report that command's failure as a dead channel.
+if ! chan_err=$(tart exec "$VM" true 2>&1); then
+  echo "$prog: FAIL — 'tart exec' does not answer in '$VM': ${chan_err:-no output}. That is tart-guest-agent's vsock channel, not ssh, so the fix is in the base image rather than in this build. ssh is a separate channel and may still work — try 'ssh tart-$VM systemctl status tart-guest-agent'." >&2
   exit 1
 fi
-printf '%s: ok   %-22s %s\n' "$prog" "tart exec (vsock)" "$agent_reply" >&2
+printf '%s: ok   %-22s %s\n' "$prog" "tart exec (vsock)" "responds" >&2
 
 # tart-up escalates over the same channel for `sudo hostnamectl` on every cell,
 # and for `systemctl isolate` plus the VNC unit on GUI ones — which needs the
@@ -91,15 +95,25 @@ if ! sudo_err=$(tart exec "$VM" sudo -n true 2>&1); then
 fi
 printf '%s: ok   %-22s %s\n' "$prog" "tart exec (sudo)" "passwordless" >&2
 
-# With the channel and escalation both proven, a hostname still at the base
-# image's default leaves one explanation: the agent began answering only after
-# tart-up had already probed it. tart-up merely warns in that case, so nothing
-# else fails until the ssh assert below reports a bare mismatch — which reads
-# as a provisioning bug rather than the timing one it is.
-if [ "$agent_reply" != "$VM" ]; then
-  echo "$prog: FAIL — the guest agent in '$VM' answers and can escalate, but reports hostname '${agent_reply:-empty}' instead of '$VM'. tart-up sets that over this channel and only warns when it fails, so the agent most likely started after tart-up's probe. Re-run; if it repeats, the agent is coming up too slowly for tart-up." >&2
+# Read the guest's own name over the same channel. A failure here is the
+# `hostname` command in the guest, not the channel — which the probe above has
+# already proven — so it gets its own verdict.
+if ! agent_reply=$(tart exec "$VM" hostname -s 2>&1); then
+  echo "$prog: FAIL — 'hostname -s' failed inside '$VM': ${agent_reply:-no output}. The guest agent answers and can escalate, so this is the guest's own hostname command, not the vsock channel." >&2
   exit 1
 fi
+
+# tart-up sets this over the channel just proven, and suppresses every failure of
+# that step, so a name still at the base image's default is otherwise invisible
+# until the ssh assert below reports a bare mismatch — which reads as a
+# provisioning bug in the image. tart-up's own comment names the two causes it
+# swallows: an agent that started too late for its one probe, and a guest where
+# hostnamectl is missing or systemd-hostnamed refuses.
+if [ "$agent_reply" != "$VM" ]; then
+  echo "$prog: FAIL — the guest agent in '$VM' answers and can escalate, but the guest calls itself '${agent_reply:-empty}' rather than '$VM'. tart-up sets that over this channel and suppresses any failure, so either it probed before the agent was listening, or hostnamectl/systemd-hostnamed failed in the guest. Re-run; if it repeats, it is the guest side, not timing." >&2
+  exit 1
+fi
+printf '%s: ok   %-22s %s\n' "$prog" "guest hostname (vsock)" "$agent_reply" >&2
 
 # BatchMode so a broken auth chain fails fast instead of hanging on a prompt.
 got=$(ssh -o BatchMode=yes "tart-$VM" hostname -s) || {

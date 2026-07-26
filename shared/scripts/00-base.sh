@@ -28,8 +28,10 @@ fi
 # they are reported apart.
 #
 # The literal string `enabled` is the test rather than is-enabled's exit status,
-# which is also 0 for `static` and `enabled-runtime` — neither of which survives
-# into a clone's first boot, the only boot that matters for an image.
+# which is also 0 for `static`, `enabled-runtime`, `indirect` and `generated`.
+# Whether any of those starts on a clone depends on what else pulls the unit in,
+# which this check cannot see — so it refuses them and names the state it found
+# rather than guessing. `enabled` is what the upstream package produces.
 agent_state=$(systemctl is-enabled tart-guest-agent.service 2>/dev/null || true)
 if [ "$agent_state" != enabled ]; then
   echo "ERROR: this base image has no enabled tart-guest-agent.service (systemctl reports" >&2
@@ -40,6 +42,11 @@ if [ "$agent_state" != enabled ]; then
 fi
 # Enabled only promises systemd will try to start it. An agent that dies during
 # startup in this guest dies the same way on every clone of the image.
+#
+# Both branches read configuration, never the channel itself: the RPC runs
+# host->guest and this script runs in the guest, so it cannot call itself back.
+# An agent that is active but wedged passes here; `make smoke` is where the round
+# trip is exercised for real.
 if ! systemctl is-active --quiet tart-guest-agent.service; then
   echo "ERROR: tart-guest-agent.service is enabled but not running in this guest." >&2
   echo "       It answers the host's 'tart exec' calls over vsock, so tart-up cannot set a" >&2

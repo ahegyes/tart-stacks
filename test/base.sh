@@ -91,8 +91,9 @@ assert_eq "enabled and running → build proceeds" "pass" "$(gate_verdict enable
 
 # Anything other than the literal `enabled` fails the first branch. `static` and
 # `enabled-runtime` are the two that matter: real systemctl exits 0 for both, so
-# a gate keyed on exit status would accept them — and neither survives into the
-# clone's first boot, which is the only boot an image is judged on.
+# a gate keyed on exit status would accept them silently. Whether either actually
+# starts on a clone depends on what else pulls the unit in, which the gate cannot
+# see — so refusing and naming the state is the deliberate choice.
 assert_eq "unit disabled → build refused"        "refuse" "$(gate_verdict disabled 0)"
 assert_eq "no such unit → build refused"         "refuse" "$(gate_verdict not-found 0)"
 assert_eq "static unit → build refused"          "refuse" "$(gate_verdict static 0)"
