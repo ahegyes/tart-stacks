@@ -26,17 +26,25 @@
 
 set -euo pipefail
 
+# resolve_link <path> — print <path> with each symlink in its own position
+# followed; a path that does not exist prints unchanged. `readlink -f` would be
+# one call, but it fails outright on a nonexistent path — and ~/.ssh/config
+# legitimately may not exist yet when this runs.
+resolve_link() {
+  local p="$1" dir
+  while [ -L "$p" ]; do
+    dir=$(cd -P "$(dirname "$p")" >/dev/null 2>&1 && pwd)
+    p=$(readlink "$p")
+    case "$p" in /*) ;; *) p="$dir/$p" ;; esac
+  done
+  printf '%s' "$p"
+}
+
 # This script lives in the repo's script/; resolve its real dir (following
 # symlinks), step up to the repo root, and point BIN_DIR at the actual
 # commands in bin/ — so the symlinks target the repo no matter where setup
 # was invoked from.
-src="${BASH_SOURCE[0]}"
-while [ -L "$src" ]; do
-  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
-  src=$(readlink "$src")
-  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
-done
-SCRIPT_DIR=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+SCRIPT_DIR=$(cd -P "$(dirname "$(resolve_link "${BASH_SOURCE[0]}")")" >/dev/null 2>&1 && pwd)
 REPO_DIR=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 BIN_DIR="$REPO_DIR/bin"
 # shellcheck source=bin/lib/config.sh
@@ -45,7 +53,12 @@ BIN_DIR="$REPO_DIR/bin"
 . "$BIN_DIR/lib/config.sh"
 
 LOCAL_BIN="${TART_LOCAL_BIN:-$HOME/.local/bin}"
-SSH_CONFIG="${TART_SSH_CONFIG:-$HOME/.ssh/config}"
+# Resolved through its symlinks: a dotfiles-managed ~/.ssh/config is a link into
+# that repo, and the mktemp+mv below — which is what makes the rewrite atomic —
+# renames over the LINK, leaving the dotfiles source frozen at its pre-install
+# content while ssh reads a detached copy. Resolving once here points every
+# later write, and the chmod, at the real file.
+SSH_CONFIG=$(resolve_link "${TART_SSH_CONFIG:-$HOME/.ssh/config}")
 FORWARDS=$(tart_config_path forwards)
 MOUNTS=$(tart_config_path mounts)
 # tart-ssh-sync's output path (same default and env seam as that script): the
@@ -55,7 +68,17 @@ GENERATED="${TART_SSH_CONFIG_D:-$HOME/.ssh/config.d/tart-vms}"
 # The Include block, line by line. Install writes exactly these three lines
 # plus a blank separator; uninstall removes exactly that four-line shape and
 # nothing else. Shared constants keep the two directions from drifting.
-INCLUDE_LINE='Include ~/.ssh/config.d/tart-vms'
+#
+# The target is derived from GENERATED, never restated: a hard-coded path made
+# the documented TART_SSH_CONFIG_D override write a file ssh never included.
+# `~` while the path is under $HOME — ssh expands it, and it keeps a config that
+# gets read by hand portable across accounts.
+# shellcheck disable=SC2088  # ssh expands the tilde; this shell must not
+case "$GENERATED" in
+  "$HOME"/*) INCLUDE_TARGET="~/${GENERATED#"$HOME"/}" ;;
+  *)         INCLUDE_TARGET="$GENERATED" ;;
+esac
+INCLUDE_LINE="Include $INCLUDE_TARGET"
 MARKER_LINE="# Added by tart-stacks. Run 'make setup' to restore this line if removed."
 KEEP_ABOVE_LINE='# Keep it above any Host block so per-VM settings beat a catch-all Host *.'
 
@@ -64,6 +87,25 @@ COMMANDS=(tart-up tart-ssh-sync tart-new tart-rm tart-down)
 
 info() { printf '  %s\n' "$*"; }
 warn() { printf '  WARNING: %s\n' "$*" >&2; }
+
+# ours_or_absent <path> <target> — 0 when <path> is absent or is already our
+# symlink to <target>, so the caller may (re)link it. Otherwise warns and
+# returns 1: an installer must not silently destroy something it didn't create.
+ours_or_absent() {
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    if [ ! -L "$1" ] || [ "$(readlink "$1")" != "$2" ]; then
+      warn "left $1 — it is not this repo's symlink; remove it yourself and re-run setup."
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# mentions_generated <file> — 0 if the file carries an Include-worthy reference
+# to the generated config, in either spelling ssh accepts for it.
+mentions_generated() {
+  grep -qF -e "$INCLUDE_TARGET" -e "$GENERATED" "$1"
+}
 
 usage() {
   cat >&2 <<EOF
@@ -164,7 +206,7 @@ if [ "$MODE" = "uninstall" ]; then
       rm -f "$tmp"
       warn "marker comment found in $SSH_CONFIG but the block shape has drifted from what setup writes — left unchanged; remove the Include by hand."
     fi
-  elif [ -f "$SSH_CONFIG" ] && grep -q 'config\.d/tart-vms' "$SSH_CONFIG"; then
+  elif [ -f "$SSH_CONFIG" ] && mentions_generated "$SSH_CONFIG"; then
     warn "the Include in $SSH_CONFIG carries no tart-stacks marker comment — it looks hand-written, so it was left in place."
   fi
 
@@ -198,12 +240,7 @@ mkdir -p "$LOCAL_BIN"
 linked=()
 for name in "${COMMANDS[@]}"; do
   target="$LOCAL_BIN/$name"
-  if [ -e "$target" ] || [ -L "$target" ]; then
-    if [ ! -L "$target" ] || [ "$(readlink "$target")" != "$BIN_DIR/$name" ]; then
-      warn "left $target — it is not this repo's symlink; remove it yourself and re-run setup."
-      continue
-    fi
-  fi
+  ours_or_absent "$target" "$BIN_DIR/$name" || continue
   ln -sf "$BIN_DIR/$name" "$target"
   linked+=("$name")
 done
@@ -215,32 +252,50 @@ case ":$PATH:" in
   *) warn "$LOCAL_BIN is not on your \$PATH — add it so the commands resolve." ;;
 esac
 
-# 2. zsh completion.
+# 2. zsh completion — ownership-checked exactly like the commands above. The
+#    uninstall already refuses to remove a foreign file on this name, so
+#    clobbering one here would delete a user's completion and leave the
+#    replacement behind for `make uninstall` to take away.
 mkdir -p "$compdir"
-ln -sf "$REPO_DIR/completions/_tart-new" "$compdir/_tart-new"
-info "linked completion (_tart-new) -> $compdir  (run: rm -f ~/.zcompdump* && exec zsh)"
-case "$compdir" in
-  "$HOME"/*) warn "add to ~/.zshrc above compinit:  fpath=($compdir \$fpath)" ;;
-esac
+if ours_or_absent "$compdir/_tart-new" "$REPO_DIR/completions/_tart-new"; then
+  ln -sf "$REPO_DIR/completions/_tart-new" "$compdir/_tart-new"
+  info "linked completion (_tart-new) -> $compdir  (run: rm -f ~/.zcompdump* && exec zsh)"
+  case "$compdir" in
+    "$HOME"/*) warn "add to ~/.zshrc above compinit:  fpath=($compdir \$fpath)" ;;
+  esac
+fi
 
-# 3. SSH Include line — idempotent, and validated for catch-all ordering.
-#    SSH uses the first value seen per keyword, so the Include must sit above
-#    any `Host *` block or the catch-all wins and the Tart settings are dead.
+# 3. SSH Include line — idempotent, and validated for placement. One rule
+#    covers both ways placement goes wrong: the Include must sit above the FIRST
+#    `Host`/`Match` line. Below one it is nested in that block, so ssh reads it
+#    only for the hosts that block matches — and when the block is a catch-all
+#    it is read but loses every keyword to it, since ssh keeps the first value
+#    it sees. Either way the Tart VM settings are dead.
 mkdir -p "$(dirname "$SSH_CONFIG")"
 touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
-# One awk pass: line of the first catch-all `Host` block (a bare `*` pattern
-# token), and line of our Include. 0 means "not found".
-read -r catchall inc < <(awk '
-  tolower($1)=="host"    { for (i=2; i<=NF; i++) if ($i=="*" && !c) c=NR }
-  tolower($1)=="include" && $0 ~ /config\.d\/tart-vms/ && !x { x=NR }
-  END { print c+0, x+0 }
+# One awk pass: line of the first Host/Match block, whether that block is a
+# catch-all `Host *`, and line of our Include. 0 means "not found".
+read -r firstblock catchall inc < <(awk -v t1="$INCLUDE_TARGET" -v t2="$GENERATED" '
+  tolower($1)=="host" || tolower($1)=="match" {
+    if (!b) {
+      b=NR
+      if (tolower($1)=="host") for (i=2; i<=NF; i++) if ($i=="*") c=1
+    }
+  }
+  tolower($1)=="include" && (index($0,t1) || index($0,t2)) && !x { x=NR }
+  END { print b+0, c+0, x+0 }
 ' "$SSH_CONFIG")
 if [ "$inc" -gt 0 ]; then
-  if [ "$catchall" -gt 0 ] && [ "$catchall" -lt "$inc" ]; then
-    warn "Include is on line $inc but a catch-all 'Host *' is on line $catchall."
-    warn "First-match-wins means the catch-all overrides the Tart VM settings (e.g. wrong User)."
-    warn "Move '$INCLUDE_LINE' above line $catchall. Left unchanged."
+  if [ "$firstblock" -gt 0 ] && [ "$inc" -gt "$firstblock" ]; then
+    if [ "$catchall" -eq 1 ]; then
+      warn "Include is on line $inc but a catch-all 'Host *' starts on line $firstblock."
+      warn "First-match-wins means the catch-all overrides the Tart VM settings (e.g. wrong User)."
+    else
+      warn "Include is on line $inc, inside the block starting on line $firstblock."
+      warn "ssh reads a nested Include only for the hosts that block matches, so it never applies to tart-* aliases."
+    fi
+    warn "Move '$INCLUDE_LINE' above line $firstblock. Left unchanged."
   else
     info "SSH Include already present and correctly placed (line $inc)."
   fi

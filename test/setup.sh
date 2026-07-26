@@ -153,6 +153,30 @@ assert_rc "catch-all install → exit 0" 0
 assert_contains "catch-all → ordering warning fires" "$(cat "$ERR")" "catch-all"
 assert_eq "catch-all → no second Include added" "1" "$(grep -cxF "$INC" "$SSHCFG")"
 
+# An Include below a SCOPED Host/Match block is worse than the catch-all case:
+# ssh reads it only for the hosts that block matches, so it never applies to a
+# tart-* alias at all. Verified against real ssh -G: nested → the Include's
+# settings are absent; top-level → they apply.
+for block in 'Host github.com' 'Match host github.com'; do
+  sandbox "s3b-${block%% *}"
+  printf '%s\n  User git\n%s\n' "$block" "$INC" > "$SSHCFG"
+  cp "$SSHCFG" "$WORK/s3b.orig"
+  run_setup
+  assert_rc "Include under '$block' → exit 0" 0
+  assert_contains "Include under '$block' → warned as nested" "$(cat "$ERR")" "inside the block starting on line 1"
+  assert_contains "Include under '$block' → names the move target" "$(cat "$ERR")" "above line 1"
+  assert_eq "Include under '$block' → no second Include added" "1" "$(grep -cxF "$INC" "$SSHCFG")"
+  assert_same "Include under '$block' → file left untouched" "$SSHCFG" "$WORK/s3b.orig"
+done
+
+# A top-level Include with a scoped block BELOW it is correct — the placement
+# rule is about the first Host/Match line, not about blocks existing at all.
+sandbox s3c
+printf '%s\nHost github.com\n  User git\n' "$INC" > "$SSHCFG"
+run_setup
+assert_contains "Include above a scoped block → reported correctly placed" "$(cat "$OUT")" "correctly placed"
+assert_absent   "Include above a scoped block → no warning" "$(cat "$ERR")" "Move '"
+
 # install: a foreign file squatting on a command name is warned and left —
 # the installer must not destroy what it didn't create
 sandbox s4a
@@ -163,6 +187,18 @@ assert_rc "foreign file at install → setup still exits 0" 0
 assert_eq "foreign file left untouched" "not ours" "$(cat "$LB/tart-up")"
 assert_contains "foreign file at install → warned about" "$(cat "$ERR")" "not this repo's symlink"
 assert_link "other commands still linked around it" "$LB/tart-new" "$REPO/bin/tart-new"
+
+# The completion name gets the same protection: the uninstall already refuses to
+# remove a foreign file there, so clobbering one at install would delete the
+# user's own completion and leave ours for `make uninstall` to take away.
+sandbox s4b
+mkdir -p "$COMP"
+printf '#compdef tart-new\n# hand-written\n' > "$COMP/_tart-new"
+run_setup
+assert_rc "foreign completion at install → setup still exits 0" 0
+assert_contains "foreign completion left untouched" "$(cat "$COMP/_tart-new")" "hand-written"
+assert_contains "foreign completion → warned about" "$(cat "$ERR")" "_tart-new"
+assert_link "foreign completion → commands still linked" "$LB/tart-up" "$REPO/bin/tart-up"
 
 # uninstall: a foreign same-named symlink is warned and left
 sandbox s4
@@ -195,6 +231,55 @@ run_setup --uninstall
 assert_rc "drifted block → uninstall exit 0" 0
 assert_contains "drifted block → warned about the drift" "$(cat "$ERR")" "drifted"
 assert_same "drifted block → ssh config untouched" "$SSHCFG" "$WORK/s5b.orig"
+
+# A dotfiles-managed ~/.ssh/config is a symlink into that repo. mktemp+mv is
+# what makes the rewrite atomic, but it renames over the LINK — the dotfiles
+# source would freeze at its pre-install content while ssh read a detached copy.
+sandbox s6
+DOTFILES="$SB/dotfiles"; mkdir -p "$DOTFILES"
+printf 'Host github.com\n  User git\n' > "$DOTFILES/ssh_config"
+ln -s "$DOTFILES/ssh_config" "$SSHCFG"
+run_setup
+assert_rc "symlinked ssh config → exit 0" 0
+if [ -L "$SSHCFG" ]; then ok "symlinked ssh config → link survives the write"
+else bad "symlinked ssh config → link survives the write" "$SSHCFG is no longer a symlink"; fi
+assert_contains "symlinked ssh config → Include reaches the dotfiles source" "$(cat "$DOTFILES/ssh_config")" "$INC"
+assert_contains "symlinked ssh config → user config preserved in the source" "$(cat "$DOTFILES/ssh_config")" "Host github.com"
+run_setup
+assert_eq "symlinked ssh config → re-run adds no second Include" "1" "$(grep -cxF "$INC" "$DOTFILES/ssh_config")"
+run_setup --uninstall
+assert_rc "symlinked ssh config → uninstall exit 0" 0
+assert_absent "symlinked ssh config → uninstall strips the Include from the source" "$(cat "$DOTFILES/ssh_config")" "config.d/tart-vms"
+if [ -L "$SSHCFG" ]; then ok "symlinked ssh config → link survives the uninstall"
+else bad "symlinked ssh config → link survives the uninstall" "$SSHCFG is no longer a symlink"; fi
+
+# TART_SSH_CONFIG_D is documented as an override, so the Include has to name the
+# file the sync actually writes — a hard-coded path pointed ssh at nothing.
+sandbox s7
+ALT_GEN="$H/.ssh/alt.d/tart-vms"
+GEN="$ALT_GEN"
+run_setup
+assert_rc "overridden generated path → exit 0" 0
+assert_contains "overridden generated path → Include names it" "$(cat "$SSHCFG")" "Include ~/.ssh/alt.d/tart-vms"
+assert_absent   "overridden generated path → no default-path Include" "$(cat "$SSHCFG")" "config.d/tart-vms"
+assert_path     "overridden generated path → sync wrote there" "$ALT_GEN"
+run_setup
+assert_eq "overridden generated path → re-run recognizes its own Include" "1" \
+  "$(grep -cF 'Include ~/.ssh/alt.d/tart-vms' "$SSHCFG")"
+assert_contains "overridden generated path → re-run reports it placed" "$(cat "$OUT")" "correctly placed"
+
+# setup is run through a symlink by anything that puts script/ on a path; the
+# repo it links the commands from must still be this checkout.
+sandbox s8
+ln -s "$REPO/script/setup" "$SB/setup-link"
+rc=0
+PATH="$MOCKBIN:$PATH" HOME="$H" \
+  TART_LOCAL_BIN="$LB" TART_COMPDIR="$COMP" TART_SSH_CONFIG="$SSHCFG" \
+  TART_FORWARDS="$CFG/forwards" TART_MOUNTS="$CFG/mounts" \
+  TART_SSH_CONFIG_D="$GEN" \
+  bash "$SB/setup-link" >"$OUT" 2>"$ERR" || rc=$?
+assert_rc   "invoked through a symlink → exit 0" 0
+assert_link "invoked through a symlink → links into this checkout" "$LB/tart-up" "$REPO/bin/tart-up"
 
 # argument handling
 run_setup --help
