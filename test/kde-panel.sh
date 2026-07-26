@@ -42,9 +42,12 @@ panel.addWidget("org.kde.plasma.digitalclock")
 JS
 }
 
-run_panel() { # <browser-id> <source> [target]
+run_panel() { # <browser-id> <source> [target] [keep]
   local target="${3:-$WORK/target}"
-  rm -rf "$target"
+  # A clean target per call keeps the failure cases from inheriting an artifact,
+  # but `keep` is what lets the rerun case actually run over a previous result
+  # instead of comparing two first runs.
+  [ "${4:-}" = keep ] || rm -rf "$target"
   rc=0
   OUT=$(PATH="$STUBBIN:/usr/bin:/bin" TART_APPLICATIONS_DIR="$APPS" \
     bash "$SCRIPT" "$1" "$2" "$target" 2>&1) || rc=$?
@@ -135,10 +138,14 @@ assert_contains "plasma 5 launchers pinned" "$(cat "$LAYOUT")" \
 assert_contains "plasma 5 kickoff survives" "$(cat "$LAYOUT")" 'org.kde.plasma.kickoff'
 
 echo "kde-panel — rerun is idempotent against the packaged source:"
-run_panel org.mozilla.firefox.desktop "$SRC"
+RERUN="$WORK/rerun-target"
+run_panel org.mozilla.firefox.desktop "$SRC" "$RERUN"
 first="$(cat "$LAYOUT")"
-run_panel org.mozilla.firefox.desktop "$SRC"
-assert_eq "second run is byte-identical" "$first" "$(cat "$LAYOUT")"
+run_panel org.mozilla.firefox.desktop "$SRC" "$RERUN" keep
+assert_rc "second run over an existing target → exit 0" 0
+assert_eq "second run over an existing target is byte-identical" "$first" "$(cat "$LAYOUT")"
+assert_eq "rerun leaves one launchers line" 1 \
+  "$(grep -c 'writeConfig("launchers"' "$LAYOUT")"
 
 echo
 echo "  $pass passed, $fail failed"
