@@ -10,18 +10,23 @@
 #
 # Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/).
 #
-# A real macOS build reached this file's PHP compile: php-src's ./configure
-# ran far enough to clear libxml2, OpenSSL, PCRE, sqlite3, zlib, and bcmath
-# before failing on bz2 ("bzlib.h not found") — proof that darwin.pkr.hcl's
-# wiring, packages.brew's install, and everything upstream of that flag work
-# on a real guest. The --with-bz2/--with-pdo-pgsql fix below addresses that
-# failure; the PECL loop and extension gate past this point have not yet
-# been proven against a real build. What's below is grounded in the ACTUAL
+# This exact file has run to completion — exit 0, every gate below passing —
+# on macos-probe, the project's dedicated macOS measurement VM: mise_runtime_setup
+# (node, then php compiling from source through `make install`), the PECL
+# loop (pcov/xdebug/imagick/redis/memcached all built), smoke_gate,
+# membership_gate's full token list, and the Composer install. What that
+# proves and what it doesn't: macos-probe is booted and driven directly
+# (`tart run` + ssh), not through darwin.pkr.hcl's own Packer provisioner
+# chain, so 00-base.sh/00-stack.sh/user-config.sh/99-finalize.sh and the
+# file-upload sequence around this script are still unproven by an actual
+# `make build` — only this script's own logic, run the same way Packer
+# invokes it (no execute_command override, packages.brew's formulas
+# pre-installed), is confirmed. What's below is grounded in the ACTUAL
 # source of the pinned vfox-php plugin (mise.toml's [tool_alias]:
 # vfox:jdx/vfox-php — confirmed a byte-identical fork of mise-plugins/vfox-php
-# as of 2026-07, read via its hooks/post_install.lua) and, for the flags this
-# file sets directly, php-src's own config.m4 at the pinned php-8.5.8 tag —
-# not guesswork about how PHP configure behaves on macOS in general. See
+# as of 2026-07, read via its hooks/post_install.lua), php-src's own
+# config.m4 at the pinned php-8.5.8 tag, and the measurements above — not
+# guesswork about how PHP configure behaves on macOS in general. See
 # task-13-report.md for exactly what those sources confirmed vs. what is
 # still assumed.
 #
@@ -52,6 +57,21 @@ source /tmp/mise-lib.sh
 # Homebrew helper the PECL loop below shells out to by bare name live there.
 export PATH="/opt/homebrew/bin:$PATH"
 
+# bison is keg-only (unlike re2c, already reachable via /opt/homebrew/bin
+# above), and macOS's own /usr/bin/bison is Apple's last-GPLv2 release
+# (2.3), missing options modern generated grammars need. The vfox-php
+# plugin's own PATH/PKG_CONFIG_PATH construction (see the header above)
+# wraps only the ./configure invocation itself; `make`, a separate
+# subprocess the plugin runs afterward with no such prefix, re-resolves a
+# bare `bison` from whatever PATH this script itself set — finding the
+# system one unless it's added here too. Measured on the project's
+# macos-probe rig (kept for exactly this kind of iteration): configure's own
+# bison check passes ("3.8.2 (ok)") under the plugin's one-shot PATH, then
+# `make` invokes bare `bison` regenerating ext/json/json_parser.tab.c and
+# fails ("invalid option -- W") against /usr/bin/bison's 2.3.
+BISON_PREFIX="$(brew --prefix bison)"
+export PATH="${BISON_PREFIX}/bin:$PATH"
+
 # APPEND to vfox-php's configure line; never set PHP_CONFIGURE_OPTIONS, which
 # that plugin reads as a full replacement — see the linux peer for why.
 #
@@ -70,10 +90,24 @@ export PATH="/opt/homebrew/bin:$PATH"
 # correctly-path-qualified one the plugin's optional_packages logic already
 # added (autoconf's last-flag-wins), reverting the search to a pathless
 # "yes" that only checks /usr/local and /usr — never where Homebrew puts a
-# keg-only formula. This is the exact failure a real build hit here
-# ("bzlib.h not found"); pdo_pgsql was the identical latent bug, just not
-# yet reached. --with-sodium/--with-zip/--with-external-gd stay bare: none
-# of libsodium/libzip/gd is keg-only, and none of their config.m4 accepts a
+# keg-only formula. Measured on macos-probe: that is the exact failure
+# ("bzlib.h not found") a real build hit; pdo_pgsql was the identical latent
+# bug, confirmed on the same rig once bz2 was out of the way.
+#
+# --with-openssl is here because the plugin's own darwin path never adds it
+# at all — unlike its Linux path, which does (see the header above: darwin's
+# required_packages/optional_packages loops wire openssl@3 into
+# PKG_CONFIG_PATH but never add the --with-openssl flag PHP's
+# PHP_SETUP_OPENSSL macro needs to attempt detection in the first place).
+# Measured on macos-probe: without it, `./configure` reports "checking for
+# OpenSSL support... no" and PHP builds with no openssl extension and no
+# https:// stream wrapper at all — silent, since this repo's smoke gate
+# never checked for openssl on either platform (a pre-existing gap this task
+# did not introduce; see task-13-report.md). ext/openssl's own config.m4 is
+# PKG_CHECK_MODULES-only, same as sodium/zip, so the flag stays bare.
+#
+# --with-sodium/--with-zip/--with-external-gd also stay bare: none of
+# libsodium/libzip/gd is keg-only, and none of their config.m4 accepts a
 # directory argument at all (each is PKG_CHECK_MODULES-only, or for
 # external-gd a plain boolean with no [=DIR] in its own AS_HELP_STRING) — the
 # default pkg-config search, which already includes the shared
@@ -82,9 +116,10 @@ export PATH="/opt/homebrew/bin:$PATH"
 # the `gd` formula (packages.brew) specifically — confirmed by reading
 # php-src's ext/gd/config.m4 directly: the external-gd branch is exactly
 # `PKG_CHECK_MODULES([GDLIB], [gdlib >= 2.1.0])`, nothing else.
+#
 # Declared then exported separately (not `export X=$(...)`) so a failing
 # `brew --prefix` isn't masked by the assignment's own exit status — SC2155.
-PHP_EXTRA_CONFIGURE_OPTIONS="--with-sodium --with-bz2=$(brew --prefix bzip2) \
+PHP_EXTRA_CONFIGURE_OPTIONS="--with-openssl --with-sodium --with-bz2=$(brew --prefix bzip2) \
 --with-external-gd --with-pdo-pgsql=$(brew --prefix libpq) --with-zip"
 export PHP_EXTRA_CONFIGURE_OPTIONS
 
@@ -117,10 +152,34 @@ pecl channel-update pecl.php.net \
 # bin/tart-ssh-sync's `seen` variable (`case "$seen" in *"|$vm|"*)`).
 pecl_ok="|"
 pecl_installed() { case "$pecl_ok" in *"|$1|"*) return 0 ;; *) return 1 ;; esac; }
+
+# memcached's own build (PECL's, entirely separate from php-src's ./configure
+# above) interactively prompts for --with-zlib-dir; zlib is keg-only, and an
+# empty answer resolves to --with-zlib-dir=no — the same class of failure
+# bz2/pdo_pgsql hit above, just in a third, independent build script. `pecl
+# install -D with-zlib-dir=...` (its documented way to pre-answer a prompt)
+# crashes this PHP version's bundled PEAR installer outright — measured on
+# the project's macos-probe rig: a TypeError in PEAR/Builder.php, unrelated
+# to zlib itself — so the answer is supplied positionally instead: measured
+# on the same rig, --with-zlib-dir is the 2nd of memcached's interactive
+# prompts (1st: --with-libmemcached-dir, fine left at its "no" default since
+# libmemcached isn't keg-only), followed by five more that also default
+# safely to "no"/"yes" on an empty answer.
+pecl_install_one() {
+  case "$1" in
+    memcached)
+      printf '\n%s\n\n\n\n\n\n\n\n\n\n' "$(brew --prefix zlib)" | pecl install "$1"
+      ;;
+    *)
+      yes '' | pecl install "$1"
+      ;;
+  esac
+}
 for ext in pcov xdebug imagick redis memcached; do
-  # Subshell disables pipefail just for this pipeline: `yes` exits 141 on
-  # SIGPIPE when pecl closes stdin, which pipefail would misread as failure.
-  if (set +o pipefail; yes '' | pecl install "$ext"); then
+  # Subshell disables pipefail just for this pipeline: `yes`/`printf` exits
+  # 141 on SIGPIPE when pecl closes stdin, which pipefail would misread as
+  # failure.
+  if (set +o pipefail; pecl_install_one "$ext"); then
     pecl_ok="${pecl_ok}${ext}|"
   else
     echo "WARNING: pecl install $ext failed — ini file will be skipped." >&2

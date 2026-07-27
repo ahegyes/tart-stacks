@@ -19,13 +19,32 @@
 # scripts/darwin/mise-install.sh's header for what that means for this list and
 # what is still unverified.
 
-# Build toolchain (buildconf + configure need these; the plugin PATH-only-wires
-# bison/re2c, so pkg_install_optional's own PATH-driven install is what makes
-# them reachable at all)
+# Build toolchain (buildconf + configure need these). bison is keg-only and
+# needs its own PATH entry beyond what pkg_install_optional's install alone
+# provides — see scripts/darwin/mise-install.sh's PATH export for why: the
+# plugin's own PATH-only-wiring for it covers only the ./configure
+# subprocess, not the separate `make` that follows, and macOS's own
+# /usr/bin/bison is Apple's last-GPLv2 2.3, too old for generated grammars
+# that need modern options (measured on macos-probe: `make` invoking bare
+# `bison` against 2.3 fails regenerating ext/json/json_parser.tab.c with
+# "invalid option -- W"). re2c has no such gap — Homebrew's re2c isn't
+# keg-only, so it symlinks straight into /opt/homebrew/bin
 autoconf automake libtool pkg-config bison re2c
 # Core compile deps the plugin wires into PKG_CONFIG_PATH unconditionally
 # (macOS ships none of these as a linkable, pkg-config-discoverable dev tree)
 libxml2 openssl@3 zlib krb5 libedit curl
+# iconv — the ext/iconv extension is on by default (opt-out, not opt-in) and
+# not in the plugin's own required/optional formula lists at all; macOS ships
+# no /usr/include/iconv.h (that header is part of the optional "macOS SDK
+# headers for system frameworks" package this repo doesn't install), and
+# php-src's PHP_SETUP_ICONV macro already probes $(brew --prefix)/opt/libiconv
+# on its own (a check php-src added specifically for this — see
+# github.com/php/php-src/pull/19475, named in the macro's own source comment)
+# — so installing this formula is the entire fix; no configure flag needed.
+# Measured on macos-probe: absent, configure fails outright ("Please specify
+# the install prefix of iconv with --with-iconv=<DIR>"); present, no flag
+# required at all.
+libiconv
 # pdo_sqlite, sqlite3 — PHP 8.4+ dropped its bundled SQLite copy, so a linkable
 # sqlite3 is mandatory on every platform now, not just this one; also one of
 # the plugin's PKG_CONFIG_PATH-wired formulas
