@@ -10,15 +10,20 @@
 #
 # Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/).
 #
-# UNVERIFIED — never run against a real macOS build. darwin.pkr.hcl's
-# mise-install.sh provisioner names this exact file, so the wiring is done;
-# what's missing is a real `make build` proving it. What's below is grounded
-# in the ACTUAL source of the pinned vfox-php plugin
-# (mise.toml's [tool_alias]: vfox:jdx/vfox-php — confirmed a byte-identical
-# fork of mise-plugins/vfox-php as of 2026-07, read via its
-# hooks/post_install.lua), not guesswork about how PHP configure behaves on
-# macOS in general. See task-13-report.md for exactly what that source
-# confirmed vs. what is still assumed.
+# A real macOS build reached this file's PHP compile: php-src's ./configure
+# ran far enough to clear libxml2, OpenSSL, PCRE, sqlite3, zlib, and bcmath
+# before failing on bz2 ("bzlib.h not found") — proof that darwin.pkr.hcl's
+# wiring, packages.brew's install, and everything upstream of that flag work
+# on a real guest. The --with-bz2/--with-pdo-pgsql fix below addresses that
+# failure; the PECL loop and extension gate past this point have not yet
+# been proven against a real build. What's below is grounded in the ACTUAL
+# source of the pinned vfox-php plugin (mise.toml's [tool_alias]:
+# vfox:jdx/vfox-php — confirmed a byte-identical fork of mise-plugins/vfox-php
+# as of 2026-07, read via its hooks/post_install.lua) and, for the flags this
+# file sets directly, php-src's own config.m4 at the pinned php-8.5.8 tag —
+# not guesswork about how PHP configure behaves on macOS in general. See
+# task-13-report.md for exactly what those sources confirmed vs. what is
+# still assumed.
 #
 # What the plugin's darwin path does on its own (informing what this script
 # does NOT need to repeat): reads HOMEBREW_PREFIX (defaults /opt/homebrew) and
@@ -50,32 +55,38 @@ export PATH="/opt/homebrew/bin:$PATH"
 # APPEND to vfox-php's configure line; never set PHP_CONFIGURE_OPTIONS, which
 # that plugin reads as a full replacement — see the linux peer for why.
 #
-# Same flags as ../linux/mise-install.sh, unchanged, and deliberately still
-# explicit here even though the plugin's own darwin path would add
-# --with-sodium/--with-bz2/--with-external-gd/--with-pdo-pgsql automatically
-# IF it finds the matching Homebrew formula: that auto-add is presence-based
-# and silent on a miss (see the header above), the same silent-skip failure
-# mode packages.dnf/apt sidestep by stating flags outright on linux. Passing
-# them here means a missing brew formula fails configure loudly instead.
-# --with-zip has no such auto-add path on darwin at all (libzip only gets
-# PKG_CONFIG_PATH wiring, never a flag) — this is the one flag that is not
-# redundant with the plugin's own logic on either platform.
-#
-# --with-external-gd specifically needs the `gd` formula (packages.brew) for
-# its gdlib.pc — php-src's own configure runs PKG_CHECK_MODULES([GDLIB],
-# [gdlib >= 2.1.0]) for this flag, and that .pc file ships with `gd` itself,
-# NOT with its dependencies. The plugin's own has_gd_deps check (see the
-# header above) only verifies freetype/jpeg/libpng are present before adding
-# this same flag on its own — none of those three provide gdlib.pc either,
-# so that auto-add path has the identical gap. Confirmed on this host via
-# `brew info --json gd` (dependencies: fontconfig, freetype, jpeg-turbo,
-# libavif, libpng, libtiff, webp — none of which is a substitute for gd
-# itself) and by reading gd's shipped gdlib.pc directly. Because this flag is
-# FORCED here rather than probed, a missing `gd` formula would not silently
-# drop the extension — it would fail php-src's ./configure outright and abort
-# the whole PHP build, before this script's PECL loop or smoke gate ever run.
-export PHP_EXTRA_CONFIGURE_OPTIONS="--with-sodium --with-bz2 \
---with-external-gd --with-pdo-pgsql --with-zip"
+# Every flag below is stated explicitly rather than left to the plugin's own
+# presence-based auto-add (see the header above) so a missing brew formula
+# fails configure loudly instead of silently shipping a smaller PHP — same
+# reasoning as packages.dnf/apt on linux. --with-bz2 and --with-pdo-pgsql
+# additionally need an explicit directory: their php-src config.m4 (read at
+# the pinned php-8.5.8 tag) does a raw header/pg_config path search with no
+# pkg-config fallback, and bzip2/libpq are two of packages.brew's twelve
+# keg-only formulas — Homebrew never symlinks their headers into the shared
+# /opt/homebrew/include every non-keg-only formula lands in, only under their
+# own $(brew --prefix <formula>). A bare --with-bz2/--with-pdo-pgsql here
+# doesn't just fail to help — PHP_EXTRA_CONFIGURE_OPTIONS is appended AFTER
+# the plugin's own configure string, so a bare flag here OVERRIDES the
+# correctly-path-qualified one the plugin's optional_packages logic already
+# added (autoconf's last-flag-wins), reverting the search to a pathless
+# "yes" that only checks /usr/local and /usr — never where Homebrew puts a
+# keg-only formula. This is the exact failure a real build hit here
+# ("bzlib.h not found"); pdo_pgsql was the identical latent bug, just not
+# yet reached. --with-sodium/--with-zip/--with-external-gd stay bare: none
+# of libsodium/libzip/gd is keg-only, and none of their config.m4 accepts a
+# directory argument at all (each is PKG_CHECK_MODULES-only, or for
+# external-gd a plain boolean with no [=DIR] in its own AS_HELP_STRING) — the
+# default pkg-config search, which already includes the shared
+# /opt/homebrew/lib/pkgconfig (confirmed empirically), finds all three
+# without help. --with-external-gd's own target is `gdlib.pc`, shipped by
+# the `gd` formula (packages.brew) specifically — confirmed by reading
+# php-src's ext/gd/config.m4 directly: the external-gd branch is exactly
+# `PKG_CHECK_MODULES([GDLIB], [gdlib >= 2.1.0])`, nothing else.
+# Declared then exported separately (not `export X=$(...)`) so a failing
+# `brew --prefix` isn't masked by the assignment's own exit status — SC2155.
+PHP_EXTRA_CONFIGURE_OPTIONS="--with-sodium --with-bz2=$(brew --prefix bzip2) \
+--with-external-gd --with-pdo-pgsql=$(brew --prefix libpq) --with-zip"
+export PHP_EXTRA_CONFIGURE_OPTIONS
 
 echo "==> Node ~30s, PHP ~5-10 min from source compile"
 mise_runtime_setup

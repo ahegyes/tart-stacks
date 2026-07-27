@@ -48,28 +48,50 @@ libzip
 # fontconfig, freetype, jpeg-turbo, libavif, libpng, libtiff, webp), not a
 # meta-package for them.
 gd
-# freetype/libpng/webp — also `gd`'s own dependencies (Homebrew installs them
-# automatically once gd, above, is installed), listed here too because the
-# vfox-php plugin's own build logic independently probes each of these by
-# name to auto-add its own --with-freetype/--with-png/--with-webp flag; this
-# makes that side effect visible instead of leaving it implicit in gd's
-# dependency tree
+# freetype/libpng/webp — `gd`'s own dependencies (Homebrew installs them
+# automatically once gd, above, is installed); listed here too for
+# visibility, though --with-freetype/--with-png/--with-webp (which the
+# plugin's own build logic would auto-add for these) apply only to PHP's
+# BUNDLED gd build — php-src's ext/gd/config.m4 documents them "only for
+# bundled libgd", and this build forces --with-external-gd, so those three
+# flags are inert here. What actually matters is that `gd`'s own compiled
+# library already links freetype/libpng/webp (and libavif — see the header
+# above), which --with-external-gd picks up as-is
 freetype libpng webp
-# jpeg — NOT an alias for jpeg-turbo, which `gd` depends on above. Homebrew
-# ships them as two separate, independently-versioned formulas (`jpeg`'s own
-# aliases are libjpeg/libjpg; confirmed via `brew info --json jpeg` vs
-# `jpeg-turbo`, which has no relation). Listed because the plugin's build
-# logic probes specifically for a formula named `jpeg` for its own
-# --with-jpeg flag; jpeg-turbo (gd's actual JPEG dependency) installs
-# regardless, pulled in transitively by gd above
+# jpeg — NOT an alias for jpeg-turbo, which `gd` depends on above (Homebrew
+# ships them as two separate, independently-versioned formulas; `jpeg`'s own
+# aliases are libjpeg/libjpg). The plugin's build logic would auto-add
+# --with-jpeg for this formula, but — same as freetype/libpng/webp above —
+# that flag is inert under the forced --with-external-gd; jpeg-turbo (gd's
+# actual, load-bearing JPEG dependency) installs regardless, pulled in
+# transitively by gd. Kept here mainly so a future reader isn't left
+# wondering why two differently-named jpeg formulas exist side by side
 jpeg
-# sodium — the plugin auto-adds --with-sodium when this resolves
+# sodium — the plugin's own optional_packages logic auto-adds --with-sodium
+# when this resolves; harmless either way, since ext/sodium's config.m4 is
+# PKG_CHECK_MODULES-only (no directory argument) and libsodium isn't
+# keg-only, so the default pkg-config search finds it regardless
 libsodium
-# readline — the plugin auto-adds --with-readline when this resolves
+# readline — the plugin's own optional_packages logic auto-adds a
+# path-qualified --with-readline=$(brew --prefix readline), and that path IS
+# needed: readline is keg-only and ext/readline's config.m4 does a raw
+# header-path search with no pkg-config fallback (--with-libedit, the
+# alternative that path exists for, is never selected here)
 readline
-# bz2 — the plugin auto-adds --with-bz2 when this resolves
+# bz2 — scripts/darwin/mise-install.sh states --with-bz2=$(brew --prefix
+# bzip2) explicitly rather than relying on the plugin's own auto-add: bzip2
+# is keg-only, ext/bz2's config.m4 has no pkg-config fallback at all, and
+# PHP_EXTRA_CONFIGURE_OPTIONS is appended after the plugin's own configure
+# string — restating the flag WITHOUT a path there would silently override
+# the plugin's already-correct one back to a bare "yes", the exact failure a
+# real build caught ("bzlib.h not found")
 bzip2
-# pdo_pgsql — the plugin auto-adds --with-pdo-pgsql when this resolves
+# pdo_pgsql — same reasoning and same fix as bz2 above: libpq is keg-only,
+# ext/pdo_pgsql's config.m4 falls back to a raw pg_config/header search with
+# no usable pkg-config path (libpq isn't in the plugin's PKG_CONFIG_PATH-wired
+# formula list, only its path-qualified-flag one), and
+# scripts/darwin/mise-install.sh states --with-pdo-pgsql=$(brew --prefix
+# libpq) explicitly for the same override-safety reason
 libpq
 # PECL imagick (runtime + headers)
 imagemagick
