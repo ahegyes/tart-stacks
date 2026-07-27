@@ -11,11 +11,13 @@ source /tmp/family-lib.sh
 
 # The image name and the provenance manifest are both written from OS, so a build
 # that landed on the wrong base would ship an image mislabeled as something it is
-# not — and every clone would inherit the lie.
+# not — and every clone would inherit the lie. The guest being Darwin at all is
+# already asserted above, at the source line: family-lib.sh's _detect_family
+# hard-exits before returning control here if uname -s isn't Darwin, so the only
+# mislabeling this build can still commit is a wrong OS token.
 echo "==> Verifying the guest is the os this build claims (${OS:-unset})..."
-guest_os="$(uname -s)"
-if [ "$guest_os" != "Darwin" ] || [ "${OS:-}" != "macos" ]; then
-  echo "ERROR: this darwin-platform provisioner expects a Darwin guest with OS=macos, but found guest kernel='${guest_os}' and OS='${OS:-unset}'. Refusing to mislabel the image." >&2
+if [ "${OS:-}" != "macos" ]; then
+  echo "ERROR: this darwin-platform provisioner expects OS=macos, but found OS='${OS:-unset}'. Refusing to mislabel the image." >&2
   exit 1
 fi
 
