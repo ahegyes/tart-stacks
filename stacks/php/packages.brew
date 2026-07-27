@@ -1,15 +1,15 @@
 # PHP build dependencies (Homebrew formula names), one or more per line; '#'
 # comments and blank lines ignored. Names differ from packages.dnf/packages.apt
 # (Homebrew vs. rpm/deb naming) but the covered capabilities are meant to match,
-# minus one with no macOS equivalent: PHP-FPM's systemd notify (systemd-devel —
-# launchd has no analogue). gd's XPM support is a real gap too (no Homebrew
-# libXpm/X11 formula this build wires up). AVIF is not a gap: Homebrew's `gd`
+# minus two with no macOS equivalent: PHP-FPM's systemd notify (systemd-devel —
+# launchd has no analogue) and gd's XPM support (no Homebrew libXpm/X11
+# formula this build wires up). AVIF is not a third gap: Homebrew's `gd`
 # formula depends on `libavif` unconditionally (confirmed via `brew info
-# --json gd`; its shipped gd.pc links `-lavif`), so AVIF support rides in for
-# free once `gd` is installed below. Installs go through pkg_install_optional,
-# which warns on a missing formula instead of failing; the smoke gate in
-# scripts/darwin/mise-install.sh is what catches a dropped capability — pair
-# list changes with gate changes.
+# --json gd`; its shipped gdlib.pc links `-lavif`), so AVIF support rides in
+# for free once `gd` is installed below. Installs go through
+# pkg_install_optional, which warns on a missing formula instead of failing;
+# the smoke gate in scripts/darwin/mise-install.sh is what catches a dropped
+# capability — pair list changes with gate changes.
 #
 # Cross-checked against the actual build logic of the pinned vfox-php plugin
 # (mise.toml's [tool_alias]: vfox:jdx/vfox-php, a fork of mise-plugins/vfox-php

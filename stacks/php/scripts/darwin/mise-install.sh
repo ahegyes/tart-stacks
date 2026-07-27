@@ -68,7 +68,7 @@ export PATH="/opt/homebrew/bin:$PATH"
 # so that auto-add path has the identical gap. Confirmed on this host via
 # `brew info --json gd` (dependencies: fontconfig, freetype, jpeg-turbo,
 # libavif, libpng, libtiff, webp — none of which is a substitute for gd
-# itself) and by reading gd's shipped gd.pc directly. Because this flag is
+# itself) and by reading gd's shipped gdlib.pc directly. Because this flag is
 # FORCED here rather than probed, a missing `gd` formula would not silently
 # drop the extension — it would fail php-src's ./configure outright and abort
 # the whole PHP build, before this script's PECL loop or smoke gate ever run.
