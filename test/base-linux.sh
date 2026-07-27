@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Behavioral tests for 00-base.sh's guest-agent substrate gate — the check that
-# turns an inherited, undeclared dependency into a declared one. The rest of
-# 00-base.sh needs a booted guest (dnf/apt, systemd), so only this gate is
-# driven here; the shipped block is READ OUT of the script rather than restated,
-# so weakening it changes what these cases do. Plain bash, no framework.
+# Behavioral tests for shared/linux/scripts/00-base.sh's guest-agent substrate
+# gate — the check that turns an inherited, undeclared dependency into a
+# declared one. The rest of 00-base.sh needs a booted guest (dnf/apt, systemd),
+# so only this gate is driven here; the shipped block is READ OUT of the script
+# rather than restated, so weakening it changes what these cases do. Plain
+# bash, no framework. test/base-darwin.sh is the darwin peer.
 set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
@@ -58,7 +59,7 @@ if grep -q 'tart-guest-agent' "$GATE"; then
   ok "lifted the guest-agent gate out of 00-base.sh ($(grep -c . "$GATE") lines)"
 else
   bad "lifted the guest-agent gate out of 00-base.sh" \
-      "extraction produced $(grep -c . "$GATE") line(s) — the gate moved, or the awk anchor at test/base.sh:31 no longer matches it"
+      "extraction produced $(grep -c . "$GATE") line(s) — the gate moved, or the awk anchor at test/base-linux.sh:32 no longer matches it"
   printf '\n  %d passed, %d failed\n' "$pass" "$fail"
   exit 1
 fi
