@@ -290,6 +290,26 @@ for reserved in fedora-php fedora-base fedora-php-kde; do
   assert_absent   "reserved '$reserved' → not reported as a collision" "$(<"$WORK/err")" "already exists"
 done
 
+# The loop above only ever points TART_OS_FILES at a single file ("$WORK/os"),
+# which would behave identically even if tart-new's call site accidentally
+# unquoted "$OS_FILES" — no glob metacharacters, nothing to word-split. In
+# production TART_OS_FILES is a real glob ($REPO/shared/*/os); this runs the
+# actual script once against a genuine multi-file glob so an unquoted
+# "$OS_FILES" there — which would expand at the CALL SITE and shift
+# DESKTOPS_FILE out of position — has an end-to-end assertion that can catch
+# it. "darwin" sorts before "linux": fedora-php only refuses if the guard
+# reaches past the FIRST glob file.
+mkdir -p "$WORK/multi-os/darwin" "$WORK/multi-os/linux"
+printf 'macos\n'  > "$WORK/multi-os/darwin/os"
+printf 'fedora\n' > "$WORK/multi-os/linux/os"
+: > "$TART_CALLS"
+PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_OS_FILE="$WORK/os" \
+  TART_OS_FILES="$WORK/multi-os/*/os" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
+  bash "$BIN/tart-new" fedora-php php fedora >"$WORK/out" 2>"$WORK/err" </dev/null; rc=$?
+assert_eq       "reserved name from the SECOND glob file (linux) refused end-to-end" 1 "$rc"
+assert_contains "end-to-end refusal explains itself" "$(<"$WORK/err")" "reserved base-image name"
+assert_absent   "end-to-end refused reserved name does not clone" "$(<"$TART_CALLS")" "clone"
+
 # A hyphenated project name that merely looks like one stays allowed — the
 # classification is anchored on the supported OS and desktop sets.
 : > "$TART_CALLS"
@@ -335,6 +355,50 @@ check "plain dev VM not a base"        1 tart_is_base_image app-a       "$WORK/s
 check "hyphenated dev VM not a base"   1 tart_is_base_image web-php     "$WORK/stacks" "$WORK/os2" "$WORK/desktops"
 check "unsupported-prefix not a base"    1 tart_is_base_image arch-php    "$WORK/stacks" "$WORK/os2" "$WORK/desktops"
 check "-base without an OS not a base" 1 tart_is_base_image app-base    "$WORK/stacks" "$WORK/os2" "$WORK/desktops"
+
+# Every case above passes "$WORK/os2" — a single file with no glob
+# metacharacters, so it would behave identically even if the 3rd arg were
+# quoted into never expanding. In production it's a real glob
+# (shared/*/os); these cases point it at an actual multi-file glob so the
+# loop reaching past the FIRST matched file is load-bearing, not incidental.
+# "darwin" sorts before "linux" — the same ordering that let the un-fixed
+# PLATFORM resolver silently pick the wrong platform.
+mkdir -p "$WORK/multi-os/darwin" "$WORK/multi-os/linux"
+printf 'macos\n'  > "$WORK/multi-os/darwin/os"
+printf 'fedora\n' > "$WORK/multi-os/linux/os"
+MULTI_GLOB="$WORK/multi-os/*/os"
+
+# tart_is_base_image can `exit` directly (the unreadable-file refusal below),
+# which would kill this whole test script if called bare — every case that
+# touches a real glob goes through a subshell so a stray exit only ends that.
+check_base_image() { # <label> <expected-rc> <name> <stacks-dir> <os-glob> <desktops-file>
+  local label="$1" want="$2"; shift 2
+  local got=0
+  ( tart_is_base_image "$@" ) >/dev/null 2>&1 || got=$?
+  if [ "$got" -eq "$want" ]; then ok "$label"; else bad "$label" "want » rc $want « got » rc $got «"; fi
+}
+
+echo "bin/lib/common.sh — tart_is_base_image, a REAL multi-file glob:"
+check_base_image "<os>-base from the FIRST glob file (darwin) is a base" \
+  0 macos-base "$WORK/stacks" "$MULTI_GLOB" "$WORK/desktops"
+check_base_image "<os>-<stack> from the SECOND glob file (linux) is a base" \
+  0 fedora-php "$WORK/stacks" "$MULTI_GLOB" "$WORK/desktops"
+check_base_image "hyphenated dev name stays dev across a real multi-file glob" \
+  1 web-php "$WORK/stacks" "$MULTI_GLOB" "$WORK/desktops"
+check_base_image "<os>-base dev-lookalike stays dev across a real multi-file glob" \
+  1 app-base "$WORK/stacks" "$MULTI_GLOB" "$WORK/desktops"
+
+# A third glob member that exists but is unreadable, named to sort LAST
+# ("zzz-…") so a name matching neither real token (app-a) forces the loop to
+# actually reach it instead of returning early on darwin or linux.
+mkdir -p "$WORK/multi-os/zzz-unreadable"
+printf 'somelinux\n' > "$WORK/multi-os/zzz-unreadable/os"
+chmod 000 "$WORK/multi-os/zzz-unreadable/os"
+( tart_is_base_image app-a "$WORK/stacks" "$MULTI_GLOB" "$WORK/desktops" ) 2>"$WORK/base-err3"; brc=$?
+if [ "$brc" -ne 0 ]; then ok "unreadable file inside a multi-file glob → loud refusal, no fail-open"
+else bad "unreadable file inside a multi-file glob → loud refusal, no fail-open" "want rc!=0 got rc=0"; fi
+assert_contains "refusal names the unreadable glob member" "$(<"$WORK/base-err3")" "zzz-unreadable"
+chmod 644 "$WORK/multi-os/zzz-unreadable/os"   # WORK is rm -rf'd on exit either way; tidy up regardless
 
 # Unreadable classification data refuses loudly instead of failing open — the
 # helper gates tart-rm's delete path. (Subshell: the guard exits the shell.)

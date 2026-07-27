@@ -77,6 +77,18 @@ assert_platform() { # label want OS=value…
   if [ "$got" = "$want" ]; then ok "$label"; else bad "$label" "want PLATFORM='$want', got '$got'"; fi
 }
 
+# Same trick for BASE_IMAGE, which the darwin work adds: `:=`, so `-p` shows
+# the resolved repo string, not the unexpanded $(if $(filter …)).
+base_image_of() { # OS=value… [MACOS_RELEASE=value] [IMAGE_TAG=value]
+  make -C "$SANDBOX" -s -p -q help "$@" 2>/dev/null \
+    | sed -n 's/^BASE_IMAGE[[:space:]]*:\{0,1\}=[[:space:]]*//p' | head -1
+}
+assert_base_image() { # label want OS=value…
+  local label="$1" want="$2"; shift 2
+  local got; got=$(base_image_of "$@")
+  if [ "$got" = "$want" ]; then ok "$label"; else bad "$label" "want BASE_IMAGE='$want', got '$got'"; fi
+}
+
 # The token gate is shared by check-stack and scaffold. `STACK=.` is the case that
 # motivated sharing it: it satisfies a `[ -d stacks/$(STACK) ]` test, so before the
 # gate it reached bootstrap's base re-clone and only Packer's own validation
@@ -177,6 +189,19 @@ while IFS= read -r d; do
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/darwin/os")
 if [ "$darwin_platform_cases" -gt 0 ]; then ok "shared/darwin/os contributed $darwin_platform_cases PLATFORM case(s)"
 else bad "shared/darwin/os contributed PLATFORM cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# Cirrus publishes macOS per release rather than under a rolling <os> tag, so
+# darwin's BASE_IMAGE can't be derived from OS the way linux's is — these
+# cases are what actually proves that split, not just PLATFORM's name for it.
+echo "Makefile — BASE_IMAGE:"
+assert_base_image "OS=macos resolves to the macos-<release>-base repo (default MACOS_RELEASE)" \
+  "ghcr.io/cirruslabs/macos-tahoe-base:latest" OS=macos
+assert_base_image "OS=fedora resolves to the plain ghcr.io/cirruslabs/<os> repo" \
+  "ghcr.io/cirruslabs/fedora:latest" OS=fedora
+assert_base_image "MACOS_RELEASE override changes the resolved repo" \
+  "ghcr.io/cirruslabs/macos-sequoia-base:latest" OS=macos MACOS_RELEASE=sequoia
+assert_base_image "IMAGE_TAG override carries into the macos repo's tag too" \
+  "ghcr.io/cirruslabs/macos-tahoe-base:26" OS=macos IMAGE_TAG=26
 
 # GUI is read by `$(if $(GUI),…)`, where make truthiness would treat GUI=0 as ON.
 echo "Makefile — check-gui:"
