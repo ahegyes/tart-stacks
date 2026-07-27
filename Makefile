@@ -204,8 +204,12 @@ bootstrap: check-os
 # the provisioner script paths (shared/…, stacks/<stack>/…) resolve.
 # GUI is folded to packer's bool: any non-empty value means true. `de` rides
 # along only with GUI — headless builds must not depend on (or trip over) a
-# DE value leaked from the environment.
-PACKER_VARS = -var stack=$(STACK) -var os=$(OS) $(if $(GUI),-var gui=true -var de=$(DE),-var gui=false)
+# DE value leaked from the environment. Gated on PLATFORM=linux: darwin.pkr.hcl
+# declares no gui/de variable at all (the macOS desktop is intrinsic), and
+# Packer hard-errors on an undeclared -var — check-gui already refuses GUI=1
+# on darwin, so the gate here only has to drop the unconditional -var gui=false
+# that would otherwise reach that template on every darwin build.
+PACKER_VARS = -var stack=$(STACK) -var os=$(OS) $(if $(filter linux,$(PLATFORM)),$(if $(GUI),-var gui=true -var de=$(DE),-var gui=false))
 
 # bootstrap runs from the RECIPE, not the prerequisite list: recipe lines only
 # start after every check- prerequisite has passed, even under `make -j`,
