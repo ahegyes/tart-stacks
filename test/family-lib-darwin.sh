@@ -192,32 +192,80 @@ assert_contains "the agent refusal names the missing path"  "$agent_err" "nope-a
 
 # ── assert_nopasswd_sudo ────────────────────────────────────────────────────
 # The base ships this drop-in already (measured on a real Cirrus base), so
-# the assertion is existence + visudo syntax validity, not an install — the
-# same "assert what the base already guarantees" contract as
-# install_guest_agent above. A corrupt drop-in can break sudo for every
-# account, not just this one, which is why syntax gets its own case distinct
-# from plain existence.
+# the assertion is existence + visudo syntax validity + an actual policy
+# grant, not an install — the same "assert what the base already
+# guarantees" contract as install_guest_agent above. Three layers, not two:
+# existence and visudo -cf syntax validity are NOT sufficient on their own —
+# measured empirically (see shared/darwin/scripts/family-lib.sh's comment):
+# an empty file, a comment-only file, and a file granting NOPASSWD to a
+# DIFFERENT (even nonexistent) user all pass `visudo -cf` with rc=0. Only a
+# `sudo -l -U` policy query (mocked below — the real one would read this
+# host's own sudo policy, which sudo -l -U has no file-argument to redirect)
+# proves the grant itself.
 echo
-echo "family-lib (darwin) — assert_nopasswd_sudo:"
+echo "family-lib (darwin) — assert_nopasswd_sudo, layers 1-2 (existence, syntax):"
 sudoers_err=""
-sudoers_rc() {  # <sudoers-file-path>
+sudoers_rc() {  # <sudoers-file-path> [sudo -l -U output]
   local rc=0
-  sudoers_err=$( ( export SUDOERS_NOPASSWD_FILE="$1"
+  sudoers_err=$( ( export SUDOERS_NOPASSWD_FILE="$1" PATH="$SUDOBIN:$PATH" \
+                      MOCK_SUDO_L_OUTPUT="${2:-(ALL) ALL}"
                     # shellcheck source=/dev/null
                     source "$LIB"
                     assert_nopasswd_sudo ) 2>&1 ) || rc=$?
   printf '%s' "$rc"
 }
+# A dedicated mock, not the shared $MOCKBIN/sudo above (which serves _brew's
+# escalation shape and always exits 0 after logging argv) — assert_nopasswd_
+# sudo's `sudo -n -l -U <user>` needs to print a CONTROLLABLE policy answer,
+# not just succeed. Defaults to a plain "(ALL) ALL" (password-required, no
+# NOPASSWD) — a fail-safe default that refuses unless a case overrides it.
+SUDOBIN="$WORK/sudobin"; mkdir -p "$SUDOBIN"
+cat > "$SUDOBIN/sudo" <<'M'
+#!/usr/bin/env bash
+printf '%s\n' "${MOCK_SUDO_L_OUTPUT:-(ALL) ALL}"
+exit 0
+M
+chmod +x "$SUDOBIN/sudo"
+
 VALID_SUDOERS="$WORK/admin-nopasswd"
 printf 'admin ALL=(ALL) NOPASSWD: ALL\n' > "$VALID_SUDOERS"
 BAD_SUDOERS="$WORK/admin-nopasswd-bad"
 printf 'this is not valid sudoers syntax !!!\n' > "$BAD_SUDOERS"
-assert_eq "a present, syntactically valid drop-in passes"  0 "$(sudoers_rc "$VALID_SUDOERS")"
+assert_eq "a present, syntactically valid, actually-granting drop-in passes" \
+  0 "$(sudoers_rc "$VALID_SUDOERS" '(ALL) ALL
+    (ALL) NOPASSWD: ALL')"
 assert_eq "a missing drop-in is refused"                   1 "$(sudoers_rc "$WORK/does-not-exist")"
 assert_eq "a present but malformed drop-in is refused"     1 "$(sudoers_rc "$BAD_SUDOERS")"
 sudoers_rc "$WORK/does-not-exist" >/dev/null
 assert_contains "the missing-file refusal names the path"    "$sudoers_err" "does-not-exist"
 sudoers_rc "$BAD_SUDOERS" >/dev/null
 assert_contains "the malformed-file refusal names visudo"    "$sudoers_err" "visudo"
+
+# ── layer 3: the file exists and PARSES, but does it actually GRANT? ───────
+# This is the exact reproduction of the reviewer's finding: all three shapes
+# below pass visudo -cf with rc=0 (confirmed empirically — see the mutation
+# proof in the report), so only this layer can refuse them. The must-pass
+# case is not optional: without it, an assert that refuses unconditionally
+# would make all three refusal cases below pass for the wrong reason.
+echo
+echo "family-lib (darwin) — assert_nopasswd_sudo, layer 3 (the policy actually grants NOPASSWD):"
+EMPTY_SUDOERS="$WORK/admin-nopasswd-empty"; : > "$EMPTY_SUDOERS"
+COMMENT_SUDOERS="$WORK/admin-nopasswd-comment"; printf '# just a comment\n' > "$COMMENT_SUDOERS"
+WRONGUSER_SUDOERS="$WORK/admin-nopasswd-wronguser"
+printf 'nonexistent-user ALL=(ALL) NOPASSWD: ALL\n' > "$WRONGUSER_SUDOERS"
+NO_GRANT_OUTPUT='(ALL) ALL'
+GRANT_OUTPUT='(ALL) ALL
+    (ALL) NOPASSWD: ALL'
+assert_eq "an EMPTY file (visudo -cf passes) is refused — no grant"          1 "$(sudoers_rc "$EMPTY_SUDOERS" "$NO_GRANT_OUTPUT")"
+assert_eq "a COMMENT-ONLY file (visudo -cf passes) is refused — no grant"    1 "$(sudoers_rc "$COMMENT_SUDOERS" "$NO_GRANT_OUTPUT")"
+assert_eq "a WRONG-USER grant (visudo -cf passes) is refused — not our user" 1 "$(sudoers_rc "$WRONGUSER_SUDOERS" "$NO_GRANT_OUTPUT")"
+# The must-pass control: the SAME empty file's path is reused here with a
+# GRANTING policy answer, isolating that the refusals above come from the
+# grant check and not from some other property of the empty/comment/wrong-
+# user fixtures.
+assert_eq "a real grant for the build user passes (must-pass control)"      0 "$(sudoers_rc "$EMPTY_SUDOERS" "$GRANT_OUTPUT")"
+sudoers_rc "$EMPTY_SUDOERS" "$NO_GRANT_OUTPUT" >/dev/null
+assert_contains "the no-grant refusal names the build user" "$sudoers_err" "admin"
+assert_contains "the no-grant refusal shows what sudo -l -U actually reported" "$sudoers_err" "(ALL) ALL"
 
 echo; echo "  $pass passed, $fail failed"; [ "$fail" -eq 0 ]

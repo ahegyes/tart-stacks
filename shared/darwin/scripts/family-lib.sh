@@ -143,13 +143,25 @@ SUDOERS_NOPASSWD_FILE="${SUDOERS_NOPASSWD_FILE:-/etc/sudoers.d/${TART_BUILD_USER
 
 # assert_nopasswd_sudo — the base ships this drop-in already (measured), so —
 # the same "assert what the base already guarantees" contract as
-# install_guest_agent — there is nothing here to install. Existence alone
-# isn't enough: a truncated or corrupted drop-in can break sudo for every
-# account on the system, not just this one, so the file is also syntax-
-# checked with visudo -cf before the build trusts it. A future base that
-# drops or corrupts the file fails the build here rather than shipping an
-# image where a clone's non-interactive `ssh <vm> sudo ...` hangs on a
-# password prompt nobody can answer.
+# install_guest_agent — there is nothing here to install. Three layers, not
+# two: existence and visudo -cf syntax validity are necessary but NOT
+# sufficient — measured empirically: an empty file, a comment-only file, and
+# a file granting NOPASSWD to a different (even nonexistent) user all pass
+# `visudo -cf` with rc=0. Only a policy query proves the grant itself.
+#
+# `sudo -l -U "$TART_BUILD_USER"` is that query, not `sudo -u
+# "$TART_BUILD_USER" true`: this script runs as root, and root may become
+# any user without a password, so a `sudo -u` probe would test ROOT's
+# privileges, not the build user's, and pass unconditionally regardless of
+# what the drop-in actually grants — a false-passing probe replacing a
+# false-passing check. `-l -U` instead asks the sudoers POLICY what that
+# user may run — the same thing a real `ssh <vm> sudo ...` consults — and,
+# unlike `visudo -cf`, works when invoked as root without prompting.
+# Matched against the standard sudoers `-l` rendering (confirmed on a real
+# macOS host): a full grant renders as the literal line `(ALL) NOPASSWD:
+# ALL`; a merely-password-required default (e.g. the base's own %admin
+# group rule, present regardless of this file's content) renders as `(ALL)
+# ALL` with no NOPASSWD tag, which correctly does NOT match.
 assert_nopasswd_sudo() {
   [ -f "$SUDOERS_NOPASSWD_FILE" ] || {
     echo "ERROR: no NOPASSWD sudoers drop-in at ${SUDOERS_NOPASSWD_FILE}. This base was expected to ship it already — nothing here installs one." >&2
@@ -159,5 +171,11 @@ assert_nopasswd_sudo() {
     echo "ERROR: ${SUDOERS_NOPASSWD_FILE} failed visudo's syntax check. Refusing to trust a malformed sudoers fragment." >&2
     return 1
   }
-  return 0
+  local grant
+  grant="$(sudo -n -l -U "$TART_BUILD_USER" 2>&1)"
+  case "$grant" in
+    *"NOPASSWD: ALL"*) return 0 ;;
+  esac
+  echo "ERROR: ${TART_BUILD_USER} has no (ALL) NOPASSWD: ALL grant in the sudoers policy, even though ${SUDOERS_NOPASSWD_FILE} exists and parses (sudo -l -U reports: ${grant}). A syntactically valid drop-in that grants nothing, or grants a different user, still leaves 'ssh <vm> sudo ...' hanging on a password prompt no one can answer." >&2
+  return 1
 }

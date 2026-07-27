@@ -96,6 +96,24 @@ check_order() { # <earlier-label> <earlier-line> <later-label> <later-line>
 check_order "the authorized-key gate"     "$gate_line"    "the authorized_keys install" "$install_line"
 check_order "the authorized_keys install" "$install_line" "the sshd drop-in write"      "$sshd_dropin_line"
 
+# Host-safety regression guard (fix round 2, item 2): the coordinator caught
+# these two staging paths unprefixed and empirically confirmed a planted
+# sentinel at the REAL /tmp/tart-stacks-tools / /tmp/tart-stacks-skipped got
+# deleted by a run of this very suite — invisible to every assertion below,
+# since those only ever look under a synthetic TART_ROOT. A static text
+# check is what actually closes that hole: no execution-based case can prove
+# a negative about the real filesystem the way "grep found zero unprefixed
+# occurrences" can. total == prefixed for BOTH names means every reference
+# in the shipped script carries the ${TART_ROOT} prefix — not just the ones
+# this suite happens to exercise.
+echo
+echo "99-finalize (darwin) — the /tmp staging-file paths are TART_ROOT-prefixed everywhere they appear:"
+for base in tart-stacks-tools tart-stacks-skipped; do
+  total=$(grep -c "/tmp/${base}" "$FINALIZE")
+  prefixed=$(grep -c '\${TART_ROOT}/tmp/'"${base}" "$FINALIZE")
+  assert_eq "every /tmp/${base} reference (${total} found) is \${TART_ROOT}-prefixed" "$total" "$prefixed"
+done
+
 # ════════════════════════════════════════════════════════════════════════
 # Part 2 — the runtime-observable region: lifted out and run for real.
 # ════════════════════════════════════════════════════════════════════════

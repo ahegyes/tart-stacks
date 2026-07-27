@@ -135,20 +135,20 @@ echo "==> Writing ${TART_ROOT}/etc/tart-stacks-release..."
   # (install_guest_agent is assert-only on this platform), so there is no
   # build input to record.
   echo ""
-  if [ -f /tmp/tart-stacks-tools ]; then
+  if [ -f "${TART_ROOT}/tmp/tart-stacks-tools" ]; then
     echo "tools:"
-    cat /tmp/tart-stacks-tools
+    cat "${TART_ROOT}/tmp/tart-stacks-tools"
     echo ""
   fi
-  if [ -s /tmp/tart-stacks-skipped ]; then
+  if [ -s "${TART_ROOT}/tmp/tart-stacks-skipped" ]; then
     echo "skipped-optional-packages:"
-    sort -u /tmp/tart-stacks-skipped
+    sort -u "${TART_ROOT}/tmp/tart-stacks-skipped"
   else
     echo "skipped-optional-packages: none recorded"
   fi
 } > "${TART_ROOT}/etc/tart-stacks-release"
 chmod 644 "${TART_ROOT}/etc/tart-stacks-release"
-rm -f /tmp/tart-stacks-tools /tmp/tart-stacks-skipped
+rm -f "${TART_ROOT}/tmp/tart-stacks-tools" "${TART_ROOT}/tmp/tart-stacks-skipped"
 
 # Authorize the user's SSH key. assert_authorized_key_safe (shared/scripts/
 # authorized-key-lib.sh) is the gate — it must run before authorizing the key
