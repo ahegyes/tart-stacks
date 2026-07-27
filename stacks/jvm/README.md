@@ -1,6 +1,6 @@
 # jvm
 
-JVM development stack. Builds a `<distro>-jvm` Tart image (e.g. `fedora-jvm`) preconfigured with Temurin 25 (current Java LTS), Maven, Gradle, sbt, Scala CLI, Kotlin, plus uv (Python project manager) and Node LTS. Intended as a per-project clone source for Java/Scala/Kotlin/mixed-runtime work.
+JVM development stack. Builds a `<os>-jvm` Tart image (e.g. `fedora-jvm`) preconfigured with Temurin 25 (current Java LTS), Maven, Gradle, sbt, Scala CLI, Kotlin, plus uv (Python project manager) and Node LTS. Intended as a per-project clone source for Java/Scala/Kotlin/mixed-runtime work.
 
 For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
@@ -14,7 +14,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 - **sbt** (latest launcher). The bundled binary is the sbt launcher only; actual sbt + Scala compiler versions are pinned per project by each project's `project/build.properties` and resolved on first invocation.
 - **Scala CLI** (latest). Modern Scala command-line tool — self-bootstraps the compiler version each script or project declares. Replaces the legacy system `scala` package.
 - **Kotlin** (latest `kotlinc`). Standalone Kotlin compiler for ad-hoc / single-file work and for bootstrapping. Real Kotlin projects pin the compiler via Gradle's `kotlin` plugin or Maven's `kotlin-maven-plugin`.
-- **uv** (latest). Python project manager. The base image provides a system Python for distro tooling; uv handles per-project Pythons via `python-build-standalone`.
+- **uv** (latest). Python project manager. The base image provides a system Python for OS tooling; uv handles per-project Pythons via `python-build-standalone`.
 - **Node** — whichever LTS line mise's `lts` alias currently points to (`node = "lts"` in `files/mise.toml`). Useful for mixed-runtime projects (Java backend + JS frontend) and for build tooling that ships as npm packages.
 
 **Toolchain extras**

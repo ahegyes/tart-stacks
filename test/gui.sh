@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavioral tests for gui.sh's X11-session gate — the check that decides whether
-# a distro × DE cell can be baked at all. Upstream desktops are retiring their
+# an OS × DE cell can be baked at all. Upstream desktops are retiring their
 # X11 sessions a release at a time and this layer serves the desktop over Xvnc,
 # so this gate is where that retirement surfaces, and its message is the only
 # diagnosis the builder gets. The rest of gui.sh needs a booted guest with a

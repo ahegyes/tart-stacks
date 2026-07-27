@@ -49,13 +49,13 @@ pkg_clean
 # latest tools), so record what they RESOLVED to — "what is this image
 # carrying?" must be answerable from a clone without booting and inspecting
 # tool-by-tool. Staged fragments: /tmp/tart-stacks-tools (mise-install) and
-# /tmp/tart-stacks-skipped (family-lib's optional-install skips). STACK/DISTRO
+# /tmp/tart-stacks-skipped (family-lib's optional-install skips). STACK/OS
 # arrive as environment_vars from the Packer template.
 echo "==> Writing /etc/tart-stacks-release..."
 {
   echo "built: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "stack: ${STACK:-unknown}"
-  echo "distro: ${DISTRO:-unknown}"
+  echo "os: ${OS:-unknown}"
   # gui: <de> | none — the machine-readable "is this a GUI flavor" answer
   # (shared/linux/gui/README.md documents what a `gui: <de>` image exposes).
   if [ "${GUI:-false}" = "true" ]; then echo "gui: ${DE:-unknown}"; else echo "gui: none"; fi

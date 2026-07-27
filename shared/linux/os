@@ -4,7 +4,7 @@
 # (dnf or apt) in shared/linux/scripts/family-lib.sh.
 # The platform that owns this file is its directory: every token here is built
 # by linux.pkr.hcl.
-# Consumed by: Makefile (check-distro), bin/tart-new, bin/tart-up, bin/lib/common.sh,
+# Consumed by: Makefile (check-os), bin/tart-new, bin/tart-up, bin/lib/common.sh,
 # the CI matrix.
 fedora
 ubuntu

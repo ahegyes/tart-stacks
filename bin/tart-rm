@@ -27,7 +27,7 @@ tart_need_cmd jq   "Install: brew install jq"
 # built stack image (GUI flavors included).
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
-DISTROS_FILE="${TART_OS_FILE:-$REPO/shared/linux/os}"
+OS_FILE="${TART_OS_FILE:-$REPO/shared/linux/os}"
 DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/linux/desktops}"
 
 usage() {
@@ -47,12 +47,12 @@ list_failed() {
 }
 STATE=$(tart_vm_state "$VM") || list_failed
 
-# Base images (the `<distro>-base` bootstrap intermediate + every
-# <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — losing
+# Base images (the `<os>-base` bootstrap intermediate + every
+# <os>-<stack>[-<de>] built image) are clone-sources, not dev VMs — losing
 # one costs a 15-20+ min rebuild, so removing one stays a deliberate raw-tart
 # (or make) act. Refuse.
-if tart_is_base_image "$VM" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
-  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to remove it. Delete a base deliberately with 'tart delete $VM', or rebuild it with 'make rebuild STACK=<stack> DISTRO=<distro>'." >&2
+if tart_is_base_image "$VM" "$STACKS_DIR" "$OS_FILE" "$DESKTOPS_FILE"; then
+  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to remove it. Delete a base deliberately with 'tart delete $VM', or rebuild it with 'make rebuild STACK=<stack> OS=<os>'." >&2
   exit 1
 fi
 

@@ -59,11 +59,11 @@ assert_accepts() { # label target VAR=VALUE…
 # `help` is a real .PHONY target so make has no rule-less-target error to swallow,
 # and `-q` skips its body regardless. PLATFORM is simply-expanded (`:=`), so the
 # database shows its resolved value rather than the unexpanded `$(shell …)` text.
-platform_of() { # DISTRO=value…
+platform_of() { # OS=value…
   make -C "$SANDBOX" -s -p -q help "$@" 2>/dev/null \
     | sed -n 's/^PLATFORM[[:space:]]*:\{0,1\}=[[:space:]]*//p' | head -1
 }
-assert_platform() { # label want DISTRO=value…
+assert_platform() { # label want OS=value…
   local label="$1" want="$2"; shift 2
   local got; got=$(platform_of "$@")
   if [ "$got" = "$want" ]; then ok "$label"; else bad "$label" "want PLATFORM='$want', got '$got'"; fi
@@ -99,37 +99,37 @@ assert_rejects "check-stack still applies the token gate" check-stack STACK=.
 gate check-stack STACK=nosuchstack
 assert_contains "the missing-stack refusal lists what exists" "$(cat "$ERR")" "php"
 
-echo "Makefile — check-distro:"
-assert_rejects "empty DISTRO rejected"       check-distro DISTRO=
-assert_rejects "unsupported DISTRO rejected" check-distro DISTRO=arch
-distro_cases=0
+echo "Makefile — check-os:"
+assert_rejects "empty OS rejected"       check-os OS=
+assert_rejects "unsupported OS rejected" check-os OS=arch
+os_cases=0
 while IFS= read -r d; do
-  distro_cases=$((distro_cases + 1))
-  assert_accepts "shared/linux/os token '$d' accepted" check-distro DISTRO="$d"
+  os_cases=$((os_cases + 1))
+  assert_accepts "shared/linux/os token '$d' accepted" check-os OS="$d"
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
-if [ "$distro_cases" -gt 0 ]; then ok "shared/linux/os contributed $distro_cases case(s)"
+if [ "$os_cases" -gt 0 ]; then ok "shared/linux/os contributed $os_cases case(s)"
 else bad "shared/linux/os contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
 # PLATFORM must fail EMPTY, never guess: an empty result turns
 # `packer build … $(PLATFORM).pkr.hcl` into `packer build … .pkr.hcl` — a
-# wrong-but-plausible command instead of a refusal. check-distro's own validity
+# wrong-but-plausible command instead of a refusal. check-os's own validity
 # check above computes a related fact by a different, hardcoded path
 # (shared/linux/os only); these cases exercise the resolver's own shared/*/os
 # scan directly, so they'd catch a divergence between the two that a
 # gate-only test never would.
 echo "Makefile — PLATFORM resolver:"
-unset DISTRO   # so "unset entirely" reflects the Makefile's own `?=` default,
+unset OS   # so "unset entirely" reflects the Makefile's own `?=` default,
                # not whatever the invoking shell happened to export
-assert_platform "DISTRO unset entirely resolves to nothing"               ""
-assert_platform "DISTRO as an explicit empty string resolves to nothing"  "" DISTRO=
-assert_platform "an unsupported DISTRO resolves to nothing"               "" DISTRO=bogus
-assert_platform "a token matching only a comment line resolves to nothing" "" DISTRO=decoytoken
-assert_platform "the decoy fixture's real token resolves to its own dir"  "decoy" DISTRO=realtoken
+assert_platform "OS unset entirely resolves to nothing"               ""
+assert_platform "OS as an explicit empty string resolves to nothing"  "" OS=
+assert_platform "an unsupported OS resolves to nothing"               "" OS=bogus
+assert_platform "a token matching only a comment line resolves to nothing" "" OS=decoytoken
+assert_platform "the decoy fixture's real token resolves to its own dir"  "decoy" OS=realtoken
 
 platform_cases=0
 while IFS= read -r d; do
   platform_cases=$((platform_cases + 1))
-  assert_platform "shared/linux/os token '$d' resolves to linux" "linux" DISTRO="$d"
+  assert_platform "shared/linux/os token '$d' resolves to linux" "linux" OS="$d"
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
 if [ "$platform_cases" -gt 0 ]; then ok "shared/linux/os contributed $platform_cases PLATFORM case(s)"
 else bad "shared/linux/os contributed PLATFORM cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
@@ -174,7 +174,7 @@ prereqs_of() { sed -n "s/^$1:[[:space:]]*//p" "$REPO/Makefile" | head -n1; }
 for target in build rebuild smoke; do
   line="$(prereqs_of "$target")"
   # A loop variable named `gate` would shadow the helper above for a reader.
-  for g in check-stack check-distro check-gui check-de; do
+  for g in check-stack check-os check-gui check-de; do
     case " $line " in
       *" $g "*) ok "$target requires $g" ;;
       *)         bad "$target requires $g" "prerequisites are: ${line:-<none>}" ;;

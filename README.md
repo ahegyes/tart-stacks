@@ -2,16 +2,16 @@
 
 [![validate](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml/badge.svg)](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml)
 
-Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported distro (Fedora, Ubuntu, Debian — see `shared/linux/os`), producing a `<distro>-<stack>` image. Any stack can additionally be built as a **GUI flavor** (`GUI=1 DE=kde|gnome|xfce`) — a desktop environment + loopback-only VNC layer baked on top, producing `<distro>-<stack>-<de>`; the boot contract lives in [shared/linux/gui/README.md](./shared/linux/gui/README.md). Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
+Multi-OS, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported operating system (Fedora, Ubuntu, Debian — see `shared/linux/os`), producing a `<os>-<stack>` image. Any stack can additionally be built as a **GUI flavor** (`GUI=1 DE=kde|gnome|xfce`) — a desktop environment + loopback-only VNC layer baked on top, producing `<os>-<stack>-<de>`; the boot contract lives in [shared/linux/gui/README.md](./shared/linux/gui/README.md). Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
 
 ## Stacks
 
 | Stack | Image name | Purpose | Details |
 |---|---|---|---|
-| `php` | `<distro>-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/php/](./stacks/php/README.md) |
-| `jvm` | `<distro>-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/jvm/](./stacks/jvm/README.md) |
+| `php` | `<os>-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/php/](./stacks/php/README.md) |
+| `jvm` | `<os>-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/jvm/](./stacks/jvm/README.md) |
 
-`<distro>` is the distribution token (e.g. `fedora`). `shared/linux/os` lists the supported values.
+`<os>` is the OS token (e.g. `fedora`). `shared/linux/os` lists the supported values.
 
 All stacks share a common base: mise + zellij + standard dev utilities, wired through a package-family abstraction layer (`shared/linux/scripts/family-lib.sh`) that handles dnf (Fedora) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
@@ -38,7 +38,7 @@ orientation.
 - **Apple Silicon Mac**, M1 or later. M3+ is only needed for nested virtualization (not enabled here).
 - **macOS 26 Tahoe or later.** The floor is set by OpenSSH: the generated SSH config's auto-start hook uses `Match sessiontype`, which needs **OpenSSH 10.0+** and which older ssh rejects as a fatal parse error — in an Included file, that takes down every `ssh` on the host. macOS 26 is the first release to ship it (26.5 has 10.2). `tart-ssh-sync` probes for the keyword and, failing it, writes nothing at all: on an older macOS you get no `tart-<name>` alias, no identity pinning and no connect-time IP resolution, so you reach a VM as `ssh admin@$(tart ip <name>)`. Building and running images works; the SSH ergonomics are what you lose.
 - **8 GB RAM minimum**; 16 GB+ recommended for multiple concurrent VMs.
-- [Tart](https://tart.run/): `brew install openai/tools/tart` — Tart, softnet and the guest agent moved to the `openai` org; the older `cirruslabs/cli` tap is frozen and current Homebrew refuses to load formulae from it. Distro base images are still published under `ghcr.io/cirruslabs`.
+- [Tart](https://tart.run/): `brew install openai/tools/tart` — Tart, softnet and the guest agent moved to the `openai` org; the older `cirruslabs/cli` tap is frozen and current Homebrew refuses to load formulae from it. OS base images are still published under `ghcr.io/cirruslabs`.
 - [Packer](https://www.packer.io/): `brew install hashicorp/tap/packer`
 - [jq](https://jqlang.org/) — the host commands (`tart-new`, `tart-up`, `tart-rm`, `tart-down`) parse `tart list --format json` with it. macOS 15+ ships one at `/usr/bin/jq`, so this is normally already satisfied; `brew install jq` if `jq --version` fails.
 
@@ -194,22 +194,22 @@ See Tart's `--net-*` documentation for the flag vocabulary.
 
 ```bash
 make init                             # one-time: installs the Tart Packer plugin
-make build STACK=php DISTRO=fedora    # bootstrap + build (~15-20 min for PHP — compiles from source)
+make build STACK=php OS=fedora        # bootstrap + build (~15-20 min for PHP — compiles from source)
 tart list                             # confirm fedora-php is present
 ```
 
-`make build` chains `make bootstrap` first (pulls `ghcr.io/cirruslabs/<distro>:latest`, refreshes the local `<distro>-base` image), then runs Packer through the stack's provisioner chain.
+`make build` chains `make bootstrap` first (pulls `ghcr.io/cirruslabs/<os>:latest`, refreshes the local `<os>-base` image), then runs Packer through the stack's provisioner chain.
 
 **The Fedora images are not built on the release the base is published at.** Upstream pins its Fedora image to a release that is already past end of life and advances it by hand, so re-pulling the base never moves it. The first provisioner in `linux.pkr.hcl` therefore calls `pkg_release_upgrade` (from `shared/linux/scripts/family-lib.sh`), lifting the guest to `FEDORA_TARGET_RELEASE` and rebooting before anything is installed — about two extra minutes on a Fedora build, and nothing at all on Debian or Ubuntu, whose bases their publisher keeps current. `00-base.sh` then refuses any release past its own `SUPPORT_END`, so letting that pin go stale fails the build instead of quietly shipping an unpatched image. Raising it is a one-line edit, capped by dnf's two-release upgrade limit; `pkg_release_upgrade` refuses a wider jump and names the highest target you can reach in one hop.
 
 **Build auth.** Cirrus's `admin/admin` for provisioning. Each stack's `shared/linux/scripts/99-finalize.sh` runs LAST and atomically establishes the final access posture: authorizes your `tart-vm.pub`, writes `00-vm-hardening.conf` disabling password auth (the `00-` prefix is load-bearing — it wins over cloud-init's `50-cloud-init.conf` which re-enables password auth), installs NOPASSWD sudoers, and locks the admin password (`passwd -l`). Bundling these means Packer's password-authed session stays valid through every preceding script and there's no fragility window between disabling password auth and disconnect.
 
-**Pin a base image tag:** `IMAGE_TAG=42 make bootstrap DISTRO=fedora`. Cirrus publishes `latest` and version-pinned tags per distro.
+**Pin a base image tag:** `IMAGE_TAG=42 make bootstrap OS=fedora`. Cirrus publishes `latest` and version-pinned tags per OS.
 
 **GUI flavor.** Add `GUI=1` (and optionally `DE=kde|gnome|xfce`, default `kde` — see `shared/linux/desktops`) to bake a desktop environment, display manager, and a loopback-only VNC server on top of the same stack:
 
 ```bash
-make build STACK=php DISTRO=fedora GUI=1 DE=kde    # builds fedora-php-kde (~+10 min, ~+2 GB)
+make build STACK=php OS=fedora GUI=1 DE=kde    # builds fedora-php-kde (~+10 min, ~+2 GB)
 ```
 
 The image still boots headless by default; a boot opts into the desktop by starting `tart-stacks-vnc.service` (VNC on `127.0.0.1:5901`, reach it through `ssh -L 5901:127.0.0.1:5901 tart-<vm>`) or isolating `graphical.target` — the latter shows a window only when the VM was launched with one (plain `tart run <vm>`, or `tart-up` and the `ssh` auto-start when the VM's entry in the gui config selects `window` — they boot `--no-graphics` otherwise, and VNC works either way). Autologin is baked (the image locks the account password, so a greeter would be a dead end), and the desktop deliberately changes nothing about the network posture. The full contract — boot modes, VNC surface, support matrix (every cell but fedora × gnome, which Fedora's Wayland-only GNOME rules out) — is [shared/linux/gui/README.md](./shared/linux/gui/README.md).
@@ -224,7 +224,7 @@ tart-new gui-a php fedora kde   # same, from the GUI flavor fedora-php-kde
 ssh tart-app-a                  # auto-starts the stopped clone and connects
 ```
 
-`tart-new <name> <stack> <distro> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses a name in the reserved base-image namespace (`<distro>-base`, `<distro>-<stack>`, `<distro>-<stack>-<de>` — those are clone sources, and the rest of the toolchain declines to touch them), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) and the virtual display geometry (`--display`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php DISTRO=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/linux/gui/README.md](./shared/linux/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
+`tart-new <name> <stack> <os> [<de>]` guards `tart clone`: it fails with a clear message if the stack doesn't exist or its image isn't built (offering to build it), refuses a name in the reserved base-image namespace (`<os>-base`, `<os>-<stack>`, `<os>-<stack>-<de>` — those are clone sources, and the rest of the toolchain declines to touch them), refuses to clobber an existing VM, and folds in resources (`--cpu`/`--memory`/`--disk-size`) and the virtual display geometry (`--display`) that would otherwise be a separate `tart set`. `<stack>` is the short token, as in `make build STACK=php OS=fedora`; the optional `<de>` selects a GUI flavor image, as in `GUI=1 DE=kde` (see [shared/linux/gui/README.md](./shared/linux/gui/README.md)); the raw equivalent is `tart clone fedora-php app-a`. Each clone is a copy-on-write snapshot; rebuilds of a base don't affect existing clones. The `tart-*` wildcard config makes the new clone reachable as `ssh tart-app-a` immediately — no per-VM `tart-ssh-sync` step.
 
 **Per-clone tweaks** (no rebuild required):
 
@@ -253,7 +253,7 @@ Detach (leaving the session running) with `Ctrl-o` then `d`; reconnect later fro
 
 ```bash
 # edit a file under shared/ or stacks/<name>/
-make rebuild STACK=php DISTRO=fedora    # force-overwrites the existing fedora-php image
+make rebuild STACK=php OS=fedora    # force-overwrites the existing fedora-php image
 ```
 
 New project VMs cloned after the rebuild get the updated base. Existing project VMs are unaffected — they're already independent clones.
@@ -303,24 +303,24 @@ nobody is talking to.
 
 ## Adding a new stack
 
-1. `make scaffold STACK=<name>` — stamps `stacks/<name>/` from `templates/stack/`: a generic `00-stack.sh` (reads `packages.<family>` for the build distro), a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, `packages.dnf`, `packages.apt`, and a `README.md`. One parameterized root `linux.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
+1. `make scaffold STACK=<name>` — stamps `stacks/<name>/` from `templates/stack/`: a generic `00-stack.sh` (reads `packages.<family>` for the build OS), a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, `packages.dnf`, `packages.apt`, and a `README.md`. One parameterized root `linux.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
 2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). If the stack needs native build deps (e.g., compile-from-source runtimes), add them to `packages.dnf` (Fedora/dnf names) and `packages.apt` (Debian/Ubuntu/apt names) — keep the two files aligned.
-3. `make build STACK=<name> DISTRO=<distro>` — or `packer validate -var stack=<name> -var distro=<distro> linux.pkr.hcl` for a fast HCL pre-check. `<distro>` must appear in `shared/linux/os`.
+3. `make build STACK=<name> OS=<os>` — or `packer validate -var stack=<name> -var os=<os> linux.pkr.hcl` for a fast HCL pre-check. `<os>` must appear in `shared/linux/os`.
 4. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/*/` and cross-products with `shared/linux/os` — no workflow edit needed.
 
-## Adding a distro
+## Adding an OS
 
-1. Add the distro token (one line) to `shared/linux/os`.
-2. Confirm a `ghcr.io/cirruslabs/<distro>` Tart image exists (Cirrus must publish it).
-3. Another **apt-family** distro needs nothing further — the apt branch is portable apt/dpkg only, so a Debian or Ubuntu derivative works with the steps above. The dnf branch is **Fedora-specific** (`rpm -E %fedora` builds a Fedora-release COPR URL, plus `copr enable` and the `development-tools` group), so an enterprise rebuild such as `rocky` is refused by `_detect_family` rather than failed partway through a build. A **new package family** is a code change, not configuration: add a branch to `shared/linux/scripts/family-lib.sh` exporting `_TART_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions — plus `pkg_release_upgrade`, `install_guest_agent` and `assert_mac_enforcing`, which deliberately fail closed for a family they have no branch for rather than letting it inherit an unmanaged release, an unmanaged guest agent, or an unverified MAC posture; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `linux.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
+1. Add the OS token (one line) to `shared/linux/os`.
+2. Confirm a `ghcr.io/cirruslabs/<os>` Tart image exists (Cirrus must publish it).
+3. Another **apt-family** OS needs nothing further — the apt branch is portable apt/dpkg only, so a Debian or Ubuntu derivative works with the steps above. The dnf branch is **Fedora-specific** (`rpm -E %fedora` builds a Fedora-release COPR URL, plus `copr enable` and the `development-tools` group), so an enterprise rebuild such as `rocky` is refused by `_detect_family` rather than failed partway through a build. A **new package family** is a code change, not configuration: add a branch to `shared/linux/scripts/family-lib.sh` exporting `_TART_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions — plus `pkg_release_upgrade`, `install_guest_agent` and `assert_mac_enforcing`, which deliberately fail closed for a family they have no branch for rather than letting it inherit an unmanaged release, an unmanaged guest agent, or an unverified MAC posture; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `linux.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
 4. For each stack that has native build deps, add the equivalent packages to `packages.<new-family>` in that stack's directory.
-5. CI picks up the new distro automatically (matrix is `stacks/*` × `shared/linux/os`).
+5. CI picks up the new OS automatically (matrix is `stacks/*` × `shared/linux/os`).
 
 ## Troubleshooting
 
 - **`packer init` fails with "no plugins for github.com/cirruslabs/tart"** → upgrade Packer (`brew upgrade hashicorp/tap/packer`); the tart plugin requires Packer 1.7+.
-- **Build fails within a minute: "no enabled tart-guest-agent.service"** (or "enabled but not running") → the base image you bootstrapped from carries no working guest agent. `tart exec` — which `tart-up` uses to set a clone's hostname and to activate every GUI mode — is served by a daemon *inside* the VM, so installing Tart on the host cannot supply it. Cirrus's images include it; a hand-rolled or vanilla cloud base may not. Re-pull a base with `make bootstrap DISTRO=<distro>`, or install `tart-guest-agent` into the base image and enable its unit.
-- **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip <distro>-base` (e.g. `tart ip fedora-base`). If blank, the VM didn't get DHCP — `tart stop <distro>-base; tart delete <distro>-base; make bootstrap DISTRO=<distro>` to start over.
+- **Build fails within a minute: "no enabled tart-guest-agent.service"** (or "enabled but not running") → the base image you bootstrapped from carries no working guest agent. `tart exec` — which `tart-up` uses to set a clone's hostname and to activate every GUI mode — is served by a daemon *inside* the VM, so installing Tart on the host cannot supply it. Cirrus's images include it; a hand-rolled or vanilla cloud base may not. Re-pull a base with `make bootstrap OS=<os>`, or install `tart-guest-agent` into the base image and enable its unit.
+- **Build hangs at "Waiting for SSH"** → usually a Tart networking hiccup. Open a second terminal: `tart ip <os>-base` (e.g. `tart ip fedora-base`). If blank, the VM didn't get DHCP — `tart stop <os>-base; tart delete <os>-base; make bootstrap OS=<os>` to start over.
 - **`ssh tart-<name>` triggers Touch ID more than once** → `~/.ssh/config.d/tart-vms` isn't being matched (missing `Include` line, or it's below a `Host *` catch-all), so ssh falls back to defaults and offers every key in Secretive's agent — one Touch ID prompt per key tried. The generated config pins just the Tart VM key (`IdentityFile` + `IdentitiesOnly yes`), so a match is what collapses it to a single prompt. Re-run `make setup` — it adds the `Include` line and warns if an existing one is misplaced. See [Setup §2](#2-install-the-host-tools).
 - **All SSH sessions to a VM drop at once / "broken pipe", and the VM loses forwarded host services** → the VM's `tart run` process crashed (often an Apple Virtualization.framework trap; check `~/Library/Logs/tart-stacks/<name>.run.log` and `~/Library/Logs/DiagnosticReports/tart-*.ips`). Bring it back with `tart stop <name>` then `ssh tart-<name>`. Recovery is manual by design — see [When a VM crashes](#when-a-vm-crashes).
 

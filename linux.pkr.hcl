@@ -10,33 +10,33 @@ packer {
   }
 }
 
-# One parameterized template builds every stack: `packer build -var stack=<name> -var distro=<distro>`
+# One parameterized template builds every stack: `packer build -var stack=<name> -var os=<os>`
 # from the repo root (the Makefile runs it there — provisioner script paths
 # resolve against the cwd, not this file). The invariant pipeline lives here;
 # per-stack content is just stacks/<stack>/{scripts,files}.
 
 variable "stack" {
   type        = string
-  description = "Short stack token (php, jvm, …). The built image is <distro>-<stack>, cloned from stacks/<stack>/."
+  description = "Short stack token (php, jvm, …). The built image is <os>-<stack>, cloned from stacks/<stack>/."
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.stack))
     error_message = "Stack must be a lowercase alphanumeric token such as php or jvm."
   }
 }
 
-variable "distro" {
+variable "os" {
   type        = string
-  description = "Distro token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/linux/os and a branch in family-lib.sh. The built image is <distro>-<stack>, cloned from <distro>-base."
+  description = "OS token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/linux/os and a branch in family-lib.sh. The built image is <os>-<stack>, cloned from <os>-base."
   validation {
-    condition     = can(regex("^[a-z0-9]+$", var.distro))
-    error_message = "Distro must be a lowercase alphanumeric token such as fedora, ubuntu, or debian."
+    condition     = can(regex("^[a-z0-9]+$", var.os))
+    error_message = "OS must be a lowercase alphanumeric token such as fedora, ubuntu, or debian."
   }
 }
 
 variable "gui" {
   type        = bool
   default     = false
-  description = "Bake the optional desktop layer (shared/linux/scripts/gui.sh): a desktop environment, display manager, and a localhost-only VNC server. The built image is <distro>-<stack>-<de>. Boot contract in shared/linux/gui/README.md."
+  description = "Bake the optional desktop layer (shared/linux/scripts/gui.sh): a desktop environment, display manager, and a localhost-only VNC server. The built image is <os>-<stack>-<de>. Boot contract in shared/linux/gui/README.md."
 }
 
 variable "de" {
@@ -61,16 +61,16 @@ locals {
   # key auth.
   ssh_password = "admin"
 
-  # The source is <distro>-base, the intermediate `make bootstrap` clones from the
+  # The source is <os>-base, the intermediate `make bootstrap` clones from the
   # upstream image — derived, never overridable. An override could name a base from
-  # another distro, and since the output name and the provenance manifest both come
-  # from var.distro, that build would succeed and ship mislabeled.
-  source_image = "${var.distro}-base"
+  # another OS, and since the output name and the provenance manifest both come
+  # from var.os, that build would succeed and ship mislabeled.
+  source_image = "${var.os}-base"
 
   # The -<de> suffix keeps GUI flavors distinguishable (and side-by-side
   # buildable) in `tart list`; the provenance manifest records the same fact
   # as its `gui:` line.
-  vm_name = var.gui ? "${var.distro}-${var.stack}-${var.de}" : "${var.distro}-${var.stack}"
+  vm_name = var.gui ? "${var.os}-${var.stack}-${var.de}" : "${var.os}-${var.stack}"
 }
 
 variable "ssh_pubkey_path" {
@@ -198,9 +198,9 @@ build {
   # package-manager transaction sequence unambiguous.
   provisioner "shell" {
     # {{ .Vars }} is required for environment_vars to reach the script at all;
-    # 00-base.sh asserts the guest it landed in is the distro this build claims.
+    # 00-base.sh asserts the guest it landed in is the OS this build claims.
     execute_command  = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
-    environment_vars = ["DISTRO=${var.distro}"]
+    environment_vars = ["OS=${var.os}"]
     scripts = [
       "shared/linux/scripts/00-base.sh",
       "stacks/${var.stack}/scripts/00-stack.sh",
@@ -278,7 +278,7 @@ build {
     # all. They prefix sudo, and -E carries them into the script.
     execute_command   = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
     # The provenance manifest names the cell it was built as.
-    environment_vars  = ["STACK=${var.stack}", "DISTRO=${var.distro}", "GUI=${var.gui}", "DE=${var.de}"]
+    environment_vars  = ["STACK=${var.stack}", "OS=${var.os}", "GUI=${var.gui}", "DE=${var.de}"]
     expect_disconnect = true
     scripts           = ["shared/linux/scripts/99-finalize.sh"]
   }

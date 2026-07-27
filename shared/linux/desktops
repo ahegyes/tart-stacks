@@ -1,7 +1,7 @@
 # shared/linux/desktops — desktop environments the optional GUI layer can bake
 # (`make build … GUI=1 DE=<de>`). One token per line; '#' comments and blank
 # lines ignored. A supported DE needs a branch per package family in
-# shared/linux/scripts/gui-lib.sh. Not every distro × DE cell is buildable — the
+# shared/linux/scripts/gui-lib.sh. Not every OS × DE cell is buildable — the
 # support matrix lives in shared/linux/gui/README.md; an unbuildable cell fails
 # loud at build time.
 # Linux-only by construction: the darwin platform has no DE axis (its desktop is

@@ -28,7 +28,7 @@ _detect_family() {
 }
 
 _TART_FAMILY="$(_detect_family)" || {
-  echo "family-lib: unrecognized distro (os-release ID/ID_LIKE is neither dnf- nor apt-family)." >&2
+  echo "family-lib: unrecognized OS (os-release ID/ID_LIKE is neither dnf- nor apt-family)." >&2
   exit 1
 }
 export _TART_FAMILY
@@ -264,7 +264,7 @@ install_zellij() {
 # TART_GUEST_AGENT_VERSION — the tart-guest-agent release every image installs.
 #
 # The agent answers the host's `tart exec` over vsock, and it arrives in the base
-# image rather than from any distro repository — so its version is whatever the
+# image rather than from any OS repository — so its version is whatever the
 # base happened to ship, and a base that stops being refreshed freezes it. That is
 # not hypothetical: the frozen Fedora base carries 0.10.0 while the weekly-rebuilt
 # Debian and Ubuntu bases carry 0.11.0, an invisible split across cells that are

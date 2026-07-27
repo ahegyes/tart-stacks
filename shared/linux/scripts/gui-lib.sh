@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # gui-lib.sh — desktop-environment × package-family primitives for the optional
-# GUI layer, mirroring family-lib.sh: per-distro and per-DE variance lives here
+# GUI layer, mirroring family-lib.sh: per-OS and per-DE variance lives here
 # so gui.sh stays generic. SOURCED, not run — uploaded to /tmp and sourced
 # AFTER family-lib.sh (it branches on $_TART_FAMILY). An unrecognized DE is a
-# hard error, like an unrecognized distro in family-lib.
+# hard error, like an unrecognized OS in family-lib.
 
 # gui_require_de <de> — hard-fail unless this lib has branches for <de>.
 # Keep the set in lockstep with shared/linux/desktops (the Makefile validates
@@ -55,7 +55,7 @@ gui_purge_if_present() {
 }
 
 # gui_packages <de> — the DE shell + display-manager package set for this family.
-# Deliberately narrower than the distros' full desktop groups/tasks: the images
+# Deliberately narrower than the OSes' full desktop groups/tasks: the images
 # are dev substrates, so this set stops at the shell, its display manager, and a
 # terminal. The handful of applications a substrate still needs to be usable is
 # gui_app_packages' concern, kept separate so the session machinery below stays
@@ -174,7 +174,7 @@ gui_session_candidates() {
 # gui_vncsession_start / gui_vncsession_pidfile — the packaged TigerVNC session
 # starter and the pidfile it writes for display :1. tart-stacks-vnc.service
 # wraps these so the unit NAME stays uniform across families while the
-# battle-tested per-distro machinery (PAM/logind session, SELinux labels on
+# battle-tested per-OS machinery (PAM/logind session, SELinux labels on
 # dnf) does the work.
 gui_vncsession_start() {
   case "$_TART_FAMILY" in

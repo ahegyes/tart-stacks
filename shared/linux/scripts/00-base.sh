@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # 00-base.sh — system update, core dev packages, zellij, build toolchain. Runs as
-# root; stack-agnostic, distro-agnostic via family-lib.sh. Every stack runs this
+# root; stack-agnostic, OS-agnostic via family-lib.sh. Every stack runs this
 # before its own 00-stack.sh.
 set -euo pipefail
 # shellcheck source=/dev/null
 source /tmp/family-lib.sh
 
-# Assert the guest is the distro this build calls itself, first thing. The image
-# name and the provenance manifest are both written from the build's own DISTRO,
+# Assert the guest is the OS this build calls itself, first thing. The image
+# name and the provenance manifest are both written from the build's own OS,
 # never from the guest — so a build that started from the wrong base would
 # succeed and ship mislabeled, and every clone would inherit the lie. Failing
 # here costs a minute; failing at 99-finalize would cost the whole build.
 # shellcheck disable=SC1091  # guest-only file, absent at lint time
 guest_id="$( . /etc/os-release 2>/dev/null && printf '%s' "${ID:-}" )"
-if [ -n "${DISTRO:-}" ] && [ "$guest_id" != "$DISTRO" ]; then
-  echo "ERROR: this build declares DISTRO=$DISTRO but the guest reports ID=${guest_id:-unknown}." >&2
-  echo "       The image name and /etc/tart-stacks-release both come from DISTRO, so continuing" >&2
-  echo "       would ship a mislabeled image. Re-run 'make bootstrap DISTRO=$DISTRO' first." >&2
+if [ -n "${OS:-}" ] && [ "$guest_id" != "$OS" ]; then
+  echo "ERROR: this build declares OS=$OS but the guest reports ID=${guest_id:-unknown}." >&2
+  echo "       The image name and /etc/tart-stacks-release both come from OS, so continuing" >&2
+  echo "       would ship a mislabeled image. Re-run 'make bootstrap OS=$OS' first." >&2
   exit 1
 fi
 
@@ -32,7 +32,7 @@ assert_release_supported
 # warns) and hard-fails any GUI activation.
 #
 # Installed here rather than inherited: the agent reaches images only via the base,
-# no distro repo carries it, and the release upgrade cannot carry it forward — so
+# no OS repo carries it, and the release upgrade cannot carry it forward — so
 # an unrefreshed base freezes it silently. Owning the version is what keeps cells
 # that are otherwise built identically from drifting apart.
 install_guest_agent

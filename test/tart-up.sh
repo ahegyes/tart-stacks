@@ -203,7 +203,7 @@ MOCK_LIST_VM=other runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a
 assert_rc       "unknown prefixed VM → exit 1" 1
 assert_contains "unknown prefixed VM → diagnostic names the stored form" "$(cat "$ERR")" "VM 'app-a' not found."
 assert_absent   "unknown prefixed VM → claims no second form" "$(cat "$ERR")" "also tried"
-assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <distro>"
+assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <os>"
 assert_eq       "unknown prefixed VM → one list query" 1 "$(grep -c 'tart list' "$CALLS")"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic

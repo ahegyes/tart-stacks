@@ -14,22 +14,22 @@ jobs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: build the stack × distro matrix
+      - name: build the stack × OS matrix
         id: set
         shell: bash
         run: |
           shopt -s nullglob
           stacks=(); for d in stacks/*/; do stacks+=("$(basename "$d")"); done
-          distros=(); while IFS= read -r line; do distros+=("$line"); done \
+          os_tokens=(); while IFS= read -r line; do os_tokens+=("$line"); done \
             < <(grep -vE '^[[:space:]]*(#|$)' shared/linux/os)
           jq -nc \
             --argjson s "$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)" \
-            --argjson d "$(printf '%s\n' "${distros[@]}" | jq -R . | jq -sc .)" \
-            '[$s[] as $stack | $d[] as $distro | {stack:$stack, distro:$distro}]' \
+            --argjson d "$(printf '%s\n' "${os_tokens[@]}" | jq -R . | jq -sc .)" \
+            '[$s[] as $stack | $d[] as $os | {stack:$stack, os:$os}]' \
             | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
 
   packer:
-    name: packer validate (${{ matrix.distro }}-${{ matrix.stack }})
+    name: packer validate (${{ matrix.os }}-${{ matrix.stack }})
     needs: discover
     if: needs.discover.outputs.matrix != '[]'
     # macOS runner: cirruslabs/tart Packer plugin ships macOS-only binaries.
@@ -50,7 +50,7 @@ jobs:
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub
       - name: packer validate
-        run: packer validate -var stack="${{ matrix.stack }}" -var distro="${{ matrix.distro }}" linux.pkr.hcl
+        run: packer validate -var stack="${{ matrix.stack }}" -var os="${{ matrix.os }}" linux.pkr.hcl
 
   shellcheck:
     name: shellcheck

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 00-stack.sh — install this stack's build dependencies from packages.<family>
-# (uploaded to /tmp). Distro variance lives in those data files, not here. A missing
+# (uploaded to /tmp). OS variance lives in those data files, not here. A missing
 # package silently drops the capability it provides, so the stack's smoke test (in
 # mise-install.sh) is the backstop. Runs as root after shared/linux/scripts/00-base.sh.
 # Per-stack on purpose — the slot for any imperative build-prep beyond the

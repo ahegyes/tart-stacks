@@ -68,16 +68,16 @@ tart_ssh_has_sessiontype() {
   printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/dev/null 2>&1
 }
 
-# tart_is_base_image <bare-name> <stacks-dir> <distros-file> <desktops-file> —
-# 0 if the name is a clone-source (the <distro>-base bootstrap intermediate, a
-# <distro>-<stack> built image, or a <distro>-<stack>-<de> GUI flavor), not a
-# dev VM. Anchored on the supported distro set so hyphenated dev-VM names
+# tart_is_base_image <bare-name> <stacks-dir> <os-file> <desktops-file> —
+# 0 if the name is a clone-source (the <os>-base bootstrap intermediate, a
+# <os>-<stack> built image, or a <os>-<stack>-<de> GUI flavor), not a
+# dev VM. Anchored on the supported OS set so hyphenated dev-VM names
 # (e.g. web-php, app-base) are NOT misread as base images.
 tart_is_base_image() {
-  local bare="$1" stacks_dir="$2" distros_file="$3" desktops_file="$4" d de rest
+  local bare="$1" stacks_dir="$2" os_file="$3" desktops_file="$4" d de rest
   # The classification gates destructive paths (tart-rm's delete) — refusing
   # to answer beats silently failing open when the data is unreadable.
-  [ -r "$distros_file" ]  || { echo "${prog:-${0##*/}}: cannot read distros file '$distros_file' — cannot tell dev VMs from base images." >&2; exit 1; }
+  [ -r "$os_file" ]  || { echo "${prog:-${0##*/}}: cannot read OS file '$os_file' — cannot tell dev VMs from base images." >&2; exit 1; }
   [ -r "$desktops_file" ] || { echo "${prog:-${0##*/}}: cannot read desktops file '$desktops_file' — cannot tell dev VMs from base images." >&2; exit 1; }
   [ -d "$stacks_dir" ]    || { echo "${prog:-${0##*/}}: stacks dir '$stacks_dir' not found — cannot tell dev VMs from base images." >&2; exit 1; }
   while IFS= read -r d; do
@@ -95,7 +95,7 @@ tart_is_base_image() {
         done < <(grep -vE '^[[:space:]]*(#|$)' "$desktops_file")
         ;;
     esac
-  done < <(grep -vE '^[[:space:]]*(#|$)' "$distros_file")
+  done < <(grep -vE '^[[:space:]]*(#|$)' "$os_file")
   return 1
 }
 

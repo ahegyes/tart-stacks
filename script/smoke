@@ -7,8 +7,8 @@
 # os-release, the stack's toolchain over a NON-interactive ssh (the shape a
 # script or agent uses), and sshd's effective hardening — none of
 # which `packer validate` or the mocked tests can reach. Needs the
-# <distro>-<stack> image already built and the host tools wired (`make setup`);
-# boots a real VM (~1 min). Run via `make smoke STACK=<stack> DISTRO=<distro>` —
+# <os>-<stack> image already built and the host tools wired (`make setup`);
+# boots a real VM (~1 min). Run via `make smoke STACK=<stack> OS=<os>` —
 # local-only, never in CI.
 #
 # SMOKE_KEEP=1 skips the teardown, leaving the VM up for debugging.
@@ -26,15 +26,15 @@ REPO=$(cd -P "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)
 SMOKE_BIN="${TART_SMOKE_BIN:-$REPO/bin}"
 
 usage() {
-  echo "usage: $prog <stack> <distro> [<de>]" >&2
-  echo "  <de>          smoke the GUI flavor <distro>-<stack>-<de> instead" >&2
+  echo "usage: $prog <stack> <os> [<de>]" >&2
+  echo "  <de>          smoke the GUI flavor <os>-<stack>-<de> instead" >&2
   echo "  SMOKE_KEEP=1  keep the VM on exit (debugging — also survives a Ctrl-C)" >&2
 }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 [ $# -eq 2 ] || [ $# -eq 3 ] || { usage; exit 64; }
 STACK="$1"
-DISTRO="$2"
+OS="$2"
 DE="${3:-}"
 
 # Fixed name, short and obviously disposable; the SSH alias is tart-smoke-vm.
@@ -44,7 +44,7 @@ VM="smoke-vm"
 # smoke test asserts the image is ALREADY built — it must never side-effect a
 # 15-20 min `make build`. Runs before the trap below is armed: on a name
 # collision the existing VM is not ours, so teardown must not touch it.
-"$SMOKE_BIN/tart-new" "$VM" "$STACK" "$DISTRO" ${DE:+"$DE"} < /dev/null
+"$SMOKE_BIN/tart-new" "$VM" "$STACK" "$OS" ${DE:+"$DE"} < /dev/null
 
 # From here the VM is ours — tear it down on ANY exit, so a failed boot or
 # assert can't strand it. SMOKE_KEEP=1 keeps it for debugging instead. The
@@ -155,8 +155,8 @@ manifest=$(ssh -o BatchMode=yes "tart-$VM" 'cat /etc/tart-stacks-release; . /etc
 }
 field() { printf '%s\n' "$manifest" | awk -v k="$1:" '$1==k { print $2; exit }'; }
 attest "manifest stack"  "$STACK"          "$(field stack)"
-attest "manifest distro" "$DISTRO"         "$(field distro)"
-attest "guest os-release id" "$DISTRO"     "$(field os-id)"
+attest "manifest os" "$OS"                 "$(field os)"
+attest "guest os-release id" "$OS"         "$(field os-id)"
 attest "manifest gui"    "${DE:-none}"     "$(field gui)"
 
 # The toolchain has to be reachable the way an agent or a script reaches it: a
@@ -244,4 +244,4 @@ if [ -n "$DE" ]; then
   done <<< "$listeners"
 fi
 
-echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, guest agent, ssh, hostname, manifest, os-release, toolchain, sshd posture${DE:+, vnc}." >&2
+echo "$prog: OK — $OS-$STACK${DE:+-$DE} smoke passed: clone, boot, guest agent, ssh, hostname, manifest, os-release, toolchain, sshd posture${DE:+, vnc}." >&2

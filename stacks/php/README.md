@@ -1,6 +1,6 @@
 # php
 
-PHP development stack. Builds a `<distro>-php` Tart image (e.g. `fedora-php`) preconfigured with PHP 8.5, Node (Active LTS), and standard backend dev essentials. Intended as a per-project clone source.
+PHP development stack. Builds a `<os>-php` Tart image (e.g. `fedora-php`) preconfigured with PHP 8.5, Node (Active LTS), and standard backend dev essentials. Intended as a per-project clone source.
 
 For host setup, build flow, daily use, and persistent terminal sessions (zellij), see the [top-level README](../../README.md). This file documents what's in *this* stack specifically.
 
@@ -38,6 +38,6 @@ PHP is compiled from source via mise+vfox-php, the plugin pinned in [`files/mise
 
 ## Troubleshooting
 
-- **PHP compile fails midway** → mise surfaces the compiler error and the build stops there; the extension gate at the end of `mise-install.sh` never runs (it catches extensions that BUILT but did not load). `packages.dnf` / `packages.apt` (whichever family you're building) maps each extension to its required build-dep package via inline comments. Distro release bumps occasionally rename packages — pin a specific image tag (`IMAGE_TAG=<tag> make bootstrap DISTRO=<distro>`) to roll back while investigating.
+- **PHP compile fails midway** → mise surfaces the compiler error and the build stops there; the extension gate at the end of `mise-install.sh` never runs (it catches extensions that BUILT but did not load). `packages.dnf` / `packages.apt` (whichever family you're building) maps each extension to its required build-dep package via inline comments. OS release bumps occasionally rename packages — pin a specific image tag (`IMAGE_TAG=<tag> make bootstrap OS=<os>`) to roll back while investigating.
 - **`composer` command not found inside a VM clone** → confirm mise is wired: `which php` should resolve under `~/.local/share/mise/installs/` in an interactive shell, or `~/.local/share/mise/shims/` in a non-interactive one. If neither, `eval "$(mise activate bash)"` then re-test. The zsh activation ships in the uploaded [`shared/files/zshrc`](../../shared/files/zshrc) baseline (the VM's `~/.zshrc`); `shared/linux/scripts/user-config.sh` adds the bash equivalent to `~/.bashrc` and puts `~/.local/bin` plus mise's shims on PATH via `~/.zshenv` — the shims are what serve `ssh tart-<vm> <cmd>`, which runs the login shell and never reads `~/.zshrc`. A corrupted clone's shell rc may have lost either.
 - **`xdebug` doesn't attach** → it's in trigger mode; set `XDEBUG_TRIGGER=1` in env (or send the trigger cookie) before the request. The IDE side needs to listen on port 9003 inside the VM (forward it if the IDE is on the host).

@@ -1,6 +1,6 @@
 # GUI layer — image contract
 
-The optional desktop layer (`make build STACK=<stack> DISTRO=<distro> GUI=1 DE=<de>`)
+The optional desktop layer (`make build STACK=<stack> OS=<os> GUI=1 DE=<de>`)
 bakes a desktop environment into any stack image at build time. This file is the
 **contract between the image and whatever boots it** (a human, or an engine that
 drives VMs): everything a consumer may rely on is listed here, and nothing else
@@ -10,8 +10,8 @@ file together.
 
 ## Identity
 
-- **Image name:** `<distro>-<stack>-<de>` (e.g. `fedora-php-kde`). Non-GUI
-  images keep `<distro>-<stack>`; flavors build side by side.
+- **Image name:** `<os>-<stack>-<de>` (e.g. `fedora-php-kde`). Non-GUI
+  images keep `<os>-<stack>`; flavors build side by side.
 - **Manifest:** `/etc/tart-stacks-release` carries `gui: <de>` (`gui: none` on
   non-GUI images) — the machine-readable probe for "is a desktop baked, and
   which".
@@ -36,7 +36,7 @@ typos but are not: Fedora keeps Thunar's upstream capitalization (`Thunar`), and
 the apt family namespaces Spectacle as `kde-spectacle`.
 
 A conventional browser is a DE-independent, optional capability: Firefox on the
-dnf family and Firefox ESR on the apt family where the distro publishes it.
+dnf family and Firefox ESR on the apt family where the OS publishes it.
 Ubuntu's `firefox` deb is a snap transition stub and `firefox-esr` is absent, so
 Ubuntu GUI images record `firefox-esr` under `skipped-optional-packages` in the
 manifest instead of pulling snapd or failing the build. On dnf/GNOME the browser
@@ -96,8 +96,8 @@ dependency and stays behind the loopback-only SSH tunnel.
 
 ## The VNC surface
 
-- **Unit:** `tart-stacks-vnc.service` — one stable name on every distro × DE;
-  the body wraps the distro's packaged TigerVNC session starter
+- **Unit:** `tart-stacks-vnc.service` — one stable name on every OS × DE;
+  the body wraps the OS's packaged TigerVNC session starter
   (`vncsession` on dnf-family, `tigervncsession` on apt-family), which opens a
   real PAM/logind session for the dev user.
 - **Display/port:** `:1` / TCP `5901`, bound to **loopback only**.
@@ -242,7 +242,7 @@ the manifest's baked `gui:` line, the browser — or, on ubuntu, the recorded
 above were re-earned on this revision: `WaylandEnable=false` present in the gdm
 `[daemon]` block, the autologin session reporting `Type=x11` on a real Xorg, and
 `Xft.dpi: 192` after the applier ran in `tart-up`'s order. ⚠️ = package sets and
-session names were checked against the live distro repos, but no end-to-end boot
+session names were checked against the live OS repos, but no end-to-end boot
 has been run — the build's own asserts are the gate.
 Re-verify a cell after building it the first time, and after a change to the
 contract it vouches for — a status earned before a new code path does not cover
@@ -252,11 +252,11 @@ The ✅ deliberately does not span the network posture above. That is not a
 per-cell property: the VNC bind is loopback-only by the session config this
 layer installs, and `tart-up` fails closed on a non-loopback listener before
 reporting the desktop ready — both covered by the test suite, on every cell at
-once, rather than re-observed per distro.
+once, rather than re-observed per OS.
 
 A reset lands as either `Xft.dpi: 96` or no `Xft.dpi` resource at all, and both
 are correct: resetting removes the override rather than writing a 1x value.
-Which one a cell shows is a property of the distro's xfce packaging — debian
+Which one a cell shows is a property of the OS's xfce packaging — debian
 ships a populated `xsettings` channel whose packaged default republishes 96,
 while on ubuntu that file does not exist until the applier creates it, so there
 is nothing left to republish. Assert "unscaled", never the literal 96.
@@ -270,16 +270,16 @@ treats an empty file as an absent one, so scaling still works and the file is
 rebuilt on the next run; only settings made through the desktop's own tools are
 lost. Waiting ~20 s between stopping the desktop and stopping the VM avoids it.
 
-Every distro × DE cell is supported; there is no refused combination. The X
+Every OS × DE cell is supported; there is no refused combination. The X
 session assert above is the only gate, and it reads `/usr/share/xsessions/`
 rather than package names — which is what a cell actually needs. Debian's
 `plasma-workspace` ships no `plasma-x11-session` package but does ship
 `plasmax11.desktop`, so a package-name probe refused a cell that builds and
-boots. Add a distro or a DE and the assert covers it without a new special case.
+boots. Add an OS or a DE and the assert covers it without a new special case.
 
 ## Sizing
 
 A DE adds roughly 1.8–2.8 GB to the image (the browser alone is ~320 MB) and
 ~1 GB RAM to a boot that
-activates it. Give GUI clones headroom: `tart-new <name> <stack> <distro>`
+activates it. Give GUI clones headroom: `tart-new <name> <stack> <os>`
 resources or `tart set` (`--memory 8192` is comfortable for KDE).

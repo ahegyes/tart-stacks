@@ -75,7 +75,7 @@ case "$*" in
     # image can be staged — which is the whole point of the check.
     printf 'built: 2026-01-01T00:00:00Z\n'
     printf 'stack: %s\n'  "${MOCK_MANIFEST_STACK:-php}"
-    printf 'distro: %s\n' "${MOCK_MANIFEST_DISTRO:-fedora}"
+    printf 'os: %s\n' "${MOCK_MANIFEST_OS:-fedora}"
     printf 'gui: %s\n'    "${MOCK_MANIFEST_GUI:-none}"
     printf 'os-id: %s\n'  "${MOCK_MANIFEST_OSID:-fedora}" ;;
   *"sshd -T"*)
@@ -143,7 +143,7 @@ run_smoke() { # args... — exit code in $rc, stderr in $ERR, recorded calls in 
     MOCK_VNC_LISTENERS="${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_VNC_SS_RC="${MOCK_VNC_SS_RC-0}" \
     MOCK_MANIFEST_STACK="${MOCK_MANIFEST_STACK-php}" \
-    MOCK_MANIFEST_DISTRO="${MOCK_MANIFEST_DISTRO-fedora}" \
+    MOCK_MANIFEST_OS="${MOCK_MANIFEST_OS-fedora}" \
     MOCK_MANIFEST_GUI="${MOCK_MANIFEST_GUI-none}" \
     MOCK_MANIFEST_OSID="${MOCK_MANIFEST_OSID-fedora}" \
     MOCK_SSHD_T="${MOCK_SSHD_T-passwordauthentication no
@@ -380,11 +380,11 @@ assert_rc       "manifest stack mismatch → FAIL" 1
 assert_contains "stack mismatch names both values" "$(cat "$ERR")" "expected 'php', guest reports 'jvm'"
 assert_contains "stack mismatch → teardown still ran" "$(cat "$CALLS")" "tart-rm smoke-vm"
 
-MOCK_MANIFEST_DISTRO=ubuntu run_smoke php fedora
-assert_rc       "manifest distro mismatch → FAIL" 1
-assert_contains "distro mismatch names both values" "$(cat "$ERR")" "expected 'fedora', guest reports 'ubuntu'"
+MOCK_MANIFEST_OS=ubuntu run_smoke php fedora
+assert_rc       "manifest OS mismatch → FAIL" 1
+assert_contains "OS mismatch names both values" "$(cat "$ERR")" "expected 'fedora', guest reports 'ubuntu'"
 
-# The manifest is written from the build's own DISTRO, so it can agree with the
+# The manifest is written from the build's own OS, so it can agree with the
 # request and still be wrong about the guest. os-release is the guest's own answer.
 MOCK_MANIFEST_OSID=ubuntu run_smoke php fedora
 assert_rc       "guest os-release disagrees with the manifest → FAIL" 1
