@@ -110,6 +110,32 @@ build {
   name    = local.vm_name
   sources = ["source.tart-cli.stack"]
 
+  # Staged for the release upgrade below, which is the only thing that reads it
+  # before the reboot. Nothing else may be uploaded ahead of that block.
+  provisioner "file" {
+    source      = "shared/scripts/distro-lib.sh"
+    destination = "/tmp/distro-lib.sh"
+  }
+
+  # Release upgrade — the first thing run in the guest, before anything is
+  # installed on it. Its own block because it ends by rebooting: expect_disconnect
+  # is what lets the build continue across that, and nothing may follow it here.
+  # No pause_before — the SSH communicator blocks until the guest is reachable
+  # again, so a fixed wait would only add dead time and a number to keep tuned.
+  provisioner "shell" {
+    execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    expect_disconnect = true
+    scripts           = ["shared/scripts/00-release-upgrade.sh"]
+  }
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # EVERY upload below this line must STAY below it. The reboot above empties
+  # /tmp, so anything staged earlier is gone before a provisioner can read it —
+  # a build that gets this wrong dies at 00-base.sh with a missing distro-lib.sh.
+  # That is why distro-lib.sh is uploaded twice: the copy above serves the
+  # upgrade, this one serves everything after the reboot.
+  # ─────────────────────────────────────────────────────────────────────────────
+
   # Distro abstraction, sourced by every system provisioner — must land before they run.
   provisioner "file" {
     source      = "shared/scripts/distro-lib.sh"
@@ -147,17 +173,6 @@ build {
   provisioner "file" {
     source      = "stacks/${var.stack}/packages.apt"
     destination = "/tmp/packages.apt"
-  }
-
-  # Release upgrade — the first thing run in the guest, before anything is
-  # installed on it. Its own block because it ends by rebooting: expect_disconnect
-  # is what lets the build continue across that, and nothing may follow it here.
-  # No pause_before — the SSH communicator blocks until the guest is reachable
-  # again, so a fixed wait would only add dead time and a number to keep tuned.
-  provisioner "shell" {
-    execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
-    expect_disconnect = true
-    scripts           = ["shared/scripts/00-release-upgrade.sh"]
   }
 
   # System-level provisioning (runs as root via sudo). Shared base first, then
