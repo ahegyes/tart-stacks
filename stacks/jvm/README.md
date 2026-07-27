@@ -23,7 +23,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 
 **Stack-specific build dependencies** (installed by [`scripts/00-stack.sh`](./scripts/00-stack.sh))
 
-None currently. All JVM runtimes ship as pre-built aarch64 binaries via mise; there's no compile-from-source step like the php stack's. The `shared/scripts/00-base.sh` baseline already provides `gcc` + autotools + standard headers for the rare native-image / JNI build that needs them. `00-stack.sh` stays as a placeholder so the provisioner chain matches the other stacks; add stack-specific package install lines there when first needed (e.g., `xmlstarlet` for `pom.xml` editing, `graphviz` for rendering `mvn dependency:tree`).
+None currently. All JVM runtimes ship as pre-built aarch64 binaries via mise; there's no compile-from-source step like the php stack's. The `shared/linux/scripts/00-base.sh` baseline already provides `gcc` + autotools + standard headers for the rare native-image / JNI build that needs them. `00-stack.sh` stays as a placeholder so the provisioner chain matches the other stacks; add stack-specific package install lines there when first needed (e.g., `xmlstarlet` for `pom.xml` editing, `graphviz` for rendering `mvn dependency:tree`).
 
 ## Customization
 
@@ -39,6 +39,6 @@ None currently. All JVM runtimes ship as pre-built aarch64 binaries via mise; th
 
 ## Troubleshooting
 
-- **`java` resolves to system Java, not Temurin** → mise didn't activate. `which java` should resolve under `~/.local/share/mise/installs/`. If not, `eval "$(mise activate bash)"` then re-test. The zsh activation ships in the uploaded [`shared/files/zshrc`](../../shared/files/zshrc) baseline (the VM's `~/.zshrc`); `shared/scripts/user-config.sh` adds the bash equivalent to `~/.bashrc` (and puts `~/.local/bin` on PATH via `~/.zshenv`). A corrupted clone's shell rc may have lost either.
+- **`java` resolves to system Java, not Temurin** → mise didn't activate. `which java` should resolve under `~/.local/share/mise/installs/`. If not, `eval "$(mise activate bash)"` then re-test. The zsh activation ships in the uploaded [`shared/files/zshrc`](../../shared/files/zshrc) baseline (the VM's `~/.zshrc`); `shared/linux/scripts/user-config.sh` adds the bash equivalent to `~/.bashrc` (and puts `~/.local/bin` on PATH via `~/.zshenv`). A corrupted clone's shell rc may have lost either.
 - **First `sbt` invocation in a project is slow** → expected. The mise-installed `sbt` is just the launcher; on first run it downloads the project's pinned sbt build + Scala compiler into `~/.sbt/` and `~/.cache/coursier/`. Subsequent invocations hit the cache.
 - **`mvn` can't resolve a private dependency** → `~/.m2/settings.xml` isn't baked into the base. Drop it into the clone (`~/.m2/settings.xml`) with the relevant `<servers>` and `<profiles>`.

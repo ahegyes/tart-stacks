@@ -9,7 +9,7 @@ set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
-FINALIZE="$REPO/shared/scripts/99-finalize.sh"
+FINALIZE="$REPO/shared/linux/scripts/99-finalize.sh"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }

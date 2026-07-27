@@ -17,9 +17,9 @@ printf 'ID=debian\n' > "$WORK/os-apt"
 # and _DISTRO_FAMILY must not leak between cases.
 with_family() {
   local fam="$1"; shift
-  ( OS_RELEASE="$WORK/os-$fam" source "$REPO/shared/scripts/distro-lib.sh"
+  ( OS_RELEASE="$WORK/os-$fam" source "$REPO/shared/linux/scripts/distro-lib.sh"
     # shellcheck source=/dev/null
-    source "$REPO/shared/scripts/gui-lib.sh"
+    source "$REPO/shared/linux/scripts/gui-lib.sh"
     "$@" ) 2>/dev/null
 }
 

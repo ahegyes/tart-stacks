@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral tests for shared/scripts/kde-panel.sh — the Plasma default-panel
+# Behavioral tests for shared/linux/scripts/kde-panel.sh — the Plasma default-panel
 # launcher pinning. The real script runs against synthetic Plasma 5 and 6 layout
 # templates in a tmpdir, so the transform that rewrites a package-owned file is
 # covered without a desktop, a build, or a VM. Plain bash, no framework.
@@ -7,7 +7,7 @@ set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
-SCRIPT="$REPO/shared/scripts/kde-panel.sh"
+SCRIPT="$REPO/shared/linux/scripts/kde-panel.sh"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }

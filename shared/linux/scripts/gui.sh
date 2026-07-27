@@ -4,7 +4,7 @@
 # when the build runs with -var gui=true (GUI/DE arrive as environment_vars);
 # a gui=false build exits at the gate below, so every stack shares one
 # pipeline. What this bakes and how a graphics boot activates it is the
-# engine-facing contract in shared/gui/README.md — change them together.
+# engine-facing contract in shared/linux/gui/README.md — change them together.
 #
 # The image stays headless by default (multi-user.target): the desktop costs
 # RAM only on boots that opt in. Runs as root via sudo from Packer.
@@ -63,7 +63,7 @@ done
   echo "       The GUI layer serves the desktop over Xvnc, so it needs an X11 session file to" >&2
   echo "       start. If this DE ships only Wayland on this release, the cell cannot be baked as" >&2
   echo "       it stands: build a DE that still has an X11 session here, or leave the cell out" >&2
-  echo "       until the layer grows a Wayland path. Contract: shared/gui/README.md." >&2
+  echo "       until the layer grows a Wayland path. Contract: shared/linux/gui/README.md." >&2
   exit 1
 }
 echo "==> X session: ${SESSION}"
@@ -124,7 +124,7 @@ esac
   cat <<EOF
 # tart-stacks GUI layer — VNC desktop session, loopback-only on :5901.
 # Deliberately NOT enabled: a boot that wants the desktop starts this unit
-# (see shared/gui/README.md); headless boots pay nothing.
+# (see shared/linux/gui/README.md); headless boots pay nothing.
 [Unit]
 Description=tart-stacks VNC desktop session (display :1, 127.0.0.1:5901)
 After=network.target systemd-user-sessions.service

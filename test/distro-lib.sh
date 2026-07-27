@@ -11,7 +11,7 @@ assert_eq(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got 
 assert_contains(){ case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 # Extract _detect_family and source it (same technique parsing.sh uses for tart-up fns).
-awk 'index($0,"_detect_family() {")==1{p=1} p{print} p&&$0=="}"{exit}' "$REPO/shared/scripts/distro-lib.sh" > "$WORK/fn.sh"
+awk 'index($0,"_detect_family() {")==1{p=1} p{print} p&&$0=="}"{exit}' "$REPO/shared/linux/scripts/distro-lib.sh" > "$WORK/fn.sh"
 # shellcheck source=/dev/null
 source "$WORK/fn.sh"
 echo "distro-lib — _detect_family:"
@@ -116,7 +116,7 @@ SKIP="$WORK/skipped-apt"
 # shellcheck disable=SC2030  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP" MOCK_APT_ABSENT="gone-pkg"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/distro-lib.sh"
   pkg_install_optional kept-pkg gone-pkg ) >/dev/null 2>&1
 assert_eq "apt: only the absent package is recorded" "gone-pkg" "$(cat "$SKIP" 2>/dev/null)"
 
@@ -128,7 +128,7 @@ apt_fail_rc=0
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_FAIL" MOCK_APT_FAIL="broken-pkg"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/distro-lib.sh"
   pkg_install_optional broken-pkg ) >/dev/null 2>&1 || apt_fail_rc=$?
 assert_eq "apt: a failing install is not recorded as unavailable" "" "$(cat "$SKIP_FAIL" 2>/dev/null)"
 if [ "$apt_fail_rc" -ne 0 ]; then
@@ -146,7 +146,7 @@ qfail_rc=0
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_QFAIL" MOCK_APT_CACHE_RC=100
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/distro-lib.sh"
   pkg_install_optional anypkg ) >/dev/null 2>&1 || qfail_rc=$?
 assert_eq "apt: a failing query is not recorded as unavailable" "" "$(cat "$SKIP_QFAIL" 2>/dev/null)"
 if [ "$qfail_rc" -ne 0 ]; then
@@ -165,7 +165,7 @@ APT_LOG="$WORK/apt-calls"; : > "$APT_LOG"
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_VIRT" \
          MOCK_APT_VIRTUAL="virt-pkg" MOCK_APT_LOG="$APT_LOG"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/distro-lib.sh"
   pkg_install_optional virt-pkg ) >/dev/null 2>&1
 assert_eq "apt: a virtual package with a provider is not recorded" "" "$(cat "$SKIP_VIRT" 2>/dev/null)"
 assert_contains "apt: a virtual package is still handed to apt-get" "$(cat "$APT_LOG")" "install -y --no-install-recommends virt-pkg"
@@ -178,7 +178,7 @@ sfail_rc=0
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_SFAIL" \
          MOCK_APT_ABSENT="q-pkg" MOCK_APT_SHOWPKG_RC=100
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/distro-lib.sh"
   pkg_install_optional q-pkg ) >/dev/null 2>&1 || sfail_rc=$?
 assert_eq "apt: a failing provider query is not recorded as unavailable" "" "$(cat "$SKIP_SFAIL" 2>/dev/null)"
 if [ "$sfail_rc" -ne 0 ]; then
@@ -191,7 +191,7 @@ SKIP2="$WORK/skipped-dnf"
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" TART_SKIPPED_FILE="$SKIP2" MOCK_RPM_MISSING="ghost-pkg"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/distro-lib.sh"
   pkg_install_optional present-pkg ghost-pkg ) >/dev/null 2>&1
 assert_eq "dnf: the rpm-absent package is recorded" "ghost-pkg" "$(cat "$SKIP2" 2>/dev/null)"
 
@@ -204,7 +204,7 @@ SKIP_REN="$WORK/skipped-renamed"
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" TART_SKIPPED_FILE="$SKIP_REN" MOCK_RPM_RENAMED="oldname-devel"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/distro-lib.sh"
   pkg_install_optional oldname-devel ) >/dev/null 2>&1
 assert_eq "dnf: a package present under a Provides alias is not recorded" "" "$(cat "$SKIP_REN" 2>/dev/null)"
 
@@ -221,7 +221,7 @@ mac_rc() { # <os-release-fixture> [KEY=VALUE…] — exit status of assert_mac_e
   # shellcheck disable=SC2031  # the child process env IS the sandbox
   # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$fixture" "$@" \
-    bash -c '. "$1"; assert_mac_enforcing' _ "$REPO/shared/scripts/distro-lib.sh" \
+    bash -c '. "$1"; assert_mac_enforcing' _ "$REPO/shared/linux/scripts/distro-lib.sh" \
     >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
@@ -246,7 +246,7 @@ unknown_family_rc() {
   # shellcheck disable=SC2031  # PATH is per-child on purpose; the mocks are the sandbox
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
     bash -c '. "$1"; _DISTRO_FAMILY=zypper; assert_mac_enforcing' _ \
-      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+      "$REPO/shared/linux/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 assert_eq "an unknown family fails rather than passing" 1 "$(unknown_family_rc)"
@@ -272,7 +272,7 @@ upgrade_run() {
   UPG_ERR=$( ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$1" MOCK_FEDORA_VER="$2" \
                  FEDORA_TARGET_RELEASE="$3" MOCK_DNF_LOG="$UPG_LOG"
                # shellcheck source=/dev/null
-               source "$REPO/shared/scripts/distro-lib.sh"
+               source "$REPO/shared/linux/scripts/distro-lib.sh"
                pkg_release_upgrade ) 2>&1 ) || UPG_RC=$?
 }
 
@@ -326,7 +326,7 @@ release_unknown_family_rc() {
   # shellcheck disable=SC2031  # PATH is per-child on purpose; the mocks are the sandbox
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
     bash -c '. "$1"; _DISTRO_FAMILY=zypper; pkg_release_upgrade' _ \
-      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+      "$REPO/shared/linux/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 assert_eq "an unknown family is refused, not skipped" 1 "$(release_unknown_family_rc)"
@@ -343,7 +343,7 @@ rel_rc() {  # <os-release-fixture> <today>
   # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
   REL_ERR=$( ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$1" TART_TODAY="$2"
                # shellcheck source=/dev/null
-               source "$REPO/shared/scripts/distro-lib.sh"
+               source "$REPO/shared/linux/scripts/distro-lib.sh"
                assert_release_supported ) 2>&1 ) || rc=$?
   printf '%s' "$rc"
 }
@@ -418,7 +418,7 @@ agent_run() {
                 TART_GUEST_AGENT_VERSION="$ver" \
                 MOCK_DNF_LOG="$AG_LOG" MOCK_APT_LOG="$AG_LOG" "$@"
               # shellcheck source=/dev/null
-              source "$REPO/shared/scripts/distro-lib.sh"
+              source "$REPO/shared/linux/scripts/distro-lib.sh"
               install_guest_agent ) 2>&1 ) || AG_RC=$?
 }
 
@@ -471,7 +471,7 @@ agent_unknown_family_rc() {
   # shellcheck disable=SC2016,SC2031
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
     bash -c '. "$1"; _DISTRO_FAMILY=zypper; install_guest_agent' _ \
-      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+      "$REPO/shared/linux/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 assert_eq "an unknown family is refused, not skipped" 1 "$(agent_unknown_family_rc)"

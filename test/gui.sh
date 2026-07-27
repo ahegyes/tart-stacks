@@ -12,8 +12,8 @@ set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
-GUI="$REPO/shared/scripts/gui.sh"
-GUILIB="$REPO/shared/scripts/gui-lib.sh"
+GUI="$REPO/shared/linux/scripts/gui.sh"
+GUILIB="$REPO/shared/linux/scripts/gui-lib.sh"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
@@ -99,7 +99,7 @@ assert_contains "refusal lists what it tried"        "$GATE_ERR" "gnome-xorg gno
 assert_contains "refusal lists what IS present"      "$GATE_ERR" "gnome-wayland.desktop"
 assert_contains "refusal says why X11 is required"   "$GATE_ERR" "over Xvnc"
 assert_contains "refusal offers both responses"      "$GATE_ERR" "leave the cell out"
-assert_contains "refusal points at the contract"     "$GATE_ERR" "shared/gui/README.md"
+assert_contains "refusal points at the contract"     "$GATE_ERR" "shared/linux/gui/README.md"
 
 # "Nothing there" and "the wrong thing there" read identically without this.
 gate gnome >/dev/null

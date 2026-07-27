@@ -146,7 +146,7 @@ gui_vnc_packages() {
 
 # gui_dm_unit <de> — the display-manager unit for this DE on this family.
 # Enabling it also installs the display-manager.service alias, which is the
-# stable name a graphics boot targets (see shared/gui/README.md).
+# stable name a graphics boot targets (see shared/linux/gui/README.md).
 gui_dm_unit() {
   case "$_DISTRO_FAMILY/$1" in
     dnf/kde|apt/kde)   echo "sddm.service" ;;

@@ -5,7 +5,7 @@ bakes a desktop environment into any stack image at build time. This file is the
 **contract between the image and whatever boots it** (a human, or an engine that
 drives VMs): everything a consumer may rely on is listed here, and nothing else
 about the desktop install is stable API. Provisioning lives in
-`shared/scripts/gui.sh` + `shared/scripts/gui-lib.sh` — change them and this
+`shared/linux/scripts/gui.sh` + `shared/linux/scripts/gui-lib.sh` — change them and this
 file together.
 
 ## Identity
@@ -68,7 +68,7 @@ desktop RAM. A consumer activates graphics per boot, in one of two ways:
 
 Every `tart-up`-driven activation in that table travels `tart-guest-agent`'s
 vsock channel (`tart exec`), not ssh. That agent ships inside the base image and
-is asserted at build time by `shared/scripts/00-base.sh`; an image without a
+is asserted at build time by `shared/linux/scripts/00-base.sh`; an image without a
 working one is still reachable over ssh but has no boot mode beyond headless.
 
 Both activations are per-boot (neither the unit nor default target is changed);
@@ -185,16 +185,16 @@ selector rather than a config file:
 
 1. Add the token to `shared/linux/desktops` (that is what `tart-new`, the Makefile's
    `check-de`, and the base-image guard read).
-2. Check `gui_require_cell` in `shared/scripts/gui-lib.sh`: if the DE cannot ship
+2. Check `gui_require_cell` in `shared/linux/scripts/gui-lib.sh`: if the DE cannot ship
    an X11 session on some family, refuse that cell there rather than letting the
    package install discover it. Then add a row to the DE selectors. `gui_packages`,
    `gui_app_packages` and `gui_dm_unit` branch on family × DE, so each needs a
    dnf row and an apt row; `gui_scale_packages` and `gui_session_candidates`
    branch on the DE alone, so each needs one.
-3. Add a `apply_<de>` branch to `shared/scripts/display-scale.sh`, using the
+3. Add a `apply_<de>` branch to `shared/linux/scripts/display-scale.sh`, using the
    desktop's own config tool. Scale is per-DE; there is no generic path.
 4. If the desktop needs anything baked beyond packages (a panel layout, an
-   autologin stanza), add it to the `case "$DE"` in `shared/scripts/gui.sh`.
+   autologin stanza), add it to the `case "$DE"` in `shared/linux/scripts/gui.sh`.
 5. Extend `test/gui-lib.sh` (the selectors are asserted in lockstep with
    `shared/linux/desktops`, so an unlisted token fails there) and
    `test/display-scale.sh`.

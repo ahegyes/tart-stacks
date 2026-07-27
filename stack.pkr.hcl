@@ -36,7 +36,7 @@ variable "distro" {
 variable "gui" {
   type        = bool
   default     = false
-  description = "Bake the optional desktop layer (shared/scripts/gui.sh): a desktop environment, display manager, and a localhost-only VNC server. The built image is <distro>-<stack>-<de>. Boot contract in shared/gui/README.md."
+  description = "Bake the optional desktop layer (shared/linux/scripts/gui.sh): a desktop environment, display manager, and a localhost-only VNC server. The built image is <distro>-<stack>-<de>. Boot contract in shared/linux/gui/README.md."
 }
 
 variable "de" {
@@ -113,7 +113,7 @@ build {
   # Staged for the release upgrade below, which is the only thing that reads it
   # before the reboot. Nothing else may be uploaded ahead of that block.
   provisioner "file" {
-    source      = "shared/scripts/distro-lib.sh"
+    source      = "shared/linux/scripts/distro-lib.sh"
     destination = "/tmp/distro-lib.sh"
   }
 
@@ -156,7 +156,7 @@ build {
 
   # Distro abstraction, sourced by every system provisioner — must land before they run.
   provisioner "file" {
-    source      = "shared/scripts/distro-lib.sh"
+    source      = "shared/linux/scripts/distro-lib.sh"
     destination = "/tmp/distro-lib.sh"
   }
 
@@ -164,21 +164,21 @@ build {
   # Uploaded unconditionally (Packer provisioners have no per-block condition);
   # gui.sh no-ops when GUI=false.
   provisioner "file" {
-    source      = "shared/scripts/gui-lib.sh"
+    source      = "shared/linux/scripts/gui-lib.sh"
     destination = "/tmp/gui-lib.sh"
   }
 
   # Per-user desktop scale editor installed by gui.sh with this image's DE
   # and build account baked in. Uploaded unconditionally for gui=false parity.
   provisioner "file" {
-    source      = "shared/scripts/display-scale.sh"
+    source      = "shared/linux/scripts/display-scale.sh"
     destination = "/tmp/display-scale.sh"
   }
 
   # Plasma default-panel launcher pinning, run by gui.sh for the kde DE only.
   # Standalone so its template transform is testable without a desktop.
   provisioner "file" {
-    source      = "shared/scripts/kde-panel.sh"
+    source      = "shared/linux/scripts/kde-panel.sh"
     destination = "/tmp/kde-panel.sh"
   }
 
@@ -202,20 +202,20 @@ build {
     execute_command  = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
     environment_vars = ["DISTRO=${var.distro}"]
     scripts = [
-      "shared/scripts/00-base.sh",
+      "shared/linux/scripts/00-base.sh",
       "stacks/${var.stack}/scripts/00-stack.sh",
-      "shared/scripts/mise.sh",
+      "shared/linux/scripts/mise.sh",
     ]
   }
 
   # Optional desktop layer — desktop environment + display manager + a
-  # localhost-only VNC session service (contract: shared/gui/README.md).
+  # localhost-only VNC session service (contract: shared/linux/gui/README.md).
   # Its own root block because it needs GUI/DE as environment_vars, which
   # {{ .Vars }} renders; exits immediately when GUI=false.
   provisioner "shell" {
     execute_command  = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
     environment_vars = ["GUI=${var.gui}", "DE=${var.de}"]
-    scripts          = ["shared/scripts/gui.sh"]
+    scripts          = ["shared/linux/scripts/gui.sh"]
   }
 
   # Drop in config files.
@@ -254,9 +254,9 @@ build {
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
-      "shared/scripts/user-config.sh",
+      "shared/linux/scripts/user-config.sh",
       "shared/scripts/terminfo.sh",
-      "shared/scripts/host-keys.sh",
+      "shared/linux/scripts/host-keys.sh",
     ]
   }
 
@@ -280,6 +280,6 @@ build {
     # The provenance manifest names the cell it was built as.
     environment_vars  = ["STACK=${var.stack}", "DISTRO=${var.distro}", "GUI=${var.gui}", "DE=${var.de}"]
     expect_disconnect = true
-    scripts           = ["shared/scripts/99-finalize.sh"]
+    scripts           = ["shared/linux/scripts/99-finalize.sh"]
   }
 }

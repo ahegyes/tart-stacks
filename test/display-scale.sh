@@ -6,7 +6,7 @@ set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
-TEMPLATE="$REPO/shared/scripts/display-scale.sh"
+TEMPLATE="$REPO/shared/linux/scripts/display-scale.sh"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
@@ -205,7 +205,7 @@ assert_absent "GNOME factor 1 performs no set" "$gnome_calls" "gsettings set"
 
 echo "display-scale — XFCE structured XML editor:"
 # shellcheck source=/dev/null
-source "$REPO/shared/scripts/gui-lib.sh"
+source "$REPO/shared/linux/scripts/gui-lib.sh"
 assert_eq "XFCE scale applier dependency is python3" "python3" "$(gui_scale_packages xfce)"
 assert_eq "KDE adds no scale-only package" "" "$(gui_scale_packages kde)"
 assert_eq "GNOME adds no scale-only package" "" "$(gui_scale_packages gnome)"

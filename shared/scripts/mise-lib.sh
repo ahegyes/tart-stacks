@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Lives in shared/scripts/ rather than a platform tree because it runs verbatim
+# on linux and darwin alike. That directory's contract is "both platforms", not
+# "unmarked" — a platform-specific script belongs under shared/<platform>/scripts/.
 # mise-lib.sh — shared helpers for the per-stack mise-install.sh scripts.
 #
 # SOURCED, not run: the Packer template uploads this to /tmp/mise-lib.sh (a `file`

@@ -382,7 +382,7 @@ assert_release_supported() {
   echo "       Its repositories are no longer patched and are eventually purged, so this" >&2
   echo "       image would ship on a release nothing maintains — and the build that finally" >&2
   echo "       breaks would fail somewhere unrelated, long after the cause." >&2
-  echo "       On the dnf family, raise FEDORA_TARGET_RELEASE in shared/scripts/distro-lib.sh" >&2
+  echo "       On the dnf family, raise FEDORA_TARGET_RELEASE in shared/linux/scripts/distro-lib.sh" >&2
   echo "       (at most two releases above the base image's own) and rebuild." >&2
   return 1
 }

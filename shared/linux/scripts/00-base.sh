@@ -48,7 +48,7 @@ if [ "$agent_state" != enabled ]; then
   echo "       build installed it. 'tart exec' is a host->guest vsock call served by that agent" >&2
   echo "       inside the guest; the host's own tart install cannot supply it. The build owns this" >&2
   echo "       package now, so look at the install above, not at the base image — the version is" >&2
-  echo "       TART_GUEST_AGENT_VERSION in shared/scripts/distro-lib.sh, and its unit ships with" >&2
+  echo "       TART_GUEST_AGENT_VERSION in shared/linux/scripts/distro-lib.sh, and its unit ships with" >&2
   echo "       the package. Re-pulling a base cannot fix a package this build installs." >&2
   exit 1
 fi

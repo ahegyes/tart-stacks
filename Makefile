@@ -7,7 +7,7 @@ STACK ?=
 # Distro selector. Required for build/rebuild/bootstrap. Must be a line in shared/linux/os.
 DISTRO ?=
 
-# GUI flavor. Optional: GUI=1 bakes the desktop layer (shared/scripts/gui.sh)
+# GUI flavor. Optional: GUI=1 bakes the desktop layer (shared/linux/scripts/gui.sh)
 # and names the image <distro>-<stack>-<de>; DE picks the desktop (a line in
 # shared/linux/desktops). e.g. `make build STACK=php DISTRO=fedora GUI=1 DE=kde`.
 # Strictly literal — check-gui rejects every other non-empty value: make
@@ -42,7 +42,7 @@ help:
 	@echo ""
 	@echo "  DISTRO — required distro token (e.g. fedora). Must be listed in shared/linux/os."
 	@echo "  IMAGE_TAG — override the base image tag (default: latest). e.g. IMAGE_TAG=42 make bootstrap DISTRO=fedora"
-	@echo "  GUI=1 — bake the desktop layer into build/rebuild (strictly 1 or unset); the image becomes <distro>-<stack>-<de>. See shared/gui/README.md"
+	@echo "  GUI=1 — bake the desktop layer into build/rebuild (strictly 1 or unset); the image becomes <distro>-<stack>-<de>. See shared/linux/gui/README.md"
 	@echo "  DE — desktop for GUI=1 (default: kde). Must be listed in shared/linux/desktops. e.g. make build STACK=php DISTRO=fedora GUI=1 DE=xfce"
 
 list-stacks:

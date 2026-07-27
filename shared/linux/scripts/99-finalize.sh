@@ -57,7 +57,7 @@ echo "==> Writing /etc/tart-stacks-release..."
   echo "stack: ${STACK:-unknown}"
   echo "distro: ${DISTRO:-unknown}"
   # gui: <de> | none — the machine-readable "is this a GUI flavor" answer
-  # (shared/gui/README.md documents what a `gui: <de>` image exposes).
+  # (shared/linux/gui/README.md documents what a `gui: <de>` image exposes).
   if [ "${GUI:-false}" = "true" ]; then echo "gui: ${DE:-unknown}"; else echo "gui: none"; fi
   # support-end: <date> | none — the same field 00-base.sh's release gate reads, so
   # a clone can be judged stale from the manifest alone. `none` is the honest answer
