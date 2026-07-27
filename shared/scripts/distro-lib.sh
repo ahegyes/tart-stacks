@@ -31,6 +31,71 @@ _DISTRO_FAMILY="$(_detect_family)" || {
 }
 export _DISTRO_FAMILY
 
+# FEDORA_TARGET_RELEASE — the Fedora release dnf-family images are lifted to before
+# anything is installed on them. The upstream base is published at a fixed release
+# and its publisher bumps that by hand, so re-pulling the base never advances it;
+# the release the image ships as is decided here instead.
+#
+# dnf upgrades at most TWO releases in one transaction, so this cannot simply track
+# the newest Fedora — it is capped at the base's own release plus two.
+# pkg_release_upgrade refuses a wider gap rather than attempting it.
+FEDORA_TARGET_RELEASE="${FEDORA_TARGET_RELEASE:-44}"
+
+# pkg_release_upgrade — lift a dnf-family guest to FEDORA_TARGET_RELEASE, then
+# reboot. No-op on apt, whose bases are current and tracked by their publisher.
+#
+# On the dnf path this function DOES NOT RETURN: it blocks until the guest goes
+# down. That is deliberate and load-bearing. `dnf offline reboot` only SCHEDULES
+# the reboot and returns immediately, so a version of this that returned would let
+# the next provisioner run inside the system-update boot — where the guest is still
+# on the OLD release and dbus is refusing connections. That build succeeds and
+# ships an image labelled as a release it is not running. The dying SSH session is
+# the only signal the caller's expect_disconnect can act on, so the caller must set
+# it, and nothing may follow this call in the same provisioner block.
+pkg_release_upgrade() {
+  local cur target hop
+  case "$_DISTRO_FAMILY" in
+    apt) return 0 ;;
+    dnf) ;;
+    # Fail closed rather than fall off the end of the case: a family added without
+    # a branch here silently inherits whatever release its base was published at,
+    # which is the exact problem this function exists to end.
+    *)   echo "ERROR: no release-upgrade branch for package family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2
+         return 1 ;;
+  esac
+
+  cur="$(rpm -E %fedora)"
+  target="$FEDORA_TARGET_RELEASE"
+
+  # -ge, not -eq: once the upstream base is finally republished at or beyond the
+  # target this becomes a no-op on its own, instead of attempting a downgrade or
+  # needing to be removed by hand.
+  if [ "$cur" -ge "$target" ]; then
+    echo "==> Guest is already Fedora $cur (target $target) — no release upgrade needed."
+    return 0
+  fi
+
+  hop=$((target - cur))
+  if [ "$hop" -gt 2 ]; then
+    echo "ERROR: dnf upgrades at most two releases at a time, but this guest is Fedora $cur" >&2
+    echo "       and FEDORA_TARGET_RELEASE is $target — a $hop-release jump." >&2
+    echo "       Crossing that needs one reboot per hop, and a reboot ends this provisioner," >&2
+    echo "       so it cannot be looped here: reaching $target requires an additional" >&2
+    echo "       release-upgrade provisioner block per hop in stack.pkr.hcl. Until those" >&2
+    echo "       exist, lower FEDORA_TARGET_RELEASE to at most $((cur + 2))." >&2
+    return 1
+  fi
+
+  echo "==> Upgrading Fedora $cur -> $target (the guest reboots; the build continues after it)..."
+  dnf system-upgrade download --releasever="$target" -y
+  dnf -y offline reboot
+  # Reached only because `dnf offline reboot` returns as soon as the reboot is
+  # queued. Block here so the session dies with the guest; see the header.
+  sleep 300
+  echo "ERROR: the guest did not go down within 300s of 'dnf offline reboot'." >&2
+  return 1
+}
+
 # pkg_refresh — refresh metadata + apply pending upgrades.
 pkg_refresh() {
   case "$_DISTRO_FAMILY" in
@@ -194,6 +259,83 @@ install_zellij() {
   esac
 }
 
+# TART_GUEST_AGENT_VERSION — the tart-guest-agent release every image installs.
+#
+# The agent answers the host's `tart exec` over vsock, and it arrives in the base
+# image rather than from any distro repository — so its version is whatever the
+# base happened to ship, and a base that stops being refreshed freezes it. That is
+# not hypothetical: the frozen Fedora base carries 0.10.0 while the weekly-rebuilt
+# Debian and Ubuntu bases carry 0.11.0, an invisible split across cells that are
+# otherwise built identically. The release upgrade does not fix it either, since no
+# repo provides the package for dnf to carry forward.
+#
+# Pinned rather than tracking the newest release: this binary executes what the
+# host asks of it as a passwordless-sudo account, so the version installed is a
+# thing to choose deliberately and verify, not to inherit from whatever shipped
+# most recently. Bump here, then rebuild.
+TART_GUEST_AGENT_VERSION="${TART_GUEST_AGENT_VERSION:-0.11.0}"
+
+# install_guest_agent — install the pinned tart-guest-agent, verified against the
+# release's published checksums, and make sure it is enabled and running.
+#
+# Upstream ships a native package per family, so this installs through the package
+# manager rather than dropping a binary: dependencies resolve, and the systemd unit
+# lands where the package intends it. The checksum step is not optional — see
+# SECURITY.md for why this download in particular carries the weight it does.
+install_guest_agent() {
+  local ver="$TART_GUEST_AGENT_VERSION" arch ext pkg url tmp want got rc=0
+
+  case "$(uname -m)" in
+    aarch64|arm64) arch=arm64 ;;
+    x86_64|amd64)  arch=amd64 ;;
+    *) echo "ERROR: no tart-guest-agent build for machine type '$(uname -m)'." >&2; return 1 ;;
+  esac
+  case "$_DISTRO_FAMILY" in
+    dnf) ext=rpm ;;
+    apt) ext=deb ;;
+    # Fail closed: a family without a branch would silently keep whatever agent its
+    # base shipped, which is the split this function exists to close.
+    *)   echo "ERROR: no tart-guest-agent package mapping for family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
+  esac
+
+  pkg="tart-guest-agent_${ver}_linux_${arch}.${ext}"
+  url="https://github.com/openai/tart-guest-agent/releases/download/v${ver}"
+  tmp="$(mktemp -d)"
+
+  echo "==> Installing tart-guest-agent ${ver} (${arch}, ${ext})..."
+  curl -fsSL --retry 3 --retry-delay 2 "$url/$pkg" -o "$tmp/$pkg" || rc=1
+  curl -fsSL --retry 3 --retry-delay 2 "$url/tart-guest-agent_${ver}_checksums.txt" -o "$tmp/checksums" || rc=1
+  if [ "$rc" -ne 0 ]; then
+    echo "ERROR: could not download tart-guest-agent ${ver} from $url." >&2
+    rm -rf "$tmp"; return 1
+  fi
+
+  # Match the whole filename, not a prefix: the checksums file lists .rpm, .deb,
+  # .apk and the tarballs, and several names share a prefix with one another.
+  want="$(awk -v p="$pkg" '$2 == p { print $1 }' "$tmp/checksums")"
+  if [ -z "$want" ]; then
+    echo "ERROR: '$pkg' has no entry in the ${ver} checksums file — refusing to install an unverifiable package." >&2
+    rm -rf "$tmp"; return 1
+  fi
+  got="$(sha256sum "$tmp/$pkg" | awk '{print $1}')"
+  if [ "$got" != "$want" ]; then
+    echo "ERROR: sha256 mismatch for $pkg — expected $want, got $got." >&2
+    rm -rf "$tmp"; return 1
+  fi
+
+  case "$_DISTRO_FAMILY" in
+    dnf) dnf install -y "$tmp/$pkg" ;;
+    apt) DEBIAN_FRONTEND=noninteractive apt-get install -y "$tmp/$pkg" ;;
+  esac || { echo "ERROR: installing $pkg failed." >&2; rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+
+  # The package replaces a unit file the base image's older agent also owned, so
+  # reload before enabling; `--now` because the assertions below read the running
+  # state, and a clone's first boot needs it enabled regardless.
+  systemctl daemon-reload
+  systemctl enable --now tart-guest-agent.service
+}
+
 # assert_mac_enforcing — fail if the inherited mandatory-access-control layer isn't
 # actively enforcing: SELinux in Enforcing mode on dnf; AppArmor with >0 profiles in
 # enforce mode on apt (a loaded module alone wouldn't prove enforcement is happening).
@@ -212,4 +354,35 @@ assert_mac_enforcing() {
          [ "$n" -gt 0 ] || { echo "ERROR: AppArmor has no enforce-mode profiles — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
     *)   echo "ERROR: no MAC assertion for package family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
   esac
+}
+
+# assert_release_supported — fail when the guest's own os-release declares a support
+# window that has already closed. The release an image ships as is chosen by
+# FEDORA_TARGET_RELEASE, a hand-maintained pin; this is what stops that pin going
+# stale in silence, since an unpatched release otherwise looks exactly like a
+# healthy one until a repository is purged mid-build months later.
+#
+# Fedora publishes SUPPORT_END. The apt family publishes no equivalent, so an
+# absent field is a skip rather than a failure — its absence says nothing about
+# support, and a gate that guessed would fail every Debian and Ubuntu build.
+#
+# Reads $OS_RELEASE (default /etc/os-release) and takes today from $TART_TODAY when
+# set, so it is testable without a guest or a clock. Both dates are ISO-8601, which
+# orders correctly as plain text. Local only: no network call, so this cannot become
+# a new way for a build to flake.
+assert_release_supported() {
+  local f="${OS_RELEASE:-/etc/os-release}" today="${TART_TODAY:-}"
+  local SUPPORT_END="" PRETTY_NAME=""
+  # shellcheck disable=SC1090
+  [ -r "$f" ] && . "$f"
+  [ -n "$SUPPORT_END" ] || return 0
+  [ -n "$today" ] || today="$(date -u +%Y-%m-%d)"
+  [[ "$SUPPORT_END" < "$today" ]] || return 0
+  echo "ERROR: ${PRETTY_NAME:-this guest} reached end of life on $SUPPORT_END (today is $today)." >&2
+  echo "       Its repositories are no longer patched and are eventually purged, so this" >&2
+  echo "       image would ship on a release nothing maintains — and the build that finally" >&2
+  echo "       breaks would fail somewhere unrelated, long after the cause." >&2
+  echo "       On the dnf family, raise FEDORA_TARGET_RELEASE in shared/scripts/distro-lib.sh" >&2
+  echo "       (at most two releases above the base image's own) and rebuild." >&2
+  return 1
 }

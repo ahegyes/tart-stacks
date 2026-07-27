@@ -110,6 +110,50 @@ build {
   name    = local.vm_name
   sources = ["source.tart-cli.stack"]
 
+  # Staged for the release upgrade below, which is the only thing that reads it
+  # before the reboot. Nothing else may be uploaded ahead of that block.
+  provisioner "file" {
+    source      = "shared/scripts/distro-lib.sh"
+    destination = "/tmp/distro-lib.sh"
+  }
+
+  # Release upgrade — the first thing run in the guest, before anything is
+  # installed on it. It leads because 00-base.sh's first act is a full system
+  # update, and updating a release that is about to be replaced downloads a set of
+  # packages the upgrade then discards.
+  #
+  # Inline rather than a script file: the body is glue. Every decision it could
+  # encode — which release, the two-release ceiling, the apt no-op, the unknown
+  # family — lives in distro-lib.sh's pkg_release_upgrade, where it is tested.
+  #
+  # ALONE IN THIS BLOCK, AND NOTHING MAY FOLLOW IT. pkg_release_upgrade reboots
+  # the guest and never returns: `dnf offline reboot` only SCHEDULES the reboot,
+  # so it blocks until the guest goes down, and that dying SSH session is the only
+  # signal expect_disconnect can act on. Add provisioners here and they simply
+  # never run. Put expect_disconnect on a block that also installs packages and a
+  # guest dying mid-install gets swallowed instead of failing the build.
+  #
+  # No pause_before on what comes after: the SSH communicator blocks until the
+  # guest is reachable again, so a fixed wait would only add dead time and a
+  # constant to keep tuned.
+  provisioner "shell" {
+    execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    expect_disconnect = true
+    inline = [
+      "set -euo pipefail",
+      "source /tmp/distro-lib.sh",
+      "pkg_release_upgrade",
+    ]
+  }
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # EVERY upload below this line must STAY below it. The reboot above empties
+  # /tmp, so anything staged earlier is gone before a provisioner can read it —
+  # a build that gets this wrong dies at 00-base.sh with a missing distro-lib.sh.
+  # That is why distro-lib.sh is uploaded twice: the copy above serves the
+  # upgrade, this one serves everything after the reboot.
+  # ─────────────────────────────────────────────────────────────────────────────
+
   # Distro abstraction, sourced by every system provisioner — must land before they run.
   provisioner "file" {
     source      = "shared/scripts/distro-lib.sh"

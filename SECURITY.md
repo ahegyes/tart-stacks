@@ -28,7 +28,8 @@ Every stack inherits the same hardened SSH posture from `shared/scripts/99-final
 The base images rely on the following upstream sources for their content. Vulnerabilities in these should be reported upstream, not here:
 
 - `ghcr.io/cirruslabs/<distro>:latest` (fedora/ubuntu/debian per `shared/distros`) — the base distro images; built from [`cirruslabs/linux-image-templates`](https://github.com/cirruslabs/linux-image-templates).
-  - Included in those images, and required by this repo rather than installed by it: [`tart-guest-agent`](https://github.com/openai/tart-guest-agent), the in-guest daemon that answers the host's `tart exec` calls over vsock. It runs as a service inside every VM built here and executes what the host asks of it, so its version is whatever the base image shipped — `shared/scripts/00-base.sh` asserts its unit is enabled and running, and `script/smoke` proves the channel answers.
+  - Present in those images but **replaced by this repo, not inherited**: [`tart-guest-agent`](https://github.com/openai/tart-guest-agent), the in-guest daemon that answers the host's `tart exec` calls over vsock. It runs as a service inside every VM built here and executes what the host asks of it against a NOPASSWD-sudo account, so its version is a deliberate choice rather than an accident of which base was current. `shared/scripts/00-base.sh` installs the pinned `TART_GUEST_AGENT_VERSION` (see the release-download entry below), then asserts the unit is enabled and running; `script/smoke` proves the channel answers. Left inherited, the version silently forked across cells — a frozen base carried 0.10.0 while weekly-rebuilt ones carried 0.11.0 — and no distro repository ships the package, so a release upgrade cannot carry it forward either.
+  - **The distro release those images are published at is not what a built image ships.** The upstream Fedora image is pinned to a release that is already past end of life, and its publisher advances that by hand, so re-pulling the base never moves it. The build's first provisioner therefore calls `pkg_release_upgrade` (defined in `shared/scripts/distro-lib.sh`), lifting a dnf-family guest to `FEDORA_TARGET_RELEASE` before anything is installed on it. Packages come from Fedora's own repositories and are verified against a signing key that already ships in the base image — no key is fetched at build time, and `--nogpgcheck` is never used. `00-base.sh` then refuses outright any release whose own `SUPPORT_END` has passed, so a stale pin fails the build rather than quietly producing an unpatched image. The apt-family bases are current and their publisher tracks them, so this is a no-op there.
 
 dnf-family (Fedora) sources:
 - `copr.fedorainfracloud.org/coprs/jdxcode/mise` — the [mise](https://mise.jdx.dev/) COPR.
@@ -39,6 +40,9 @@ apt-family (Debian/Ubuntu) sources:
 - `cli.github.com/packages/githubcli-archive-keyring.gpg` + `cli.github.com/packages` — the GitHub CLI signed apt repo.
 - `github.com/zellij-org/zellij/releases/latest` — the zellij static-musl release tarball (no apt package exists).
 
+Both families:
+- `github.com/openai/tart-guest-agent/releases` — the pinned agent's `.rpm`/`.deb`, verified against that release's published `_checksums.txt` before it reaches the package manager (`install_guest_agent` in `shared/scripts/distro-lib.sh`). This is the most privileged download in the build: the binary it installs executes host-issued commands as an account with passwordless sudo, so an unlisted or mismatched artifact is refused rather than installed.
+
 Runtime sources fetched at build time (a class, not an exhaustive list — the exact set follows each stack's `files/mise.toml`):
 - Everything mise resolves and downloads for the tools declared in the per-stack `files/mise.toml` — e.g. php-src (compiled via the vfox-php plugin), the Node dist tarballs, Temurin JDK via the Adoptium API, the Maven/Gradle/sbt/Kotlin/scala-cli release artifacts, uv. Each download's integrity is whatever mise and the respective backend enforce.
 - `pecl.php.net` — the PECL extensions the php stack's `mise-install.sh` installs.
@@ -47,7 +51,7 @@ Stack-specific upstream sources:
 
 - **php stack** — `getcomposer.org/installer`, verified against `composer.github.io/installer.sig` (SHA-384).
 
-The verifications this repo adds on top of upstream's own: the Composer SHA-384 check in `stacks/php/scripts/mise-install.sh`, and (on apt-family distros) a sha256 check of the downloaded zellij binary against its published `.sha256sum` in `shared/scripts/distro-lib.sh`. If you spot a missing verification on any of the above, that's a valid finding for this repo — please report.
+The verifications this repo adds on top of upstream's own: the sha256 check of the tart-guest-agent package against its release checksums (both families), the Composer SHA-384 check in `stacks/php/scripts/mise-install.sh`, and (on apt-family distros) a sha256 check of the downloaded zellij binary against its published `.sha256sum` — all in `shared/scripts/distro-lib.sh` unless noted. If you spot a missing verification on any of the above, that's a valid finding for this repo — please report.
 
 ## Supported versions
 

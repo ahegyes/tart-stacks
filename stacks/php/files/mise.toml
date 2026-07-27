@@ -18,7 +18,7 @@ node = "lts"
 # name, and with this plugin the php it installs then satisfies no config entry:
 # `mise ls` reports `(missing)`, the `php` shim has no version to resolve, and a
 # non-interactive `ssh <vm> php -v` finds no PHP at all.
-php = "8.5.6"
+php = "8.5.8"
 
 # Per-project examples (do not enable globally):
 # python = "<major.minor>"
