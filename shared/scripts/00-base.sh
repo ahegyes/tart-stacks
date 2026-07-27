@@ -26,26 +26,30 @@ fi
 # check sharing its fate would skip exactly the guests most likely to be stale.
 assert_release_supported
 
-# The other thing inherited from the base rather than built here: the agent that
-# serves `tart exec`. That is a host->guest vsock RPC, NOT ssh — and ssh is all
-# this build ever speaks, so a base whose agent does not work builds clean and
-# then leaves every clone on the base image's hostname (tart-up only warns) and
-# hard-fails any GUI activation. Two failing states with two different fixes, so
-# they are reported apart.
+# The agent that serves `tart exec`. That is a host->guest vsock RPC, NOT ssh —
+# and ssh is all this build ever speaks, so an agent that does not work builds
+# clean and then leaves every clone on the base image's hostname (tart-up only
+# warns) and hard-fails any GUI activation.
 #
-# The literal string `enabled` is the test rather than is-enabled's exit status,
-# which is also 0 for `static`, `enabled-runtime`, `indirect` and `generated`.
-# Whether any of those starts on a clone depends on what else pulls the unit in,
-# which this check cannot see — so it refuses them and names the state it found
-# rather than guessing. `enabled` is what the upstream package produces.
+# Installed here rather than inherited: the agent reaches images only via the base,
+# no distro repo carries it, and the release upgrade cannot carry it forward — so
+# an unrefreshed base freezes it silently. Owning the version is what keeps cells
+# that are otherwise built identically from drifting apart.
+install_guest_agent
+
+# The install is not the proof. The literal string `enabled` is the test rather
+# than is-enabled's exit status, which is also 0 for `static`, `enabled-runtime`,
+# `indirect` and `generated`. Whether any of those starts on a clone depends on
+# what else pulls the unit in, which this check cannot see — so it refuses them and
+# names the state it found rather than guessing.
 agent_state=$(systemctl is-enabled tart-guest-agent.service 2>/dev/null || true)
 if [ "$agent_state" != enabled ]; then
-  echo "ERROR: this base image has no enabled tart-guest-agent.service (systemctl reports" >&2
-  echo "       '${agent_state:-unreadable}'). 'tart exec' is a host->guest vsock call served by that" >&2
-  echo "       agent inside the guest; the host's own tart install cannot supply it. Either" >&2
-  echo "       re-pull a base that carries one ('make bootstrap DISTRO=${DISTRO:-<distro>}') OR install and" >&2
-  echo "       enable it in the base image and run packer build directly — bootstrap re-clones" >&2
-  echo "       the base from the registry, discarding anything installed into it by hand." >&2
+  echo "ERROR: tart-guest-agent.service is '${agent_state:-unreadable}', not 'enabled', after this" >&2
+  echo "       build installed it. 'tart exec' is a host->guest vsock call served by that agent" >&2
+  echo "       inside the guest; the host's own tart install cannot supply it. The build owns this" >&2
+  echo "       package now, so look at the install above, not at the base image — the version is" >&2
+  echo "       TART_GUEST_AGENT_VERSION in shared/scripts/distro-lib.sh, and its unit ships with" >&2
+  echo "       the package. Re-pulling a base cannot fix a package this build installs." >&2
   exit 1
 fi
 # Enabled only promises systemd will try to start it. An agent that dies during

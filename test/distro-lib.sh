@@ -37,7 +37,9 @@ MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
 cat > "$MOCKBIN/apt-get" <<'M'
 #!/usr/bin/env bash
 [ -n "${MOCK_APT_LOG:-}" ] && printf '%s\n' "$*" >> "$MOCK_APT_LOG"
-[ "${MOCK_APT_FAIL:-}" = "${4:-}" ] && exit 100
+# Guarded on being SET, not just on matching: `apt-get install -y <file>` has no
+# $4, so an unset knob would compare empty to empty and fail every such call.
+[ -n "${MOCK_APT_FAIL:-}" ] && [ "${MOCK_APT_FAIL}" = "${4:-}" ] && exit 100
 exit 0
 M
 cat > "$MOCKBIN/apt-cache" <<'M'
@@ -361,5 +363,117 @@ assert_contains "the refusal names the release"      "$REL_ERR" "Fedora Linux 42
 assert_contains "the refusal names the end date"     "$REL_ERR" "2026-05-13"
 assert_contains "the refusal names today"            "$REL_ERR" "2026-07-27"
 assert_contains "the refusal names the knob to turn" "$REL_ERR" "FEDORA_TARGET_RELEASE"
+
+# ── install_guest_agent ──────────────────────────────────────────────────────
+# The agent executes what the host asks of it as a passwordless-sudo account, so
+# the cases that matter most are the ones that must REFUSE: a hash that does not
+# match, and a package the checksums file does not mention at all. Both have to
+# fail before anything reaches the package manager.
+echo
+echo "distro-lib — install_guest_agent:"
+cat > "$MOCKBIN/curl" <<'M'
+#!/usr/bin/env bash
+[ "${MOCK_CURL_FAIL:-0}" = "1" ] && exit 22
+dest=""
+while [ $# -gt 0 ]; do
+  case "$1" in -o) dest="$2"; shift 2 ;; *) shift ;; esac
+done
+# The checksums fetch and the package fetch are told apart by their destination,
+# which is what the lib actually controls.
+case "$dest" in
+  *checksums) printf '%s  %s\n' "${MOCK_SUM_VALUE:-goodhash}" "${MOCK_SUM_NAME:-unset}" > "$dest" ;;
+  *)          printf 'not-a-real-package\n' > "$dest" ;;
+esac
+exit 0
+M
+cat > "$MOCKBIN/sha256sum" <<'M'
+#!/usr/bin/env bash
+printf '%s  %s\n' "${MOCK_ACTUAL_SHA:-goodhash}" "${1:-}"
+M
+cat > "$MOCKBIN/uname" <<'M'
+#!/usr/bin/env bash
+[ "${1:-}" = "-m" ] && { printf '%s\n' "${MOCK_UNAME_M:-aarch64}"; exit 0; }
+printf 'Linux\n'
+M
+cat > "$MOCKBIN/systemctl" <<'M'
+#!/usr/bin/env bash
+[ -n "${MOCK_DNF_LOG:-}" ] && printf 'systemctl %s\n' "$*" >> "$MOCK_DNF_LOG"
+exit 0
+M
+chmod +x "$MOCKBIN/curl" "$MOCKBIN/sha256sum" "$MOCKBIN/uname" "$MOCKBIN/systemctl"
+
+AG_LOG="$WORK/agent-log"; AG_ERR=""; AG_RC=0
+# agent_run <os-release-fixture> <version> [VAR=VAL ...] — leaves status in $AG_RC,
+# package-manager and systemctl calls in $AG_LOG, combined output in $AG_ERR.
+# Called directly, never in $( ): a subshell would discard all three.
+agent_run() {
+  local fixture="$1" ver="$2"; shift 2
+  AG_RC=0; : > "$AG_LOG"
+  # Both package managers log to the same file here: which one ran is the thing
+  # under test, so they must be visible in one place and in order.
+  # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+  # shellcheck disable=SC2163  # "$@" carries literal NAME=VALUE pairs, which is
+  # exactly what export takes as operands — not an indirect variable name
+  AG_ERR=$( ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$fixture" \
+                TART_GUEST_AGENT_VERSION="$ver" \
+                MOCK_DNF_LOG="$AG_LOG" MOCK_APT_LOG="$AG_LOG" "$@"
+              # shellcheck source=/dev/null
+              source "$REPO/shared/scripts/distro-lib.sh"
+              install_guest_agent ) 2>&1 ) || AG_RC=$?
+}
+
+# The happy paths: right package name per family, then install, then the unit is
+# reloaded and enabled --now (a clone's first boot needs it enabled, and the
+# assertions in 00-base.sh read the running state).
+agent_run "$WORK/f" 0.11.0 MOCK_SUM_NAME=tart-guest-agent_0.11.0_linux_arm64.rpm
+assert_eq       "dnf: succeeds"                    0 "$AG_RC"
+assert_contains "dnf: installs the .rpm"           "$(cat "$AG_LOG")" "tart-guest-agent_0.11.0_linux_arm64.rpm"
+assert_contains "dnf: reloads units"               "$(cat "$AG_LOG")" "systemctl daemon-reload"
+assert_contains "dnf: enables it now"              "$(cat "$AG_LOG")" "enable --now tart-guest-agent.service"
+
+agent_run "$WORK/u" 0.11.0 MOCK_SUM_NAME=tart-guest-agent_0.11.0_linux_arm64.deb
+assert_eq       "apt: succeeds"                    0 "$AG_RC"
+assert_contains "apt: installs the .deb"           "$(cat "$AG_LOG")" "tart-guest-agent_0.11.0_linux_arm64.deb"
+
+# Architecture comes from the guest, not from an assumption about Apple silicon.
+agent_run "$WORK/f" 0.11.0 MOCK_UNAME_M=x86_64 MOCK_SUM_NAME=tart-guest-agent_0.11.0_linux_amd64.rpm
+assert_contains "x86_64 maps to the amd64 build"   "$(cat "$AG_LOG")" "linux_amd64.rpm"
+agent_run "$WORK/f" 0.11.0 MOCK_UNAME_M=riscv64
+assert_eq       "an unknown arch is refused"       1  "$AG_RC"
+assert_eq       "...and installs nothing"          "" "$(cat "$AG_LOG")"
+
+# THE case. A package whose hash does not match must never reach the installer.
+agent_run "$WORK/f" 0.11.0 MOCK_SUM_NAME=tart-guest-agent_0.11.0_linux_arm64.rpm MOCK_ACTUAL_SHA=tampered
+assert_eq       "a sha256 mismatch is refused"     1  "$AG_RC"
+assert_eq       "...before installing anything"    "" "$(cat "$AG_LOG")"
+assert_contains "...and says so"                   "$AG_ERR" "sha256 mismatch"
+
+# A checksums file that does not list the package at all is not a pass — without
+# this branch the expected hash is empty and any download would satisfy it.
+agent_run "$WORK/f" 0.11.0 MOCK_SUM_NAME=some-other-artifact.rpm
+assert_eq       "an unlisted package is refused"   1  "$AG_RC"
+assert_eq       "...before installing anything"    "" "$(cat "$AG_LOG")"
+assert_contains "...and says it is unverifiable"   "$AG_ERR" "unverifiable"
+
+agent_run "$WORK/f" 0.11.0 MOCK_CURL_FAIL=1
+assert_eq       "a failed download is refused"     1  "$AG_RC"
+assert_eq       "...and installs nothing"          "" "$(cat "$AG_LOG")"
+# Asserted on the wording, not just the status: without the download check a failed
+# fetch still refuses, but by falling through to the empty-checksum branch and
+# reporting an unverifiable package — which sends the reader hunting a supply-chain
+# problem when the real one was the network.
+assert_contains "...and blames the download"       "$AG_ERR" "could not download"
+
+# Same fail-closed rule as the release upgrade: a family with no mapping must not
+# quietly keep whatever agent its base shipped.
+agent_unknown_family_rc() {
+  local rc=0
+  # shellcheck disable=SC2016,SC2031
+  env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
+    bash -c '. "$1"; _DISTRO_FAMILY=zypper; install_guest_agent' _ \
+      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+assert_eq "an unknown family is refused, not skipped" 1 "$(agent_unknown_family_rc)"
 
 echo; echo "  $pass passed, $fail failed"; [ "$fail" -eq 0 ]

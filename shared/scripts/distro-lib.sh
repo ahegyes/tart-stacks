@@ -259,6 +259,83 @@ install_zellij() {
   esac
 }
 
+# TART_GUEST_AGENT_VERSION — the tart-guest-agent release every image installs.
+#
+# The agent answers the host's `tart exec` over vsock, and it arrives in the base
+# image rather than from any distro repository — so its version is whatever the
+# base happened to ship, and a base that stops being refreshed freezes it. That is
+# not hypothetical: the frozen Fedora base carries 0.10.0 while the weekly-rebuilt
+# Debian and Ubuntu bases carry 0.11.0, an invisible split across cells that are
+# otherwise built identically. The release upgrade does not fix it either, since no
+# repo provides the package for dnf to carry forward.
+#
+# Pinned rather than tracking the newest release: this binary executes what the
+# host asks of it as a passwordless-sudo account, so the version installed is a
+# thing to choose deliberately and verify, not to inherit from whatever shipped
+# most recently. Bump here, then rebuild.
+TART_GUEST_AGENT_VERSION="${TART_GUEST_AGENT_VERSION:-0.11.0}"
+
+# install_guest_agent — install the pinned tart-guest-agent, verified against the
+# release's published checksums, and make sure it is enabled and running.
+#
+# Upstream ships a native package per family, so this installs through the package
+# manager rather than dropping a binary: dependencies resolve, and the systemd unit
+# lands where the package intends it. The checksum step is not optional — see
+# SECURITY.md for why this download in particular carries the weight it does.
+install_guest_agent() {
+  local ver="$TART_GUEST_AGENT_VERSION" arch ext pkg url tmp want got rc=0
+
+  case "$(uname -m)" in
+    aarch64|arm64) arch=arm64 ;;
+    x86_64|amd64)  arch=amd64 ;;
+    *) echo "ERROR: no tart-guest-agent build for machine type '$(uname -m)'." >&2; return 1 ;;
+  esac
+  case "$_DISTRO_FAMILY" in
+    dnf) ext=rpm ;;
+    apt) ext=deb ;;
+    # Fail closed: a family without a branch would silently keep whatever agent its
+    # base shipped, which is the split this function exists to close.
+    *)   echo "ERROR: no tart-guest-agent package mapping for family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
+  esac
+
+  pkg="tart-guest-agent_${ver}_linux_${arch}.${ext}"
+  url="https://github.com/openai/tart-guest-agent/releases/download/v${ver}"
+  tmp="$(mktemp -d)"
+
+  echo "==> Installing tart-guest-agent ${ver} (${arch}, ${ext})..."
+  curl -fsSL --retry 3 --retry-delay 2 "$url/$pkg" -o "$tmp/$pkg" || rc=1
+  curl -fsSL --retry 3 --retry-delay 2 "$url/tart-guest-agent_${ver}_checksums.txt" -o "$tmp/checksums" || rc=1
+  if [ "$rc" -ne 0 ]; then
+    echo "ERROR: could not download tart-guest-agent ${ver} from $url." >&2
+    rm -rf "$tmp"; return 1
+  fi
+
+  # Match the whole filename, not a prefix: the checksums file lists .rpm, .deb,
+  # .apk and the tarballs, and several names share a prefix with one another.
+  want="$(awk -v p="$pkg" '$2 == p { print $1 }' "$tmp/checksums")"
+  if [ -z "$want" ]; then
+    echo "ERROR: '$pkg' has no entry in the ${ver} checksums file — refusing to install an unverifiable package." >&2
+    rm -rf "$tmp"; return 1
+  fi
+  got="$(sha256sum "$tmp/$pkg" | awk '{print $1}')"
+  if [ "$got" != "$want" ]; then
+    echo "ERROR: sha256 mismatch for $pkg — expected $want, got $got." >&2
+    rm -rf "$tmp"; return 1
+  fi
+
+  case "$_DISTRO_FAMILY" in
+    dnf) dnf install -y "$tmp/$pkg" ;;
+    apt) DEBIAN_FRONTEND=noninteractive apt-get install -y "$tmp/$pkg" ;;
+  esac || { echo "ERROR: installing $pkg failed." >&2; rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+
+  # The package replaces a unit file the base image's older agent also owned, so
+  # reload before enabling; `--now` because the assertions below read the running
+  # state, and a clone's first boot needs it enabled regardless.
+  systemctl daemon-reload
+  systemctl enable --now tart-guest-agent.service
+}
+
 # assert_mac_enforcing — fail if the inherited mandatory-access-control layer isn't
 # actively enforcing: SELinux in Enforcing mode on dnf; AppArmor with >0 profiles in
 # enforce mode on apt (a loaded module alone wouldn't prove enforcement is happening).

@@ -40,8 +40,10 @@ GATE="$WORK/gate.sh"
   # Its status is a knob rather than a fixed 0 so the call itself stays measurable —
   # stubbing it to always succeed would let the call be deleted from 00-base.sh
   # without a single case here noticing.
-  # shellcheck disable=SC2016  # the expansion belongs to the fixture, not to this shell
+  # shellcheck disable=SC2016  # the expansions belong to the fixture, not to this shell
   printf 'assert_release_supported() { return "${MOCK_RELEASE_RC:-0}"; }\n'
+  # shellcheck disable=SC2016
+  printf 'install_guest_agent() { return "${MOCK_AGENT_INSTALL_RC:-0}"; }\n'
   awk '
     /^fi$/        { if (!open) { open = 1; next } }
     /^echo "==> / { if (open) exit }
@@ -88,16 +90,16 @@ esac
 M
 chmod +x "$MOCKBIN/systemctl"
 
-# gate_verdict <is-enabled-state> <is-active-rc> [release-gate-rc] — "pass" or
-# "refuse"; stderr of the run is left in $GATE_ERR for the message assertions.
-# The release status is positional rather than an environment prefix on the call:
-# bash leaves a `VAR=x func` assignment set after the function returns, which would
-# silently arm it for every later case.
+# gate_verdict <is-enabled-state> <is-active-rc> [release-gate-rc] [agent-install-rc]
+# — "pass" or "refuse"; stderr of the run is left in $GATE_ERR for the message
+# assertions. The extra statuses are positional rather than environment prefixes on
+# the call: bash leaves a `VAR=x func` assignment set after the function returns,
+# which would silently arm it for every later case.
 GATE_ERR=""
 gate_verdict() {
   local rc=0
   GATE_ERR=$(PATH="$MOCKBIN:/usr/bin:/bin" MOCK_IS_ENABLED="$1" MOCK_IS_ACTIVE_RC="$2" \
-    MOCK_RELEASE_RC="${3:-0}" bash "$GATE" 2>&1) || rc=$?
+    MOCK_RELEASE_RC="${3:-0}" MOCK_AGENT_INSTALL_RC="${4:-0}" bash "$GATE" 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then printf 'pass'; else printf 'refuse'; fi
 }
 
@@ -109,6 +111,12 @@ assert_eq "enabled and running → build proceeds" "pass" "$(gate_verdict enable
 # through the stub's status proves 00-base.sh actually calls it and that a refusal
 # propagates, rather than proving the text of the call is present.
 assert_eq "end-of-life release → build refused"  "refuse" "$(gate_verdict enabled 0 1)"
+
+# The agent install shares this region and must be able to stop the build on its
+# own. Driving it through the stub's status proves 00-base.sh actually calls it —
+# a deleted call would otherwise leave every case here green while images shipped
+# whatever agent their base happened to carry, which is the drift being closed.
+assert_eq "agent install fails → build refused"  "refuse" "$(gate_verdict enabled 0 0 1)"
 
 # Anything other than the literal `enabled` fails the first branch. `static` and
 # `enabled-runtime` are the two that matter: real systemctl exits 0 for both, so
@@ -133,13 +141,14 @@ assert_contains "absent: names the missing unit"      "$GATE_ERR" "tart-guest-ag
 assert_contains "absent: reports the state it saw"    "$GATE_ERR" "not-found"
 assert_contains "absent: says the channel is vsock"   "$GATE_ERR" "vsock"
 assert_contains "absent: rules out a host-side fix"   "$GATE_ERR" "host's own tart install cannot supply it"
-assert_contains "absent: gives a runnable next step"  "$GATE_ERR" "make bootstrap DISTRO="
-# `make bootstrap` deletes the base image and re-clones it from the registry, so
-# offering it as the step AFTER hand-installing the agent would send the reader
-# in a loop that destroys the fix each time round. It has to read as the
-# alternative to patching, and say what it discards.
-assert_contains "absent: bootstrap is the alternative, not the sequel" "$GATE_ERR" "OR install and"
-assert_contains "absent: warns bootstrap discards a patched base" "$GATE_ERR" "discarding anything installed into it by hand"
+# The build installs this package itself, so the fix is the pin and the install
+# output — not the base image. Naming the knob is the runnable next step.
+assert_contains "absent: points at the version pin"   "$GATE_ERR" "TART_GUEST_AGENT_VERSION"
+# Re-pulling the base was the right advice while the base owned the agent. Now it
+# is a loop that changes nothing, so the message has to say so rather than stay
+# silent and let a reader reach for the habit.
+assert_contains "absent: rules out re-pulling a base" "$GATE_ERR" "Re-pulling a base cannot fix"
+assert_absent   "absent: no longer advises bootstrap" "$GATE_ERR" "make bootstrap"
 
 gate_verdict disabled 0 >/dev/null
 assert_contains "disabled: reports the state it saw"  "$GATE_ERR" "disabled"

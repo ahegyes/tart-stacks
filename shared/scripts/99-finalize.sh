@@ -66,6 +66,12 @@ echo "==> Writing /etc/tart-stacks-release..."
   ( . /etc/os-release 2>/dev/null || true
     echo "os: ${PRETTY_NAME:-unknown} (${VERSION_ID:-?})"
     echo "support-end: ${SUPPORT_END:-none}" )
+  # agent: <version> — the daemon serving `tart exec`. Recorded because the build
+  # installs it rather than inheriting it, so a clone can be checked against the
+  # pin without booting it and asking. Read from the binary, not the package
+  # database, so it reports what would actually answer the host.
+  agent_ver="$(tart-guest-agent --version 2>/dev/null | awk '{print $NF}')"
+  echo "agent: ${agent_ver:-unknown}"
   echo ""
   if [ -f /tmp/tart-stacks-tools ]; then
     echo "tools:"
