@@ -2,14 +2,12 @@
 # comments and blank lines ignored. Names differ from packages.dnf/packages.apt
 # (Homebrew vs. rpm/deb naming) but the covered capabilities are meant to match,
 # minus one with no macOS equivalent: PHP-FPM's systemd notify (systemd-devel —
-# launchd has no analogue). gd's XPM support is also a real gap (no Homebrew
-# libXpm/X11 formula this build wires up), but AVIF is NOT one — corrected
-# after review: Homebrew's `gd` formula depends on `libavif` unconditionally
-# (confirmed via `brew info --json gd`; its shipped gd.pc links `-lavif`), so
-# AVIF support rides in for free once `gd` is installed below. An earlier
-# revision of this file claimed both were gaps without checking; that was
-# wrong for AVIF specifically. Installs go through pkg_install_optional, which
-# warns on a missing formula instead of failing; the smoke gate in
+# launchd has no analogue). gd's XPM support is a real gap too (no Homebrew
+# libXpm/X11 formula this build wires up). AVIF is not a gap: Homebrew's `gd`
+# formula depends on `libavif` unconditionally (confirmed via `brew info
+# --json gd`; its shipped gd.pc links `-lavif`), so AVIF support rides in for
+# free once `gd` is installed below. Installs go through pkg_install_optional,
+# which warns on a missing formula instead of failing; the smoke gate in
 # scripts/darwin/mise-install.sh is what catches a dropped capability — pair
 # list changes with gate changes.
 #
