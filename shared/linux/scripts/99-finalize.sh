@@ -26,6 +26,8 @@
 set -euo pipefail
 # shellcheck source=/dev/null
 source /tmp/family-lib.sh
+# shellcheck source=/dev/null
+source /tmp/authorized-key-lib.sh
 
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"
@@ -88,29 +90,10 @@ echo "==> Writing /etc/tart-stacks-release..."
 chmod 644 /etc/tart-stacks-release
 rm -f /tmp/tart-stacks-tools /tmp/tart-stacks-skipped
 
-# Authorize the user's SSH key.
-if [ ! -f /tmp/authorized_key.pub ]; then
-  echo "ERROR: /tmp/authorized_key.pub not found. Did the Packer file provisioner run?" >&2
-  exit 1
-fi
-# The private half needs its own gate ahead of the parse check: `ssh-keygen -l
-# -f` prints a fingerprint and exits 0 for a private key too — plain,
-# passphrase-protected, PEM and PKCS8 alike — so the parse check cannot see it.
-# Authorizing one bakes a private key into every clone and authenticates nobody,
-# which the irreversible passwd -l below then makes unrecoverable. The whole PEM
-# armor is required, but not at the start of a line: a public key's comment field
-# is free text, so the bare words would abort a build over a comment reading
-# "PRIVATE KEY" — while a line anchor would miss an indented private block pasted
-# below a valid pubkey line, which the parse check below accepts.
-if grep -q -- '-----BEGIN .*PRIVATE KEY-----' /tmp/authorized_key.pub; then
-  echo "ERROR: /tmp/authorized_key.pub holds a PRIVATE key. Refusing to proceed (it would authorize no one and ship the private half in every clone) — point var.ssh_pubkey_path at the .pub half." >&2
-  exit 1
-fi
-# Parse-check before the irreversible passwd -l below — bad upload = no way in.
-if ! ssh-keygen -l -f /tmp/authorized_key.pub >/dev/null 2>&1; then
-  echo "ERROR: /tmp/authorized_key.pub is not a valid SSH public key. Refusing to proceed (would lock out ${TARGET_USER})." >&2
-  exit 1
-fi
+# Authorize the user's SSH key. assert_authorized_key_safe (shared/scripts/
+# authorized-key-lib.sh) is the gate — it must run before the irreversible
+# passwd -l below: a bad upload accepted there is no way in.
+assert_authorized_key_safe /tmp/authorized_key.pub || exit 1
 echo "==> Authorizing user SSH key for ${TARGET_USER}..."
 install -d -m 700 -o "${TARGET_USER}" -g "${TARGET_USER}" "${TARGET_HOME}/.ssh"
 install -m 600 -o "${TARGET_USER}" -g "${TARGET_USER}" \

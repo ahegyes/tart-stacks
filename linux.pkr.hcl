@@ -236,6 +236,13 @@ build {
     destination = "/tmp/mise-lib.sh"
   }
 
+  # Anti-lockout gate for the SSH key uploaded below, sourced by 99-finalize.sh
+  # before it authorizes that key.
+  provisioner "file" {
+    source      = "shared/scripts/authorized-key-lib.sh"
+    destination = "/tmp/authorized-key-lib.sh"
+  }
+
   # Upload the host's public SSH key (consumed by 99-finalize.sh).
   provisioner "file" {
     source      = pathexpand(var.ssh_pubkey_path)
