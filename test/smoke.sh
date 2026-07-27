@@ -76,6 +76,10 @@ case "$*" in
     printf 'built: 2026-01-01T00:00:00Z\n'
     printf 'stack: %s\n'  "${MOCK_MANIFEST_STACK:-php}"
     printf 'os: %s\n' "${MOCK_MANIFEST_OS:-fedora}"
+    # Stages the failure mode the regression guard exists for: a second
+    # top-level `os:` line, which field()'s first-match-then-exit semantics
+    # would otherwise read past silently.
+    [ "${MOCK_MANIFEST_OS_DUP:-0}" = "1" ] && printf 'os: %s\n' "Fedora Linux 44 (Cloud Edition) (44)"
     printf 'gui: %s\n'    "${MOCK_MANIFEST_GUI:-none}"
     printf 'os-id: %s\n'  "${MOCK_MANIFEST_OSID:-fedora}" ;;
   *"sshd -T"*)
@@ -144,6 +148,7 @@ run_smoke() { # args... — exit code in $rc, stderr in $ERR, recorded calls in 
     MOCK_VNC_SS_RC="${MOCK_VNC_SS_RC-0}" \
     MOCK_MANIFEST_STACK="${MOCK_MANIFEST_STACK-php}" \
     MOCK_MANIFEST_OS="${MOCK_MANIFEST_OS-fedora}" \
+    MOCK_MANIFEST_OS_DUP="${MOCK_MANIFEST_OS_DUP-0}" \
     MOCK_MANIFEST_GUI="${MOCK_MANIFEST_GUI-none}" \
     MOCK_MANIFEST_OSID="${MOCK_MANIFEST_OSID-fedora}" \
     MOCK_SSHD_T="${MOCK_SSHD_T-passwordauthentication no
@@ -389,6 +394,15 @@ assert_contains "OS mismatch names both values" "$(cat "$ERR")" "expected 'fedor
 MOCK_MANIFEST_OSID=ubuntu run_smoke php fedora
 assert_rc       "guest os-release disagrees with the manifest → FAIL" 1
 assert_contains "os-release mismatch is reported separately" "$(cat "$ERR")" "guest os-release id"
+
+# Regression guard: field() returns only the FIRST match on a key and exits, so
+# a duplicate `os:` line (as a real manifest once shipped) would silently
+# orphan the second instead of failing the attest above. This must fail loudly
+# on its own, before field() ever gets a chance to look right.
+MOCK_MANIFEST_OS_DUP=1 run_smoke php fedora
+assert_rc       "duplicate manifest 'os:' key → FAIL" 1
+assert_contains "duplicate os: key names the count" "$(cat "$ERR")" "manifest has 2 'os:' line(s)"
+assert_contains "duplicate os: key explains why"     "$(cat "$ERR")" "silently orphans the rest"
 
 MOCK_MANIFEST_GUI=kde run_smoke php fedora
 assert_rc       "a GUI image smoked as headless → FAIL" 1

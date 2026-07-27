@@ -154,6 +154,19 @@ manifest=$(ssh -o BatchMode=yes "tart-$VM" 'cat /etc/tart-stacks-release; . /etc
   exit "$rc"
 }
 field() { printf '%s\n' "$manifest" | awk -v k="$1:" '$1==k { print $2; exit }'; }
+
+# field() takes the FIRST match on key and exits, so a duplicate `os:` line
+# would silently orphan the second instead of failing the attest below —
+# the attest would read the build token and call it a day, with no signal
+# that a second, unreachable line exists. Assert the key appears exactly once
+# before trusting field() to read it.
+os_lines=$(printf '%s\n' "$manifest" | awk '$1=="os:" { c++ } END { print c+0 }')
+if [ "$os_lines" -ne 1 ]; then
+  echo "$prog: FAIL — manifest has $os_lines 'os:' line(s), want exactly 1 (field() returns only the first match and exits, so a duplicate key silently orphans the rest — inspect /etc/tart-stacks-release)." >&2
+  exit 1
+fi
+printf '%s: ok   %-22s %s\n' "$prog" "manifest os: key" "unique" >&2
+
 attest "manifest stack"  "$STACK"          "$(field stack)"
 attest "manifest os" "$OS"                 "$(field os)"
 attest "guest os-release id" "$OS"         "$(field os-id)"

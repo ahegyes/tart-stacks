@@ -64,7 +64,7 @@ echo "==> Writing /etc/tart-stacks-release..."
   # for the apt family, which publishes no equivalent, not a claim of endless support.
   # shellcheck disable=SC1091  # guest-only file, absent at lint time
   ( . /etc/os-release 2>/dev/null || true
-    echo "os: ${PRETTY_NAME:-unknown} (${VERSION_ID:-?})"
+    echo "os-pretty: ${PRETTY_NAME:-unknown} (${VERSION_ID:-?})"
     echo "support-end: ${SUPPORT_END:-none}" )
   # agent: <version> — the daemon serving `tart exec`. Recorded because the build
   # installs it rather than inheriting it, so a clone can be checked against the
