@@ -25,7 +25,7 @@ usage() { echo "usage: $prog <vm-name>" >&2; }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 [ $# -eq 1 ] || { usage; exit 64; }
 
-tart_need_cmd tart "Install: brew install cirruslabs/cli/tart"
+tart_need_cmd tart "Install: brew install openai/tools/tart"
 tart_need_cmd jq   "Install: brew install jq"
 
 VM=$(tart_resolve_vm "$1") || exit 1

@@ -20,6 +20,43 @@ if [ -n "${DISTRO:-}" ] && [ "$guest_id" != "$DISTRO" ]; then
   exit 1
 fi
 
+# The other thing inherited from the base rather than built here: the agent that
+# serves `tart exec`. That is a host->guest vsock RPC, NOT ssh — and ssh is all
+# this build ever speaks, so a base whose agent does not work builds clean and
+# then leaves every clone on the base image's hostname (tart-up only warns) and
+# hard-fails any GUI activation. Two failing states with two different fixes, so
+# they are reported apart.
+#
+# The literal string `enabled` is the test rather than is-enabled's exit status,
+# which is also 0 for `static`, `enabled-runtime`, `indirect` and `generated`.
+# Whether any of those starts on a clone depends on what else pulls the unit in,
+# which this check cannot see — so it refuses them and names the state it found
+# rather than guessing. `enabled` is what the upstream package produces.
+agent_state=$(systemctl is-enabled tart-guest-agent.service 2>/dev/null || true)
+if [ "$agent_state" != enabled ]; then
+  echo "ERROR: this base image has no enabled tart-guest-agent.service (systemctl reports" >&2
+  echo "       '${agent_state:-unreadable}'). 'tart exec' is a host->guest vsock call served by that" >&2
+  echo "       agent inside the guest; the host's own tart install cannot supply it. Either" >&2
+  echo "       re-pull a base that carries one ('make bootstrap DISTRO=${DISTRO:-<distro>}') OR install and" >&2
+  echo "       enable it in the base image and run packer build directly — bootstrap re-clones" >&2
+  echo "       the base from the registry, discarding anything installed into it by hand." >&2
+  exit 1
+fi
+# Enabled only promises systemd will try to start it. An agent that dies during
+# startup in this guest dies the same way on every clone of the image.
+#
+# Both branches read configuration, never the channel itself: the RPC runs
+# host->guest and this script runs in the guest, so it cannot call itself back.
+# An agent that is active but wedged passes here; `make smoke` is where the round
+# trip is exercised for real.
+if ! systemctl is-active --quiet tart-guest-agent.service; then
+  echo "ERROR: tart-guest-agent.service is enabled but not running in this guest." >&2
+  echo "       It answers the host's 'tart exec' calls over vsock, so tart-up cannot set a" >&2
+  echo "       clone's hostname and no GUI mode can start. Inspect 'systemctl status" >&2
+  echo "       tart-guest-agent' and its journal in the base image." >&2
+  exit 1
+fi
+
 echo "==> Updating system packages..."
 pkg_refresh
 

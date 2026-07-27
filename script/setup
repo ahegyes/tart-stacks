@@ -423,7 +423,7 @@ if command -v tart >/dev/null 2>&1; then
   info "generated $GENERATED (tart-ssh-sync)."
 else
   warn "Tart is not installed, so the SSH config the Include points at was NOT generated — ssh tart-<name> cannot resolve yet."
-  warn "Install Tart (brew install cirruslabs/cli/tart), then run:  tart-ssh-sync"
+  warn "Install Tart (brew install openai/tools/tart), then run:  tart-ssh-sync"
 fi
 
 echo "setup: done. Build a stack with:  make build STACK=php DISTRO=fedora"
