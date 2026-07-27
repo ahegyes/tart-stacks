@@ -1,12 +1,17 @@
 # PHP build dependencies (Homebrew formula names), one or more per line; '#'
 # comments and blank lines ignored. Names differ from packages.dnf/packages.apt
 # (Homebrew vs. rpm/deb naming) but the covered capabilities are meant to match,
-# minus two with no macOS equivalent: PHP-FPM's systemd notify (systemd-devel —
-# launchd has no analogue) and gd's XPM/AVIF format support (libXpm-devel/
-# libavif-devel — no Homebrew formula this build wires a --with-xpm/--with-avif
-# flag for). Installs go through pkg_install_optional, which warns on a missing
-# formula instead of failing; the smoke gate in scripts/darwin/mise-install.sh
-# is what catches a dropped capability — pair list changes with gate changes.
+# minus one with no macOS equivalent: PHP-FPM's systemd notify (systemd-devel —
+# launchd has no analogue). gd's XPM support is also a real gap (no Homebrew
+# libXpm/X11 formula this build wires up), but AVIF is NOT one — corrected
+# after review: Homebrew's `gd` formula depends on `libavif` unconditionally
+# (confirmed via `brew info --json gd`; its shipped gd.pc links `-lavif`), so
+# AVIF support rides in for free once `gd` is installed below. An earlier
+# revision of this file claimed both were gaps without checking; that was
+# wrong for AVIF specifically. Installs go through pkg_install_optional, which
+# warns on a missing formula instead of failing; the smoke gate in
+# scripts/darwin/mise-install.sh is what catches a dropped capability — pair
+# list changes with gate changes.
 #
 # Cross-checked against the actual build logic of the pinned vfox-php plugin
 # (mise.toml's [tool_alias]: vfox:jdx/vfox-php, a fork of mise-plugins/vfox-php
@@ -31,13 +36,35 @@ sqlite
 oniguruma
 # intl (ICU)
 icu4c
-# zip — the plugin does NOT auto-add --with-zip the way it does for sodium/
-# bz2/pdo_pgsql/gd below, so scripts/darwin/mise-install.sh states the flag
-# explicitly; libzip only needs to be findable via pkg-config for that to work
+# zip — the plugin does NOT auto-add --with-zip the way it does --with-sodium/
+# --with-bz2/--with-pdo-pgsql/--with-external-gd (see those entries below), so
+# scripts/darwin/mise-install.sh states the flag explicitly; libzip only needs
+# to be findable via pkg-config for that to work
 libzip
-# gd + JPEG/PNG/WebP/FreeType — the plugin auto-adds --with-external-gd only
-# when all three of freetype/jpeg/libpng resolve under Homebrew's opt/ prefix
-freetype jpeg libpng webp
+# gd itself — REQUIRED, and easy to miss: --with-external-gd (forced,
+# unconditionally, in scripts/darwin/mise-install.sh) makes php-src's
+# configure run PKG_CHECK_MODULES([GDLIB], [gdlib >= 2.1.0]), and that .pc
+# file ships with the `gd` formula, not with any of its dependencies below —
+# installing only those leaves gdlib.pc absent and configure fails outright.
+# Confirmed via `brew info --json gd`: it is its own formula (dependencies
+# fontconfig, freetype, jpeg-turbo, libavif, libpng, libtiff, webp), not a
+# meta-package for them.
+gd
+# freetype/libpng/webp — also `gd`'s own dependencies (Homebrew installs them
+# automatically once gd, above, is installed), listed here too because the
+# vfox-php plugin's own build logic independently probes each of these by
+# name to auto-add its own --with-freetype/--with-png/--with-webp flag; this
+# makes that side effect visible instead of leaving it implicit in gd's
+# dependency tree
+freetype libpng webp
+# jpeg — NOT an alias for jpeg-turbo, which `gd` depends on above. Homebrew
+# ships them as two separate, independently-versioned formulas (`jpeg`'s own
+# aliases are libjpeg/libjpg; confirmed via `brew info --json jpeg` vs
+# `jpeg-turbo`, which has no relation). Listed because the plugin's build
+# logic probes specifically for a formula named `jpeg` for its own
+# --with-jpeg flag; jpeg-turbo (gd's actual JPEG dependency) installs
+# regardless, pulled in transitively by gd above
+jpeg
 # sodium — the plugin auto-adds --with-sodium when this resolves
 libsodium
 # readline — the plugin auto-adds --with-readline when this resolves

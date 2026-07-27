@@ -58,6 +58,20 @@ export PATH="/opt/homebrew/bin:$PATH"
 # --with-zip has no such auto-add path on darwin at all (libzip only gets
 # PKG_CONFIG_PATH wiring, never a flag) — this is the one flag that is not
 # redundant with the plugin's own logic on either platform.
+#
+# --with-external-gd specifically needs the `gd` formula (packages.brew) for
+# its gdlib.pc — php-src's own configure runs PKG_CHECK_MODULES([GDLIB],
+# [gdlib >= 2.1.0]) for this flag, and that .pc file ships with `gd` itself,
+# NOT with its dependencies. The plugin's own has_gd_deps check (see the
+# header above) only verifies freetype/jpeg/libpng are present before adding
+# this same flag on its own — none of those three provide gdlib.pc either,
+# so that auto-add path has the identical gap. Confirmed on this host via
+# `brew info --json gd` (dependencies: fontconfig, freetype, jpeg-turbo,
+# libavif, libpng, libtiff, webp — none of which is a substitute for gd
+# itself) and by reading gd's shipped gd.pc directly. Because this flag is
+# FORCED here rather than probed, a missing `gd` formula would not silently
+# drop the extension — it would fail php-src's ./configure outright and abort
+# the whole PHP build, before this script's PECL loop or smoke gate ever run.
 export PHP_EXTRA_CONFIGURE_OPTIONS="--with-sodium --with-bz2 \
 --with-external-gd --with-pdo-pgsql --with-zip"
 
@@ -78,15 +92,25 @@ echo "==> Installing PECL extensions (pcov, xdebug, imagick, redis, memcached)..
 # place, which is the behaviour without this line, and the gate below still rules.
 pecl channel-update pecl.php.net \
   || echo "WARNING: pecl channel-update failed; continuing with bundled channel metadata." >&2
-declare -A pecl_ok=()
+
+# `declare -A` (the linux peer's mechanism) is bash 4+. The guest's
+# #!/usr/bin/env bash resolves whatever bash the SSH session's PATH finds
+# FIRST — ahead of this script's own PATH export above, which only takes
+# effect once the shell is already running — and macOS still ships bash 3.2
+# with no associative arrays at all (measured on this host, whose /bin/bash
+# is the same 3.2 a macOS guest ships: `/bin/bash -c 'declare -A x=()'` →
+# "declare: -A: invalid option"); packages.brew installs no newer bash either.
+# Track success as a delimited string instead — same membership idiom as
+# bin/tart-ssh-sync's `seen` variable (`case "$seen" in *"|$vm|"*)`).
+pecl_ok="|"
+pecl_installed() { case "$pecl_ok" in *"|$1|"*) return 0 ;; *) return 1 ;; esac; }
 for ext in pcov xdebug imagick redis memcached; do
   # Subshell disables pipefail just for this pipeline: `yes` exits 141 on
   # SIGPIPE when pecl closes stdin, which pipefail would misread as failure.
   if (set +o pipefail; yes '' | pecl install "$ext"); then
-    pecl_ok[$ext]=1
+    pecl_ok="${pecl_ok}${ext}|"
   else
     echo "WARNING: pecl install $ext failed — ini file will be skipped." >&2
-    pecl_ok[$ext]=0
   fi
 done
 
@@ -102,17 +126,17 @@ mkdir -p "$PHP_SCAN_DIR"
 # Always-on extensions (image processing, caching clients). Each ini is
 # only written if the corresponding pecl install succeeded — otherwise
 # PHP startup would warn about a missing .so on every invocation.
-if [ "${pecl_ok[imagick]:-0}" = "1" ]; then
+if pecl_installed imagick; then
   cat > "$PHP_SCAN_DIR/20-imagick.ini" <<'EOF'
 extension=imagick.so
 EOF
 fi
-if [ "${pecl_ok[redis]:-0}" = "1" ]; then
+if pecl_installed redis; then
   cat > "$PHP_SCAN_DIR/21-redis.ini" <<'EOF'
 extension=redis.so
 EOF
 fi
-if [ "${pecl_ok[memcached]:-0}" = "1" ]; then
+if pecl_installed memcached; then
   cat > "$PHP_SCAN_DIR/22-memcached.ini" <<'EOF'
 extension=memcached.so
 EOF
@@ -121,7 +145,7 @@ fi
 # Coverage driver. Always enabled (significantly lower overhead than
 # Xdebug coverage mode); disable per-command with
 # `php -d pcov.enabled=0 ...` if measuring uninstrumented perf.
-if [ "${pecl_ok[pcov]:-0}" = "1" ]; then
+if pecl_installed pcov; then
   cat > "$PHP_SCAN_DIR/30-pcov.ini" <<'EOF'
 extension=pcov.so
 ; Coverage is always available — run `phpunit --coverage-text` or
@@ -133,7 +157,7 @@ fi
 
 # Step debugger. Loaded but inactive; trigger-mode means it only attaches
 # when XDEBUG_TRIGGER=1 in env or a trigger cookie is present.
-if [ "${pecl_ok[xdebug]:-0}" = "1" ]; then
+if pecl_installed xdebug; then
   cat > "$PHP_SCAN_DIR/40-xdebug.ini" <<'EOF'
 zend_extension=xdebug.so
 ; 'develop' = nicer var_dump and notices; 'debug' = step debugging.
