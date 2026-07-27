@@ -10,9 +10,10 @@
 #
 # Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/).
 #
-# UNVERIFIED — never run against a real macOS build. darwin.pkr.hcl does not
-# exist yet (a later task's job), so nothing has invoked this file. What's
-# below is grounded in the ACTUAL source of the pinned vfox-php plugin
+# UNVERIFIED — never run against a real macOS build. darwin.pkr.hcl's
+# mise-install.sh provisioner names this exact file, so the wiring is done;
+# what's missing is a real `make build` proving it. What's below is grounded
+# in the ACTUAL source of the pinned vfox-php plugin
 # (mise.toml's [tool_alias]: vfox:jdx/vfox-php — confirmed a byte-identical
 # fork of mise-plugins/vfox-php as of 2026-07, read via its
 # hooks/post_install.lua), not guesswork about how PHP configure behaves on
@@ -37,11 +38,12 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source /tmp/mise-lib.sh
 
-# Homebrew's bin dir isn't guaranteed to be on PATH for a script Packer
-# invokes directly rather than through a login shell (user-config.sh only adds
-# it to .zshenv, which a non-interactive `ssh <vm> <cmd>` reads but a Packer
-# shell provisioner may not, depending on its execute_command — a detail owned
-# by darwin.pkr.hcl, not written yet). pkg-config, pg_config, and every other
+# Homebrew's bin dir isn't guaranteed to be on PATH for this script: the
+# mise-install.sh provisioner in darwin.pkr.hcl sets no execute_command
+# override, so Packer runs it through its own default — chmod +x the
+# uploaded script, then exec it directly — rather than through a login
+# shell, so none of the startup files only a login invocation sources (e.g.
+# ~/.zprofile) ever run here. pkg-config, pg_config, and every other
 # Homebrew helper the PECL loop below shells out to by bare name live there.
 export PATH="/opt/homebrew/bin:$PATH"
 
