@@ -65,10 +65,26 @@ exit 0
 M
 cat > "$MOCKBIN/dnf" <<'M'
 #!/usr/bin/env bash
+# The release-upgrade cases assert on WHICH commands were issued, because that
+# path never returns success to assert on. Logging is opt-in via MOCK_DNF_LOG so
+# the older cases, which only need a compliant exit status, are untouched.
+[ -n "${MOCK_DNF_LOG:-}" ] && printf '%s\n' "$*" >> "$MOCK_DNF_LOG"
+exit 0
+M
+cat > "$MOCKBIN/sleep" <<'M'
+#!/usr/bin/env bash
+# pkg_release_upgrade blocks here until the guest goes down. A mocked guest never
+# does, so collapse the wait and record that it happened — including its argument,
+# which the cases use to prove the wait is finite.
+[ -n "${MOCK_DNF_LOG:-}" ] && printf 'slept %s\n' "$*" >> "$MOCK_DNF_LOG"
 exit 0
 M
 cat > "$MOCKBIN/rpm" <<'M'
 #!/usr/bin/env bash
+# `rpm -E %fedora` is how the lib reads the guest's own release. Unset is a mock
+# gap rather than a default, so a case that forgets it fails loudly instead of
+# silently measuring release 0.
+if [ "${1:-}" = "-E" ]; then printf '%s\n' "${MOCK_FEDORA_VER:?rpm mock: MOCK_FEDORA_VER unset}"; exit 0; fi
 # `rpm -q <name>` and `rpm -q --whatprovides <name>` diverge for a package dnf
 # resolved through a compat Provides: MOCK_RPM_RENAMED is absent under its own
 # name but provided by something else, MOCK_RPM_MISSING is absent either way.
@@ -91,7 +107,7 @@ printf '%s\n' "${MOCK_AA_ENFORCED-7}"
 exit "${MOCK_AA_STATUS_RC:-0}"
 M
 chmod +x "$MOCKBIN/apt-get" "$MOCKBIN/apt-cache" "$MOCKBIN/dnf" "$MOCKBIN/rpm" \
-  "$MOCKBIN/getenforce" "$MOCKBIN/aa-status"
+  "$MOCKBIN/getenforce" "$MOCKBIN/aa-status" "$MOCKBIN/sleep"
 
 echo "distro-lib — pkg_install_optional skip recording:"
 SKIP="$WORK/skipped-apt"
@@ -232,5 +248,118 @@ unknown_family_rc() {
   printf '%s' "$rc"
 }
 assert_eq "an unknown family fails rather than passing" 1 "$(unknown_family_rc)"
+
+# ── pkg_release_upgrade ──────────────────────────────────────────────────────
+# The dnf upgrade path never returns 0 by design: it ends by blocking until the
+# guest goes down, so any return at all means the reboot did not happen. These
+# cases therefore measure the commands ISSUED; the status is asserted separately.
+# The target is injected rather than read from the shipped pin, so raising
+# FEDORA_TARGET_RELEASE never rewrites these expectations.
+echo
+echo "distro-lib — pkg_release_upgrade:"
+UPG_LOG="$WORK/dnf-log"; UPG_ERR=""; UPG_RC=0
+# upgrade_run <os-release-fixture> <guest-release> <target> — leaves the status in
+# $UPG_RC, the issued commands in $UPG_LOG, and combined output in $UPG_ERR.
+# Called directly and never inside $( ): a command substitution runs the function
+# in a subshell, where every global it sets is discarded and the message
+# assertions would silently compare against an empty string.
+upgrade_run() {
+  UPG_RC=0
+  : > "$UPG_LOG"
+  # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+  UPG_ERR=$( ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$1" MOCK_FEDORA_VER="$2" \
+                 FEDORA_TARGET_RELEASE="$3" MOCK_DNF_LOG="$UPG_LOG"
+               # shellcheck source=/dev/null
+               source "$REPO/shared/scripts/distro-lib.sh"
+               pkg_release_upgrade ) 2>&1 ) || UPG_RC=$?
+}
+
+# apt bases are current and tracked by their publisher — the function must not
+# reach for a package manager at all there.
+upgrade_run "$WORK/u" 42 44
+assert_eq "apt: no-op"                       0  "$UPG_RC"
+assert_eq "apt: issues no package commands"  "" "$(cat "$UPG_LOG")"
+
+# The upgrade proper. Ordering is the point: downloading after asking for the
+# reboot would stage nothing.
+upgrade_run "$WORK/f" 42 44
+assert_eq "dnf: download precedes the reboot request" \
+  "$(printf 'system-upgrade download --releasever=44 -y\n-y offline reboot')" \
+  "$(grep -v '^slept ' "$UPG_LOG")"
+assert_eq "dnf: refuses if it ever returns"  1 "$UPG_RC"
+assert_contains "dnf: says why returning is a failure" "$UPG_ERR" "did not go down"
+# The wait must be finite. `sleep infinity` would hang a build forever when the
+# reboot never comes, instead of failing it after a bounded window.
+upg_slept=$(grep '^slept ' "$UPG_LOG" | awk '{print $2}')
+case "$upg_slept" in
+  ''|*[!0-9]*) bad "dnf: the post-reboot wait is bounded" "slept » ${upg_slept:-nothing} « — not a finite number of seconds" ;;
+  *)           ok  "dnf: the post-reboot wait is bounded" ;;
+esac
+
+# -ge, not -eq: the day the upstream base is republished at or beyond the target,
+# this has to fall silent by itself rather than downgrade or need deleting.
+upgrade_run "$WORK/f" 44 44
+assert_eq "dnf: already at the target is a no-op"   0  "$UPG_RC"
+assert_eq "dnf: ...and issues nothing"              "" "$(cat "$UPG_LOG")"
+upgrade_run "$WORK/f" 45 44
+assert_eq "dnf: a base ahead of the target no-ops"  0  "$UPG_RC"
+assert_eq "dnf: ...and issues nothing"              "" "$(cat "$UPG_LOG")"
+
+# dnf upgrades at most two releases at once. A wider gap must be refused BEFORE
+# anything is downloaded — attempting it wastes the transfer and fails obscurely.
+upgrade_run "$WORK/f" 42 45
+assert_eq "dnf: a 3-release jump is refused"        1  "$UPG_RC"
+assert_eq "dnf: ...before downloading anything"     "" "$(cat "$UPG_LOG")"
+assert_contains "dnf: the refusal names the reachable target" "$UPG_ERR" "at most 44"
+# The boundary itself, measured by what was issued rather than by status: a
+# 2-release and a 3-release gap both end nonzero, so only the log tells them apart.
+upgrade_run "$WORK/f" 42 44
+assert_contains "dnf: exactly two releases proceeds" "$(cat "$UPG_LOG")" "--releasever=44"
+
+# A family added without a branch here would silently inherit whatever release its
+# base shipped at — the exact failure this function exists to end, so it fails closed.
+release_unknown_family_rc() {
+  local rc=0
+  # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
+  # shellcheck disable=SC2031  # PATH is per-child on purpose; the mocks are the sandbox
+  env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
+    bash -c '. "$1"; _DISTRO_FAMILY=zypper; pkg_release_upgrade' _ \
+      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+assert_eq "an unknown family is refused, not skipped" 1 "$(release_unknown_family_rc)"
+
+# ── assert_release_supported ─────────────────────────────────────────────────
+# The gate that stops a hand-maintained release pin going stale in silence.
+echo
+echo "distro-lib — assert_release_supported:"
+printf 'ID=fedora\nPRETTY_NAME="Fedora Linux 42 (Cloud Edition)"\nSUPPORT_END=2026-05-13\n' > "$WORK/eol"
+printf 'ID=fedora\nPRETTY_NAME="Fedora Linux 44 (Cloud Edition)"\nSUPPORT_END=2027-05-19\n' > "$WORK/live"
+REL_ERR=""
+rel_rc() {  # <os-release-fixture> <today>
+  local rc=0
+  # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+  REL_ERR=$( ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$1" TART_TODAY="$2"
+               # shellcheck source=/dev/null
+               source "$REPO/shared/scripts/distro-lib.sh"
+               assert_release_supported ) 2>&1 ) || rc=$?
+  printf '%s' "$rc"
+}
+assert_eq "a release past its support end fails"  1 "$(rel_rc "$WORK/eol"  2026-07-27)"
+assert_eq "a supported release passes"            0 "$(rel_rc "$WORK/live" 2026-07-27)"
+# The window closes AFTER that date, so the day itself is still supported —
+# an off-by-one here would fail a build on the last good day.
+assert_eq "the support-end date itself passes"    0 "$(rel_rc "$WORK/eol"  2026-05-13)"
+assert_eq "the day after it fails"                1 "$(rel_rc "$WORK/eol"  2026-05-14)"
+# The apt family publishes no SUPPORT_END. Absence says nothing about support, so
+# guessing would fail every Debian and Ubuntu build on a field they never set.
+assert_eq "no SUPPORT_END is a skip, not a failure" 0 "$(rel_rc "$WORK/u" 2026-07-27)"
+# The refusal has to carry both halves of the fix: which release died when, and
+# the knob that moves it.
+rel_rc "$WORK/eol" 2026-07-27 >/dev/null
+assert_contains "the refusal names the release"      "$REL_ERR" "Fedora Linux 42"
+assert_contains "the refusal names the end date"     "$REL_ERR" "2026-05-13"
+assert_contains "the refusal names today"            "$REL_ERR" "2026-07-27"
+assert_contains "the refusal names the knob to turn" "$REL_ERR" "FEDORA_TARGET_RELEASE"
 
 echo; echo "  $pass passed, $fail failed"; [ "$fail" -eq 0 ]

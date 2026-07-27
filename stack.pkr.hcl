@@ -149,6 +149,17 @@ build {
     destination = "/tmp/packages.apt"
   }
 
+  # Release upgrade — the first thing run in the guest, before anything is
+  # installed on it. Its own block because it ends by rebooting: expect_disconnect
+  # is what lets the build continue across that, and nothing may follow it here.
+  # No pause_before — the SSH communicator blocks until the guest is reachable
+  # again, so a fixed wait would only add dead time and a number to keep tuned.
+  provisioner "shell" {
+    execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
+    expect_disconnect = true
+    scripts           = ["shared/scripts/00-release-upgrade.sh"]
+  }
+
   # System-level provisioning (runs as root via sudo). Shared base first, then
   # the stack's package hook, then mise. One root provisioner block keeps the
   # package-manager transaction sequence unambiguous.

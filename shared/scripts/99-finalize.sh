@@ -59,8 +59,13 @@ echo "==> Writing /etc/tart-stacks-release..."
   # gui: <de> | none — the machine-readable "is this a GUI flavor" answer
   # (shared/gui/README.md documents what a `gui: <de>` image exposes).
   if [ "${GUI:-false}" = "true" ]; then echo "gui: ${DE:-unknown}"; else echo "gui: none"; fi
+  # support-end: <date> | none — the same field 00-base.sh's release gate reads, so
+  # a clone can be judged stale from the manifest alone. `none` is the honest answer
+  # for the apt family, which publishes no equivalent, not a claim of endless support.
   # shellcheck disable=SC1091  # guest-only file, absent at lint time
-  ( . /etc/os-release 2>/dev/null || true; echo "os: ${PRETTY_NAME:-unknown} (${VERSION_ID:-?})" )
+  ( . /etc/os-release 2>/dev/null || true
+    echo "os: ${PRETTY_NAME:-unknown} (${VERSION_ID:-?})"
+    echo "support-end: ${SUPPORT_END:-none}" )
   echo ""
   if [ -f /tmp/tart-stacks-tools ]; then
     echo "tools:"

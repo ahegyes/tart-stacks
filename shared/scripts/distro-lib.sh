@@ -31,6 +31,71 @@ _DISTRO_FAMILY="$(_detect_family)" || {
 }
 export _DISTRO_FAMILY
 
+# FEDORA_TARGET_RELEASE — the Fedora release dnf-family images are lifted to before
+# anything is installed on them. The upstream base is published at a fixed release
+# and its publisher bumps that by hand, so re-pulling the base never advances it;
+# the release the image ships as is decided here instead.
+#
+# dnf upgrades at most TWO releases in one transaction, so this cannot simply track
+# the newest Fedora — it is capped at the base's own release plus two.
+# pkg_release_upgrade refuses a wider gap rather than attempting it.
+FEDORA_TARGET_RELEASE="${FEDORA_TARGET_RELEASE:-44}"
+
+# pkg_release_upgrade — lift a dnf-family guest to FEDORA_TARGET_RELEASE, then
+# reboot. No-op on apt, whose bases are current and tracked by their publisher.
+#
+# On the dnf path this function DOES NOT RETURN: it blocks until the guest goes
+# down. That is deliberate and load-bearing. `dnf offline reboot` only SCHEDULES
+# the reboot and returns immediately, so a version of this that returned would let
+# the next provisioner run inside the system-update boot — where the guest is still
+# on the OLD release and dbus is refusing connections. That build succeeds and
+# ships an image labelled as a release it is not running. The dying SSH session is
+# the only signal the caller's expect_disconnect can act on, so the caller must set
+# it, and nothing may follow this call in the same provisioner block.
+pkg_release_upgrade() {
+  local cur target hop
+  case "$_DISTRO_FAMILY" in
+    apt) return 0 ;;
+    dnf) ;;
+    # Fail closed rather than fall off the end of the case: a family added without
+    # a branch here silently inherits whatever release its base was published at,
+    # which is the exact problem this function exists to end.
+    *)   echo "ERROR: no release-upgrade branch for package family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2
+         return 1 ;;
+  esac
+
+  cur="$(rpm -E %fedora)"
+  target="$FEDORA_TARGET_RELEASE"
+
+  # -ge, not -eq: once the upstream base is finally republished at or beyond the
+  # target this becomes a no-op on its own, instead of attempting a downgrade or
+  # needing to be removed by hand.
+  if [ "$cur" -ge "$target" ]; then
+    echo "==> Guest is already Fedora $cur (target $target) — no release upgrade needed."
+    return 0
+  fi
+
+  hop=$((target - cur))
+  if [ "$hop" -gt 2 ]; then
+    echo "ERROR: dnf upgrades at most two releases at a time, but this guest is Fedora $cur" >&2
+    echo "       and FEDORA_TARGET_RELEASE is $target — a $hop-release jump." >&2
+    echo "       Crossing that needs one reboot per hop, and a reboot ends this provisioner," >&2
+    echo "       so it cannot be looped here: reaching $target requires an additional" >&2
+    echo "       release-upgrade provisioner block per hop in stack.pkr.hcl. Until those" >&2
+    echo "       exist, lower FEDORA_TARGET_RELEASE to at most $((cur + 2))." >&2
+    return 1
+  fi
+
+  echo "==> Upgrading Fedora $cur -> $target (the guest reboots; the build continues after it)..."
+  dnf system-upgrade download --releasever="$target" -y
+  dnf -y offline reboot
+  # Reached only because `dnf offline reboot` returns as soon as the reboot is
+  # queued. Block here so the session dies with the guest; see the header.
+  sleep 300
+  echo "ERROR: the guest did not go down within 300s of 'dnf offline reboot'." >&2
+  return 1
+}
+
 # pkg_refresh — refresh metadata + apply pending upgrades.
 pkg_refresh() {
   case "$_DISTRO_FAMILY" in
@@ -212,4 +277,35 @@ assert_mac_enforcing() {
          [ "$n" -gt 0 ] || { echo "ERROR: AppArmor has no enforce-mode profiles — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
     *)   echo "ERROR: no MAC assertion for package family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
   esac
+}
+
+# assert_release_supported — fail when the guest's own os-release declares a support
+# window that has already closed. The release an image ships as is chosen by
+# FEDORA_TARGET_RELEASE, a hand-maintained pin; this is what stops that pin going
+# stale in silence, since an unpatched release otherwise looks exactly like a
+# healthy one until a repository is purged mid-build months later.
+#
+# Fedora publishes SUPPORT_END. The apt family publishes no equivalent, so an
+# absent field is a skip rather than a failure — its absence says nothing about
+# support, and a gate that guessed would fail every Debian and Ubuntu build.
+#
+# Reads $OS_RELEASE (default /etc/os-release) and takes today from $TART_TODAY when
+# set, so it is testable without a guest or a clock. Both dates are ISO-8601, which
+# orders correctly as plain text. Local only: no network call, so this cannot become
+# a new way for a build to flake.
+assert_release_supported() {
+  local f="${OS_RELEASE:-/etc/os-release}" today="${TART_TODAY:-}"
+  local SUPPORT_END="" PRETTY_NAME=""
+  # shellcheck disable=SC1090
+  [ -r "$f" ] && . "$f"
+  [ -n "$SUPPORT_END" ] || return 0
+  [ -n "$today" ] || today="$(date -u +%Y-%m-%d)"
+  [[ "$SUPPORT_END" < "$today" ]] || return 0
+  echo "ERROR: ${PRETTY_NAME:-this guest} reached end of life on $SUPPORT_END (today is $today)." >&2
+  echo "       Its repositories are no longer patched and are eventually purged, so this" >&2
+  echo "       image would ship on a release nothing maintains — and the build that finally" >&2
+  echo "       breaks would fail somewhere unrelated, long after the cause." >&2
+  echo "       On the dnf family, raise FEDORA_TARGET_RELEASE in shared/scripts/distro-lib.sh" >&2
+  echo "       (at most two releases above the base image's own) and rebuild." >&2
+  return 1
 }

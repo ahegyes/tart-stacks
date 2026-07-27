@@ -34,6 +34,14 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 GATE="$WORK/gate.sh"
 {
   printf 'set -euo pipefail\n'
+  # The region calls into distro-lib.sh, which the real script sources above the
+  # window and the fixture does not have. Supplied here alongside the shell options
+  # for the same reason: to run the block under the shape production gives it.
+  # Its status is a knob rather than a fixed 0 so the call itself stays measurable —
+  # stubbing it to always succeed would let the call be deleted from 00-base.sh
+  # without a single case here noticing.
+  # shellcheck disable=SC2016  # the expansion belongs to the fixture, not to this shell
+  printf 'assert_release_supported() { return "${MOCK_RELEASE_RC:-0}"; }\n'
   awk '
     /^fi$/        { if (!open) { open = 1; next } }
     /^echo "==> / { if (open) exit }
@@ -80,18 +88,27 @@ esac
 M
 chmod +x "$MOCKBIN/systemctl"
 
-# gate_verdict <is-enabled-state> <is-active-rc> — "pass" or "refuse"; stderr of
-# the run is left in $GATE_ERR for the message assertions.
+# gate_verdict <is-enabled-state> <is-active-rc> [release-gate-rc] — "pass" or
+# "refuse"; stderr of the run is left in $GATE_ERR for the message assertions.
+# The release status is positional rather than an environment prefix on the call:
+# bash leaves a `VAR=x func` assignment set after the function returns, which would
+# silently arm it for every later case.
 GATE_ERR=""
 gate_verdict() {
   local rc=0
   GATE_ERR=$(PATH="$MOCKBIN:/usr/bin:/bin" MOCK_IS_ENABLED="$1" MOCK_IS_ACTIVE_RC="$2" \
-    bash "$GATE" 2>&1) || rc=$?
+    MOCK_RELEASE_RC="${3:-0}" bash "$GATE" 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then printf 'pass'; else printf 'refuse'; fi
 }
 
 # The healthy substrate — the only combination that may build.
 assert_eq "enabled and running → build proceeds" "pass" "$(gate_verdict enabled 0)"
+
+# The release gate shares this region and must be able to stop the build on its
+# own: a healthy agent is no reason to ship an end-of-life release. Driving it
+# through the stub's status proves 00-base.sh actually calls it and that a refusal
+# propagates, rather than proving the text of the call is present.
+assert_eq "end-of-life release → build refused"  "refuse" "$(gate_verdict enabled 0 1)"
 
 # Anything other than the literal `enabled` fails the first branch. `static` and
 # `enabled-runtime` are the two that matter: real systemctl exits 0 for both, so
