@@ -118,14 +118,32 @@ build {
   }
 
   # Release upgrade — the first thing run in the guest, before anything is
-  # installed on it. Its own block because it ends by rebooting: expect_disconnect
-  # is what lets the build continue across that, and nothing may follow it here.
-  # No pause_before — the SSH communicator blocks until the guest is reachable
-  # again, so a fixed wait would only add dead time and a number to keep tuned.
+  # installed on it. It leads because 00-base.sh's first act is a full system
+  # update, and updating a release that is about to be replaced downloads a set of
+  # packages the upgrade then discards.
+  #
+  # Inline rather than a script file: the body is glue. Every decision it could
+  # encode — which release, the two-release ceiling, the apt no-op, the unknown
+  # family — lives in distro-lib.sh's pkg_release_upgrade, where it is tested.
+  #
+  # ALONE IN THIS BLOCK, AND NOTHING MAY FOLLOW IT. pkg_release_upgrade reboots
+  # the guest and never returns: `dnf offline reboot` only SCHEDULES the reboot,
+  # so it blocks until the guest goes down, and that dying SSH session is the only
+  # signal expect_disconnect can act on. Add provisioners here and they simply
+  # never run. Put expect_disconnect on a block that also installs packages and a
+  # guest dying mid-install gets swallowed instead of failing the build.
+  #
+  # No pause_before on what comes after: the SSH communicator blocks until the
+  # guest is reachable again, so a fixed wait would only add dead time and a
+  # constant to keep tuned.
   provisioner "shell" {
     execute_command   = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     expect_disconnect = true
-    scripts           = ["shared/scripts/00-release-upgrade.sh"]
+    inline = [
+      "set -euo pipefail",
+      "source /tmp/distro-lib.sh",
+      "pkg_release_upgrade",
+    ]
   }
 
   # ─────────────────────────────────────────────────────────────────────────────

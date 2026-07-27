@@ -20,10 +20,10 @@ if [ -n "${DISTRO:-}" ] && [ "$guest_id" != "$DISTRO" ]; then
   exit 1
 fi
 
-# The release this image will ship as, now that 00-release-upgrade.sh has had its
-# say. Checked here rather than there because there is the one place it would prove
-# nothing: that script no-ops for a family it does not upgrade, and skipping the
-# check with it would leave exactly the guests most likely to be stale unchecked.
+# The release this image will ship as, now that the build's release-upgrade step
+# has had its say. Checked here rather than beside that step, because there it
+# would prove nothing: the upgrade no-ops for a family it does not handle, so a
+# check sharing its fate would skip exactly the guests most likely to be stale.
 assert_release_supported
 
 # The other thing inherited from the base rather than built here: the agent that
