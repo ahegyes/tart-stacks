@@ -303,8 +303,8 @@ nobody is talking to.
 
 ## Adding a new stack
 
-1. `make scaffold STACK=<name>` — stamps `stacks/<name>/` from `templates/stack/`: a generic `00-stack.sh` (reads `packages.<family>` for the build OS), a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, `packages.dnf`, `packages.apt`, and a `README.md`. One parameterized root `linux.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
-2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). If the stack needs native build deps (e.g., compile-from-source runtimes), add them to `packages.dnf` (Fedora/dnf names) and `packages.apt` (Debian/Ubuntu/apt names) — keep the two files aligned.
+1. `make scaffold STACK=<name>` — stamps `stacks/<name>/` from `templates/stack/`: a generic `00-stack.sh` (reads `packages.<family>` for the build OS), a per-platform `scripts/linux/mise-install.sh` + `scripts/darwin/mise-install.sh` each with a hard-gate smoke test, `files/mise.toml`, `packages.dnf`, `packages.apt`, `packages.brew`, and a `README.md`. One parameterized root `linux.pkr.hcl` already covers every linux stack — there's no per-stack Packer file to write (darwin builds through its own platform template the same way, once that template exists).
+2. Edit `files/mise.toml` (tool versions) and `scripts/linux/mise-install.sh` + `scripts/darwin/mise-install.sh` (install + smoke test — keep both in sync unless a runtime needs a platform-specific flag). If the stack needs native build deps (e.g., compile-from-source runtimes), add them to `packages.dnf` (Fedora/dnf names), `packages.apt` (Debian/Ubuntu/apt names), and `packages.brew` (Homebrew formula names) — keep all three files aligned.
 3. `make build STACK=<name> OS=<os>` — or `packer validate -var stack=<name> -var os=<os> linux.pkr.hcl` for a fast HCL pre-check. `<os>` must appear in `shared/linux/os`.
 4. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/*/` and cross-products with `shared/linux/os` — no workflow edit needed.
 

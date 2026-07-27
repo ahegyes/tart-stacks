@@ -1,6 +1,6 @@
 # PHP build dependencies (Debian/Ubuntu/apt names), one or more per line; '#' comments
 # and blank lines ignored. Installs go through pkg_install_optional, which warns on a
-# missing package instead of failing; the smoke gate in mise-install.sh is what
+# missing package instead of failing; the smoke gate in scripts/linux/mise-install.sh is what
 # catches a dropped capability — pair list changes with gate changes. Equivalent
 # capabilities to packages.dnf (names differ); keep the two aligned.
 

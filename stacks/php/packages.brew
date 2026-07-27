@@ -1,0 +1,52 @@
+# PHP build dependencies (Homebrew formula names), one or more per line; '#'
+# comments and blank lines ignored. Names differ from packages.dnf/packages.apt
+# (Homebrew vs. rpm/deb naming) but the covered capabilities are meant to match,
+# minus two with no macOS equivalent: PHP-FPM's systemd notify (systemd-devel —
+# launchd has no analogue) and gd's XPM/AVIF format support (libXpm-devel/
+# libavif-devel — no Homebrew formula this build wires a --with-xpm/--with-avif
+# flag for). Installs go through pkg_install_optional, which warns on a missing
+# formula instead of failing; the smoke gate in scripts/darwin/mise-install.sh
+# is what catches a dropped capability — pair list changes with gate changes.
+#
+# Cross-checked against the actual build logic of the pinned vfox-php plugin
+# (mise.toml's [tool_alias]: vfox:jdx/vfox-php, a fork of mise-plugins/vfox-php
+# confirmed byte-identical as of 2026-07) — its hooks/post_install.lua wires
+# PKG_CONFIG_PATH from a hardcoded "required" list on darwin, and separately
+# appends a --with-X flag for each "optional" formula it finds installed. See
+# scripts/darwin/mise-install.sh's header for what that means for this list and
+# what is still unverified.
+
+# Build toolchain (buildconf + configure need these; the plugin PATH-only-wires
+# bison/re2c, so pkg_install_optional's own PATH-driven install is what makes
+# them reachable at all)
+autoconf automake libtool pkg-config bison re2c
+# Core compile deps the plugin wires into PKG_CONFIG_PATH unconditionally
+# (macOS ships none of these as a linkable, pkg-config-discoverable dev tree)
+libxml2 openssl@3 zlib krb5 libedit curl
+# pdo_sqlite, sqlite3 — PHP 8.4+ dropped its bundled SQLite copy, so a linkable
+# sqlite3 is mandatory on every platform now, not just this one; also one of
+# the plugin's PKG_CONFIG_PATH-wired formulas
+sqlite
+# mbstring
+oniguruma
+# intl (ICU)
+icu4c
+# zip — the plugin does NOT auto-add --with-zip the way it does for sodium/
+# bz2/pdo_pgsql/gd below, so scripts/darwin/mise-install.sh states the flag
+# explicitly; libzip only needs to be findable via pkg-config for that to work
+libzip
+# gd + JPEG/PNG/WebP/FreeType — the plugin auto-adds --with-external-gd only
+# when all three of freetype/jpeg/libpng resolve under Homebrew's opt/ prefix
+freetype jpeg libpng webp
+# sodium — the plugin auto-adds --with-sodium when this resolves
+libsodium
+# readline — the plugin auto-adds --with-readline when this resolves
+readline
+# bz2 — the plugin auto-adds --with-bz2 when this resolves
+bzip2
+# pdo_pgsql — the plugin auto-adds --with-pdo-pgsql when this resolves
+libpq
+# PECL imagick (runtime + headers)
+imagemagick
+# PECL memcached
+libmemcached

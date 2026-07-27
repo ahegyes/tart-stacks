@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# mise-install.sh — Install language runtimes declared in the global
+# mise-install.sh (linux) — Install language runtimes declared in the global
 # mise.toml so the base image ships with them ready to use (and every VM
-# cloned from this base inherits them).
+# cloned from this base inherits them). The darwin peer at
+# ../darwin/mise-install.sh runs the same smoke gate against brew-installed
+# libraries instead of packages.dnf/apt's system ones.
 #
 # Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/).
 #

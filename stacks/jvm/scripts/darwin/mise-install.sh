@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# mise-install.sh — Install the JVM-stack runtimes declared in the global mise.toml
-# and hard-gate on a smoke test, so the base image ships them ready to use (and
-# every cloned VM inherits them).
+# mise-install.sh (darwin) — install the JVM-stack runtimes declared in the
+# global mise.toml and hard-gate on a smoke test, exactly like the linux peer
+# at ../linux/mise-install.sh. Every tool here (Temurin, Maven, Gradle, sbt,
+# Scala CLI, Kotlin, uv, Node) is a pre-built aarch64 binary download through
+# mise, so there is no compiled dependency and nothing platform-specific to
+# say — this file exists as its own copy only because linux.pkr.hcl and the
+# darwin platform's template (not written yet) each reference their own
+# platform's script path, the same reason ../linux/mise-install.sh exists
+# alongside it rather than one shared file.
 #
 # Runs as the unprivileged SSH user (mise installs to ~/.local/share/mise/). The
 # shared mechanism (install/activate, smoke loop) lives in /tmp/mise-lib.sh, uploaded

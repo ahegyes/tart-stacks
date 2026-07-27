@@ -46,13 +46,13 @@ Both families:
 
 Runtime sources fetched at build time (a class, not an exhaustive list — the exact set follows each stack's `files/mise.toml`):
 - Everything mise resolves and downloads for the tools declared in the per-stack `files/mise.toml` — e.g. php-src (compiled via the vfox-php plugin), the Node dist tarballs, Temurin JDK via the Adoptium API, the Maven/Gradle/sbt/Kotlin/scala-cli release artifacts, uv. Each download's integrity is whatever mise and the respective backend enforce.
-- `pecl.php.net` — the PECL extensions the php stack's `mise-install.sh` installs.
+- `pecl.php.net` — the PECL extensions the php stack's `scripts/{linux,darwin}/mise-install.sh` install.
 
 Stack-specific upstream sources:
 
 - **php stack** — `getcomposer.org/installer`, verified against `composer.github.io/installer.sig` (SHA-384).
 
-The verifications this repo adds on top of upstream's own: the sha256 check of the tart-guest-agent package against its release checksums (both families), the Composer SHA-384 check in `stacks/php/scripts/mise-install.sh`, and (on apt-family OSes) a sha256 check of the downloaded zellij binary against its published `.sha256sum` — all in `shared/linux/scripts/family-lib.sh` unless noted. If you spot a missing verification on any of the above, that's a valid finding for this repo — please report.
+The verifications this repo adds on top of upstream's own: the sha256 check of the tart-guest-agent package against its release checksums (both families), the Composer SHA-384 check in `stacks/php/scripts/{linux,darwin}/mise-install.sh`, and (on apt-family OSes) a sha256 check of the downloaded zellij binary against its published `.sha256sum` — all in `shared/linux/scripts/family-lib.sh` unless noted. If you spot a missing verification on any of the above, that's a valid finding for this repo — please report.
 
 ## Supported versions
 

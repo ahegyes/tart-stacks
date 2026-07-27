@@ -1,0 +1,6 @@
+# JVM stack native build dependencies (Homebrew formula names); '#' comments
+# and blanks ignored. Empty — all JVM runtimes are prebuilt mise binaries, same
+# as packages.dnf/packages.apt for this stack. Installs go through
+# pkg_install_optional, which warns on a missing formula instead of failing;
+# the smoke gate in scripts/darwin/mise-install.sh is what catches a dropped
+# capability — pair list changes with gate changes.

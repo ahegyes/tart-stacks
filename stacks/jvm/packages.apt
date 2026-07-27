@@ -1,5 +1,5 @@
 # JVM stack native build dependencies (Debian/Ubuntu/apt names); '#' comments and
 # blanks ignored. Empty — all JVM runtimes are prebuilt mise binaries. Installs go
 # through pkg_install_optional, which warns on a missing package instead of failing;
-# the smoke gate in mise-install.sh is what catches a dropped capability — pair list
+# the smoke gate in scripts/linux/mise-install.sh is what catches a dropped capability — pair list
 # changes with gate changes.

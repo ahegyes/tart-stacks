@@ -13,4 +13,4 @@ This file documents what's in *this* stack.
 ## Customization
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
-- **Stack-specific build deps**: add packages to [`packages.dnf`](./packages.dnf) (Fedora/dnf names) and [`packages.apt`](./packages.apt) (Debian/Ubuntu/apt names) — keep both aligned. [`scripts/00-stack.sh`](./scripts/00-stack.sh) reads the appropriate file for the OS being built.
+- **Stack-specific build deps**: add packages to [`packages.dnf`](./packages.dnf) (Fedora/dnf names), [`packages.apt`](./packages.apt) (Debian/Ubuntu/apt names), and [`packages.brew`](./packages.brew) (Homebrew formula names) — keep all three aligned. [`scripts/00-stack.sh`](./scripts/00-stack.sh) reads the appropriate file for the OS being built.

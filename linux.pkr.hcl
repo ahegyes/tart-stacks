@@ -229,8 +229,9 @@ build {
     destination = "/home/${var.ssh_username}/.config/mise/config.toml"
   }
 
-  # Shared mise helpers, sourced by the stack's mise-install.sh below (uploaded
-  # rather than added to a scripts=[] block, which would run it in its own shell).
+  # Shared mise helpers, sourced by the stack's linux/mise-install.sh below
+  # (uploaded rather than added to a scripts=[] block, which would run it in
+  # its own shell).
   provisioner "file" {
     source      = "shared/scripts/mise-lib.sh"
     destination = "/tmp/mise-lib.sh"
@@ -271,7 +272,7 @@ build {
   # Runs before final lockdown because it needs mise.toml uploaded and the
   # build user still SSH-able with the provisioning password.
   provisioner "shell" {
-    scripts = ["stacks/${var.stack}/scripts/mise-install.sh"]
+    scripts = ["stacks/${var.stack}/scripts/linux/mise-install.sh"]
   }
 
   # Final lockdown — runs LAST as a single atomic step. 99-finalize.sh

@@ -79,18 +79,20 @@ Multi-OS, multi-stack collection of Packer templates that build Tart base VM ima
 │       ├── xterm-ghostty.terminfo      # Ghostty terminfo source; compiled by terminfo.sh into the image
 │       └── zshrc                       # In-VM shell baseline, incl. the zsh-side mise activation; uploaded to /home/admin/.zshrc
 ├── stacks/
-│   ├── php/                            # PHP stack — per-stack content only; the template is the repo-root linux.pkr.hcl
+│   ├── php/                            # PHP stack — per-stack content only; linux.pkr.hcl is the only template that references it so far (darwin.pkr.hcl does not exist yet)
 │   │   ├── scripts/
-│   │   │   ├── 00-stack.sh             # Runs immediately after shared/linux/scripts/00-base.sh; reads packages.<family> via family-lib.sh (root)
-│   │   │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
+│   │   │   ├── 00-stack.sh             # Runs immediately after 00-base.sh; reads packages.<family> via family-lib.sh (root); unchanged and shared across platforms
+│   │   │   ├── linux/mise-install.sh   # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user); read by linux.pkr.hcl
+│   │   │   └── darwin/mise-install.sh  # Same runtimes + gates as the linux peer; brew-prefixed build flags for the PECL-under-Homebrew path (least-verified surface — see its header)
 │   │   ├── files/
-│   │   │   └── mise.toml               # In-VM global tool versions (pinned PHP patch + Node LTS)
+│   │   │   └── mise.toml               # In-VM global tool versions (pinned PHP patch + Node LTS); shared across platforms, no OS-specific tool
 │   │   ├── packages.dnf                # Native build deps for dnf-family (Fedora); one or more per line, comments stripped
 │   │   ├── packages.apt                # Native build deps for apt-family (Debian/Ubuntu); equivalent capabilities to packages.dnf
+│   │   ├── packages.brew               # Native build deps for the brew family (darwin); equivalent capabilities to packages.dnf/apt minus systemd's FPM notify and gd's XPM/AVIF (no macOS analogue)
 │   │   └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
 │   └── jvm/                            # JVM stack — same shape; Temurin 25 + Maven/Gradle/sbt/Kotlin/scala-cli + uv + Node
 ├── templates/
-│   └── stack/                          # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/ (README, mise.toml, packages.{dnf,apt}, 00-stack.sh, mise-install.sh — all *.tmpl, __STACK__ substituted)
+│   └── stack/                          # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/ (README, mise.toml, packages.{dnf,apt,brew}, 00-stack.sh, scripts/{linux,darwin}/mise-install.sh — all *.tmpl, __STACK__ substituted)
 └── .github/
     ├── dependabot.yml                  # Weekly grouped github-actions bumps only (no Packer-plugin ecosystem — that pin is bounded in linux.pkr.hcl, bumped by hand)
     └── workflows/
@@ -131,7 +133,7 @@ Other scripts are ordered by `linux.pkr.hcl`'s privilege grouping (root scripts 
 | 5 | `shared/linux/scripts/user-config.sh` | root | Root block between the file uploads and the user-level install: needs root (`chsh`, the virtiofs `/etc/fstab` entry) and the uploaded `~/.zshrc` + `~/.config` already on disk — it chowns both to the build user |
 | 6 | `shared/scripts/terminfo.sh` | root | Same root block as user-config; compiles the uploaded `xterm-ghostty.terminfo` into the system terminfo (`ncurses-term` omits it) |
 | 7 | `shared/linux/scripts/host-keys.sh` | root | Same root block; installs + enables the first-boot oneshot that regenerates a clone's SSH host keys before sshd starts (marker-gated at `/etc/ssh/.tart-keys`; the image's oneshot is the only regeneration path — nothing on the host repeats it) |
-| 8 | `stacks/php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
+| 8 | `stacks/php/scripts/linux/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
 | 9 | `shared/linux/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
 
 If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the root `linux.pkr.hcl` provisioner block. Ordering within a privilege block is the list order in `linux.pkr.hcl`, not the filename. A file useful across every stack goes under `shared/`: `shared/scripts/` if it runs verbatim on both platforms, `shared/linux/scripts/` if it's linux-only — either way, referenced once in the root template. To add a whole new stack, use `make scaffold STACK=<name>`.
@@ -143,7 +145,7 @@ If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/
 ```bash
 # Per-stack/OS syntax/schema check
 packer validate -var stack=php -var os=fedora linux.pkr.hcl    # ~1s; catches HCL syntax errors (run from repo root)
-bash -n shared/scripts/*.sh shared/linux/scripts/*.sh stacks/php/scripts/*.sh
+bash -n shared/scripts/*.sh shared/linux/scripts/*.sh stacks/php/scripts/*.sh stacks/php/scripts/*/*.sh
 make test                               # plain-bash test suite (test/*.sh) — mocked, no VM, what CI runs
 
 # Full rebuild (~15-20 min for PHP)
@@ -157,13 +159,13 @@ make smoke STACK=php OS=fedora
 
 The guest-agent probes are the only assertions that leave ssh. `tart exec` is a host→guest vsock RPC answered by `tart-guest-agent` **inside** the VM — installing tart on the host cannot supply it, and the agent arrives only because the base image already carried one. `bin/tart-up` routes the guest hostname (every cell) and every GUI activation through that channel, so an agent-less image passes every ssh-based check and then silently mis-names itself for a headless consumer while hard-failing a GUI one. The probes run in dependency order — channel, escalation over it, then the guest's own name — so a failure is narrowed to the causes below it instead of surfacing as a bare hostname mismatch. The channel probe runs `true` deliberately: `tart exec` propagates the guest command's own exit status, so probing with a command that can itself fail would report that as a dead channel. None of it proves the channel from inside the build — `00-base.sh` can only read the unit's configuration, since the RPC is host→guest.
 
-The smoke test inside `stacks/php/scripts/mise-install.sh` is a hard gate — the Packer build fails if any expected PHP extension is missing. Don't bypass it.
+The smoke test inside `stacks/php/scripts/{linux,darwin}/mise-install.sh` is a hard gate — the Packer build fails if any expected PHP extension is missing. Don't bypass it.
 
 ## What NOT to do
 
 - Don't commit Tart images (they live in `~/.tart/`; the `.gitignore` warns but doesn't enforce).
 - Don't change the position of `99-finalize.sh` in any stack without thinking through SSH/password timing — it must run LAST. The build's own SSH auth (admin/admin password) must remain valid through every preceding script.
-- Don't replace `pcov.enabled=1` in `stacks/php/scripts/mise-install.sh` without updating the PHP stack README's "PCOV always enabled" claim.
+- Don't replace `pcov.enabled=1` in `stacks/php/scripts/{linux,darwin}/mise-install.sh` without updating the PHP stack README's "PCOV always enabled" claim.
 - Don't introduce per-host paths (`/Users/<name>/...`) into any script or config file.
 - Don't add CI that tries to run `make build` — Apple Silicon nested VMs aren't available even on `macos-latest` GitHub runners. Schema validation (`packer validate`, shellcheck) is fine on GitHub-hosted macOS runners; see `.github/workflows/validate.yml`.
 - Don't `playwright install chrome` in the php stack — Google doesn't ship Chrome stable for ARM64. Use `--browser=chromium` (the bundled build works). See the PHP stack README's "Known limitations".
@@ -172,4 +174,4 @@ The smoke test inside `stacks/php/scripts/mise-install.sh` is a hard gate — th
 
 ## Upstream sources (trust boundary)
 
-See [`SECURITY.md`](./SECURITY.md#out-of-scope-inherited-trust) for the full inventory, including the apt-family sources introduced by the multi-OS refactor. Integrity checks this repo adds: the Composer SHA-384 check in `stacks/php/scripts/mise-install.sh`, and (apt-family only) the zellij sha256 check in `shared/linux/scripts/family-lib.sh`.
+See [`SECURITY.md`](./SECURITY.md#out-of-scope-inherited-trust) for the full inventory, including the apt-family sources introduced by the multi-OS refactor. Integrity checks this repo adds: the Composer SHA-384 check in `stacks/php/scripts/{linux,darwin}/mise-install.sh`, and (apt-family only) the zellij sha256 check in `shared/linux/scripts/family-lib.sh`.

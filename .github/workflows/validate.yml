@@ -62,11 +62,14 @@ jobs:
         with:
           ignore_names: zshrc
       # The .tmpl suffix hides scaffold templates from the action above, so lint what scaffold ships: the token substituted.
+      # globstar (not a flat glob): scripts/{linux,darwin}/mise-install.sh.tmpl
+      # sit one level deeper than scripts/00-stack.sh.tmpl, and a flat glob
+      # would silently stop checking the per-platform scripts scaffold stamps.
       - name: shellcheck scaffold templates
         shell: bash
         run: |
-          shopt -s nullglob
-          ts=(templates/stack/scripts/*.sh.tmpl)
+          shopt -s nullglob globstar
+          ts=(templates/stack/scripts/**/*.sh.tmpl)
           [ ${#ts[@]} -gt 0 ] || { echo "no scaffold templates found" >&2; exit 1; }
           for t in "${ts[@]}"; do
             echo "== $t"

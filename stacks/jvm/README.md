@@ -6,7 +6,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 
 ## What's in this stack
 
-**Version-managed runtimes** (via mise — installed by [`scripts/mise-install.sh`](./scripts/mise-install.sh) per [`files/mise.toml`](./files/mise.toml))
+**Version-managed runtimes** (via mise — installed by [`scripts/linux/mise-install.sh`](./scripts/linux/mise-install.sh) / [`scripts/darwin/mise-install.sh`](./scripts/darwin/mise-install.sh) per [`files/mise.toml`](./files/mise.toml))
 
 - **Temurin JDK 25** (Eclipse Adoptium). mise's `java` backend resolves `temurin-25` to the latest 25.x patch from the Adoptium API. Picked over Corretto/Zulu/Liberica for vendor-neutral Eclipse governance and broadest third-party-library compatibility. 25 is the current LTS (Sep 2025 → Sep 2030 community support).
 - **Maven** (latest GA). Standard JVM build tool.
