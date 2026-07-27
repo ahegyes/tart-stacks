@@ -74,14 +74,16 @@ jobs:
           done
 
   tests:
-    name: tests (${{ matrix.os }})
+    name: tests (${{ matrix.runner }})
     # macOS too: everything under bin/ and script/ runs on the developer's Mac,
     # against bash 3.2 and the BSD userland that only this runner provides.
+    # Named `runner`, not `os`: this is the GitHub Actions runner image, not
+    # this repo's `os` token (fedora/ubuntu/debian/macos) the other jobs key on.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        runner: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: run test suite
