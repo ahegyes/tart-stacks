@@ -24,9 +24,10 @@ ERR="$WORK/err"
 # what makes the blast radius the tmpdir. The copy is made fresh from the real
 # Makefile each run, so a deliberate mutation of it still shows up here.
 SANDBOX="$WORK/repo"
-mkdir -p "$SANDBOX/shared/linux"
+mkdir -p "$SANDBOX/shared/linux" "$SANDBOX/shared/darwin"
 cp "$REPO/Makefile" "$SANDBOX/"
 cp "$REPO/shared/linux/os" "$REPO/shared/linux/desktops" "$SANDBOX/shared/linux/"
+cp "$REPO/shared/darwin/os" "$SANDBOX/shared/darwin/"
 cp -R "$REPO/stacks" "$REPO/templates" "$SANDBOX/"
 
 # A second shared/*/os directory, present only in the sandbox, so the PLATFORM
@@ -38,6 +39,13 @@ cp -R "$REPO/stacks" "$REPO/templates" "$SANDBOX/"
 # after.
 mkdir -p "$SANDBOX/shared/decoy"
 printf '# decoytoken\nrealtoken\n' > "$SANDBOX/shared/decoy/os"
+
+# A THIRD shared/*/os directory sharing one token with the second, so the
+# ambiguity gate below has two real files to catch a collision between,
+# instead of asserting against a fixture built to look like one.
+mkdir -p "$SANDBOX/shared/decoy2"
+printf 'collide\n' > "$SANDBOX/shared/decoy2/os"
+printf 'collide\n' >> "$SANDBOX/shared/decoy/os"
 
 gate() { # <target> <VAR=VALUE…> — rc in $rc, stderr in $ERR
   local target="$1"; shift
@@ -100,8 +108,9 @@ gate check-stack STACK=nosuchstack
 assert_contains "the missing-stack refusal lists what exists" "$(cat "$ERR")" "php"
 
 echo "Makefile — check-os:"
-assert_rejects "empty OS rejected"       check-os OS=
-assert_rejects "unsupported OS rejected" check-os OS=arch
+assert_rejects "empty OS rejected"        check-os OS=
+assert_rejects "unsupported OS rejected"  check-os OS=arch
+assert_rejects "OS=bogus still rejected"  check-os OS=bogus
 os_cases=0
 while IFS= read -r d; do
   os_cases=$((os_cases + 1))
@@ -109,6 +118,27 @@ while IFS= read -r d; do
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
 if [ "$os_cases" -gt 0 ]; then ok "shared/linux/os contributed $os_cases case(s)"
 else bad "shared/linux/os contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# check-os must not be linux-only: it has to scan every shared/*/os, darwin
+# included, or the moment a second platform exists, OS=macos fails the
+# membership test before a darwin build ever starts.
+darwin_cases=0
+while IFS= read -r d; do
+  darwin_cases=$((darwin_cases + 1))
+  assert_accepts "shared/darwin/os token '$d' accepted" check-os OS="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/darwin/os")
+if [ "$darwin_cases" -gt 0 ]; then ok "shared/darwin/os contributed $darwin_cases case(s)"
+else bad "shared/darwin/os contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# A token claimed by two platforms (the decoy/decoy2 fixture's shared
+# "collide") must refuse rather than silently build whichever the alphabetical
+# glob lists first — the resolver picking darwin over linux for a shared
+# fedora token, unnoticed, is the scenario this closes.
+assert_rejects "a token claimed by two platforms is refused" check-os OS=collide
+gate check-os OS=collide
+assert_contains "the ambiguity refusal names the token"          "$(cat "$ERR")" "collide"
+assert_contains "the ambiguity refusal names one claiming file"  "$(cat "$ERR")" "shared/decoy/os"
+assert_contains "the ambiguity refusal names the other claiming file" "$(cat "$ERR")" "shared/decoy2/os"
 
 # PLATFORM must fail EMPTY, never guess: an empty result turns
 # `packer build … $(PLATFORM).pkr.hcl` into `packer build … .pkr.hcl` — a
@@ -125,6 +155,10 @@ assert_platform "OS as an explicit empty string resolves to nothing"  "" OS=
 assert_platform "an unsupported OS resolves to nothing"               "" OS=bogus
 assert_platform "a token matching only a comment line resolves to nothing" "" OS=decoytoken
 assert_platform "the decoy fixture's real token resolves to its own dir"  "decoy" OS=realtoken
+# A token claimed by two platforms must resolve to nothing, never to
+# whichever file the alphabetical glob happens to list first — a silent
+# misroute is worse than an unbuildable cell.
+assert_platform "a token claimed by two platforms resolves to nothing, not a guess" "" OS=collide
 
 platform_cases=0
 while IFS= read -r d; do
@@ -134,6 +168,16 @@ done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
 if [ "$platform_cases" -gt 0 ]; then ok "shared/linux/os contributed $platform_cases PLATFORM case(s)"
 else bad "shared/linux/os contributed PLATFORM cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
+# The glob is alphabetical (darwin sorts before linux) — this is the exact
+# ordering the earlier resolver silently broke on the first match to exploit.
+darwin_platform_cases=0
+while IFS= read -r d; do
+  darwin_platform_cases=$((darwin_platform_cases + 1))
+  assert_platform "shared/darwin/os token '$d' resolves to darwin" "darwin" OS="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/darwin/os")
+if [ "$darwin_platform_cases" -gt 0 ]; then ok "shared/darwin/os contributed $darwin_platform_cases PLATFORM case(s)"
+else bad "shared/darwin/os contributed PLATFORM cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
 # GUI is read by `$(if $(GUI),…)`, where make truthiness would treat GUI=0 as ON.
 echo "Makefile — check-gui:"
 assert_accepts "GUI unset accepted" check-gui GUI=
@@ -141,6 +185,13 @@ assert_accepts "GUI=1 accepted"     check-gui GUI=1
 assert_rejects "GUI=0 rejected"     check-gui GUI=0
 assert_rejects "GUI=true rejected"  check-gui GUI=true
 assert_rejects "GUI=yes rejected"   check-gui GUI=yes
+
+# The macOS desktop is intrinsic to the base image, so darwin has no DE axis
+# for GUI=1 to bake — it's a linux-platform flag.
+assert_rejects "GUI=1 refused on darwin" check-gui OS=macos GUI=1
+gate check-gui OS=macos GUI=1
+assert_contains "the darwin GUI refusal explains why, not just refuses" "$(cat "$ERR")" "intrinsic"
+assert_accepts "GUI unset is fine on darwin" check-gui OS=macos GUI=
 
 # DE is only meaningful with GUI set, and `DE ?=` picks up the caller's
 # environment — so a stray value must not fail a headless target.

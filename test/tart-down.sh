@@ -43,7 +43,7 @@ run_down() { # <args...> -> combined output in $OUT, exit code in $rc
   OUT=$(PATH="$MOCKBIN:$PATH" \
     MOCK_TART_LIST_JSON="${MOCK_TART_LIST_JSON:-$LIST}" \
     MOCK_TART_STOP_RC="${MOCK_TART_STOP_RC:-0}" \
-    TART_STACKS_DIR="$WORK/stacks" TART_OS_FILE="$WORK/os" TART_DESKTOPS="$WORK/desktops" \
+    TART_STACKS_DIR="$WORK/stacks" TART_OS_FILES="$WORK/os" TART_DESKTOPS="$WORK/desktops" \
     bash "$BIN/tart-down" "$@" 2>&1) || rc=$?
 }
 

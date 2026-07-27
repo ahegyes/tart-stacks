@@ -28,6 +28,13 @@ STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 OS_FILE="${TART_OS_FILE:-$REPO/shared/linux/os}"
 os_supported() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$OS_FILE" 2>/dev/null); }
 
+# Every platform's os file, for the base-image guard below only — cloning a
+# stack image is still linux-only (os_supported above), but the RESERVED-NAME
+# check must not be, or a name shaped like another platform's clone source
+# (e.g. macos-base, once `make bootstrap OS=macos` can create a real one)
+# would be free for a dev VM to grab here first.
+OS_FILES="${TART_OS_FILES:-$REPO/shared/*/os}"
+
 DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/linux/desktops}"
 de_supported() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$DESKTOPS_FILE" 2>/dev/null); }
 
@@ -127,7 +134,7 @@ fi
 #     refuse a name of this shape, so creating one mints a VM the rest of the
 #     toolchain declines to start, stop or delete. It also keeps the collision
 #     message below honest: a name tart-rm would refuse cannot reach it.
-if tart_is_base_image "$NAME" "$STACKS_DIR" "$OS_FILE" "$DESKTOPS_FILE"; then
+if tart_is_base_image "$NAME" "$STACKS_DIR" "$OS_FILES" "$DESKTOPS_FILE"; then
   echo "$prog: '$NAME' is a reserved base-image name (<os>-base, <os>-<stack>, or <os>-<stack>-<de>) — those are clone sources, not dev VMs. Pick a project name instead." >&2
   exit 1
 fi

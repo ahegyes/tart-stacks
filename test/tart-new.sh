@@ -71,7 +71,7 @@ JSON
 # exit code, stderr message, and the recorded tart calls.
 run_new() { # args... -> stdout; stderr to $WORK/err; exit code in $rc
   rc=0
-  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_OS_FILE="$WORK/os" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
+  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_OS_FILE="$WORK/os" TART_OS_FILES="$WORK/os" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
     bash "$BIN/tart-new" "$@" >"$WORK/out" 2>"$WORK/err" </dev/null || rc=$?
 }
 

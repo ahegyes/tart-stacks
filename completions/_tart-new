@@ -3,7 +3,9 @@
 # Zsh completion for tart-new. Positional 1 is the new VM name (no completion);
 # positional 2 is the stack token, completed from stacks/*/ in the repo this
 # command is symlinked from (real path via `:A`); positional 3 is the OS
-# token, completed from shared/linux/os; optional positional 4 is the GUI
+# token, completed from shared/linux/os — tart-new only clones a stack's
+# already-built image, and darwin has no stack pipeline yet, so shared/darwin/os
+# stays out of this list until one exists; optional positional 4 is the GUI
 # desktop token, completed from shared/linux/desktops. _arguments tracks positions
 # net of options, so the tokens still complete when resource flags come first
 # (e.g. `tart-new --cpu 4 myvm <TAB>`), and the flags complete too.

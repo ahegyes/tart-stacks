@@ -1,0 +1,10 @@
+# shared/darwin/os — operating systems tart-stacks builds on the darwin
+# platform. One token per line; '#' comments and blank lines ignored.
+# Unlike the linux tokens, "macos" doesn't map to a same-named published
+# image — Cirrus publishes macOS per release, so Makefile's MACOS_RELEASE
+# names that release separately.
+# The platform that owns this file is its directory. shared/linux/os is its
+# peer.
+# There is deliberately no shared/darwin/desktops: the macOS desktop is
+# intrinsic, so the platform has no DE axis.
+macos

@@ -4,7 +4,8 @@ SHELL := /bin/bash
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php OS=fedora`.
 STACK ?=
 
-# OS selector. Required for build/rebuild/bootstrap. Must be a line in shared/linux/os.
+# OS selector. Required for build/rebuild/bootstrap. Must be a line in exactly
+# one shared/<platform>/os (check-os), which is also what selects the platform.
 OS ?=
 
 # GUI flavor. Optional: GUI=1 bakes the desktop layer (shared/linux/scripts/gui.sh)
@@ -40,7 +41,7 @@ help:
 	@echo "  make smoke STACK=<name> OS=<os>           Smoke-test a BUILT image end-to-end: clone, boot a real VM (~1 min), guest agent, ssh, assert, destroy. Local-only — never run in CI. GUI=1 [DE=<de>] smokes the GUI flavor"
 	@echo "  make clean                                Remove Packer build artifacts"
 	@echo ""
-	@echo "  OS — required OS token (e.g. fedora). Must be listed in shared/linux/os."
+	@echo "  OS — required OS token (e.g. fedora, macos). Must be listed in exactly one shared/<platform>/os."
 	@echo "  IMAGE_TAG — override the base image tag (default: latest). e.g. IMAGE_TAG=42 make bootstrap OS=fedora"
 	@echo "  GUI=1 — bake the desktop layer into build/rebuild (strictly 1 or unset); the image becomes <os>-<stack>-<de>. See shared/linux/gui/README.md"
 	@echo "  DE — desktop for GUI=1 (default: kde). Must be listed in shared/linux/desktops. e.g. make build STACK=php OS=fedora GUI=1 DE=xfce"
@@ -91,40 +92,78 @@ check-stack: check-stack-token
 
 # Platform for the selected OS — the directory whose os file lists the
 # token. Derived rather than declared: membership is a property of the tree,
-# so there is no second list to drift out of sync with shared/*/os. `:=`
-# (not `=`) so it's computed once, from OS's final value, and `make -p`
-# shows the resolved platform rather than this unexpanded shell text — the
-# `#` inside the regex must stay escaped (`\#`), since outside a recipe make
-# treats a bare `#` as the start of a make comment and truncates the line.
-PLATFORM := $(shell for f in shared/*/os; do \
-	grep -qxF "$(OS)" <(grep -vE '^[[:space:]]*(\#|$$)' "$$f") \
-	  && basename "$$(dirname "$$f")" && break; \
-	done)
+# so there is no second list to drift out of sync with shared/*/os. Counts
+# every match instead of stopping at the first: the glob is alphabetical, so
+# darwin sorts before linux, and silently keeping the first hit would let one
+# platform's token shadow another's with no warning — exactly one match
+# resolves; zero or more than one both yield empty, since neither is a single
+# well-defined platform. (check-os is what turns "more than one" into a loud
+# refusal naming the token and every claiming file; this variable only
+# refuses to guess.) `:=` (not `=`) so it's computed once, from OS's final
+# value, and `make -p` shows the resolved platform rather than this unexpanded
+# shell text — the `#` inside the regex must stay escaped (`\#`), since
+# outside a recipe make treats a bare `#` as the start of a make comment and
+# truncates the line.
+PLATFORM := $(shell count=0; chosen=""; \
+	for f in shared/*/os; do \
+	  grep -qxF "$(OS)" <(grep -vE '^[[:space:]]*(\#|$$)' "$$f") \
+	    && count=$$((count + 1)) && chosen="$$f"; \
+	done; \
+	[ "$$count" -eq 1 ] && basename "$$(dirname "$$chosen")")
 
-# Validate OS is set and supported (a non-comment line in shared/linux/os).
+# Validate OS is set, supported, and claimed by exactly one platform. Scans
+# every shared/*/os rather than hardcoding shared/linux/os, so a new
+# platform's token list is picked up by construction rather than a second
+# edit here — the two had already drifted once (this gate vs. the PLATFORM
+# resolver above) before this fix. The "Supported:" listing groups tokens
+# under the platform that claims them: a flattened "macos fedora ubuntu"
+# gives a reader no way to route a token back to a directory.
 check-os:
 	@if [ -z "$(OS)" ]; then \
 		echo "ERROR: OS is required (e.g., make build STACK=php OS=fedora). Supported:" >&2; \
-		grep -vE '^\s*(#|$$)' shared/linux/os | sed 's/^/  /' >&2; \
+		for f in shared/*/os; do \
+			echo "  $$(basename "$$(dirname "$$f")"):" >&2; \
+			grep -vE '^\s*(#|$$)' "$$f" | sed 's/^/    /' >&2; \
+		done; \
 		exit 1; \
 	fi
-	@if ! grep -qxF "$(OS)" <(grep -vE '^\s*(#|$$)' shared/linux/os); then \
-		echo "ERROR: OS '$(OS)' is not supported. Add it to shared/linux/os (and a branch in family-lib.sh) first. Supported:" >&2; \
-		grep -vE '^\s*(#|$$)' shared/linux/os | sed 's/^/  /' >&2; \
+	@count=0; claimants=""; \
+	for f in shared/*/os; do \
+		if grep -qxF "$(OS)" <(grep -vE '^\s*(#|$$)' "$$f"); then \
+			count=$$((count + 1)); \
+			claimants="$$claimants $$f"; \
+		fi; \
+	done; \
+	if [ "$$count" -eq 0 ]; then \
+		echo "ERROR: OS '$(OS)' is not supported. Add it to the right platform's shared/<platform>/os (and a family branch) first. Supported:" >&2; \
+		for f in shared/*/os; do \
+			echo "  $$(basename "$$(dirname "$$f")"):" >&2; \
+			grep -vE '^\s*(#|$$)' "$$f" | sed 's/^/    /' >&2; \
+		done; \
+		exit 1; \
+	fi; \
+	if [ "$$count" -gt 1 ]; then \
+		echo "ERROR: OS '$(OS)' is claimed by more than one platform —$$claimants — refusing rather than silently building whichever shared/*/os the glob lists first. Remove it from all but one file." >&2; \
 		exit 1; \
 	fi
 	@if [ -z "$(PLATFORM)" ]; then \
-		echo "ERROR: OS '$(OS)' passed the check above but resolved to no platform (no shared/*/os file lists it) — refusing rather than building a malformed 'packer build … .pkr.hcl'. This means the check above and the PLATFORM resolver have drifted out of sync." >&2; \
+		echo "ERROR: OS '$(OS)' passed the checks above but resolved to no platform — this means the checks above and the PLATFORM resolver have drifted out of sync." >&2; \
 		exit 1; \
 	fi
 
 # GUI is 1 or unset — nothing else. Guards the $(if $(GUI),…) truthiness the
-# GUI-aware targets key off (see the GUI comment at the top).
+# GUI-aware targets key off (see the GUI comment at the top). Darwin gets a
+# second refusal below: the macOS desktop is intrinsic to the base image, so
+# the platform has no DE axis for GUI=1 to bake — GUI=1 is a linux-only flag.
 check-gui:
 	@case "$(GUI)" in ''|1) ;; *) \
 		echo "ERROR: GUI must be 1 (bake/select the desktop layer) or unset, got '$(GUI)'." >&2; \
 		exit 1 ;; \
 	esac
+	@if [ -n "$(GUI)" ] && [ "$(PLATFORM)" = "darwin" ]; then \
+		echo "ERROR: GUI=1 is a linux-platform flag. The macOS desktop is intrinsic, so darwin images have no DE axis and are named <os>-<stack> with no -<de> suffix. Use 'tart-up --gui=window' (or vnc) on the clone instead." >&2; \
+		exit 1; \
+	fi
 
 # Validate DE is supported (a non-comment line in shared/linux/desktops) — but only
 # when GUI is set: DE is meaningless for headless targets, and `DE ?=` picks
@@ -143,11 +182,23 @@ init:
 	@command -v packer >/dev/null 2>&1 || { echo "packer not installed. Run: brew install hashicorp/tap/packer"; exit 1; }
 	packer init .
 
+# Upstream base image for the selected OS. The linux images are published as
+# ghcr.io/cirruslabs/<os>, keyed directly off the OS token, but Cirrus
+# publishes macOS per release rather than under a rolling name (macos-tahoe-base,
+# macos-sequoia-base, …), so darwin can't derive its image from $(OS) the way
+# linux does — MACOS_RELEASE names the release here instead. Bumping macOS is
+# editing this line and rebuilding — the same shape as FEDORA_TARGET_RELEASE.
+# `:=`, not `=`: PLATFORM above is itself `:=` (fixed once OS is known), and a
+# recursively-expanded BASE_IMAGE would otherwise re-evaluate this $(if …) on
+# every reference instead of settling once alongside it.
+MACOS_RELEASE ?= tahoe
+BASE_IMAGE := $(if $(filter darwin,$(PLATFORM)),ghcr.io/cirruslabs/macos-$(MACOS_RELEASE)-base:$(IMAGE_TAG),ghcr.io/cirruslabs/$(OS):$(IMAGE_TAG))
+
 bootstrap: check-os
 	@command -v tart >/dev/null 2>&1 || { echo "tart not installed. Run: brew install openai/tools/tart"; exit 1; }
-	tart pull ghcr.io/cirruslabs/$(OS):$(IMAGE_TAG)
+	tart pull $(BASE_IMAGE)
 	-tart delete $(TART_BASE_NAME) 2>/dev/null
-	tart clone ghcr.io/cirruslabs/$(OS):$(IMAGE_TAG) $(TART_BASE_NAME)
+	tart clone $(BASE_IMAGE) $(TART_BASE_NAME)
 
 # Build a stack from the one parameterized template, run from the repo root so
 # the provisioner script paths (shared/…, stacks/<stack>/…) resolve.

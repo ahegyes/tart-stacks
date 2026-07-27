@@ -101,7 +101,7 @@ run_rm() { # args... — exit code in $rc, stderr in $ERR, recorded calls in $CA
     MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_TART_STOP_RC="${MOCK_TART_STOP_RC-0}" \
     MOCK_TART_LIST_SEQ="${MOCK_TART_LIST_SEQ-}" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_VM=app-a \
-    TART_STACKS_DIR="$WORK/stacks" TART_OS_FILE="$WORK/os" TART_DESKTOPS="$WORK/desktops" \
+    TART_STACKS_DIR="$WORK/stacks" TART_OS_FILES="$WORK/os" TART_DESKTOPS="$WORK/desktops" \
     bash "$BIN/tart-rm" "$@" >"$WORK/out" 2>"$ERR" || rc=$?
 }
 

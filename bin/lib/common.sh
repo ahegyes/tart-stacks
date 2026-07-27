@@ -68,34 +68,45 @@ tart_ssh_has_sessiontype() {
   printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/dev/null 2>&1
 }
 
-# tart_is_base_image <bare-name> <stacks-dir> <os-file> <desktops-file> —
+# tart_is_base_image <bare-name> <stacks-dir> <os-glob> <desktops-file> —
 # 0 if the name is a clone-source (the <os>-base bootstrap intermediate, a
 # <os>-<stack> built image, or a <os>-<stack>-<de> GUI flavor), not a
 # dev VM. Anchored on the supported OS set so hyphenated dev-VM names
-# (e.g. web-php, app-base) are NOT misread as base images.
+# (e.g. web-php, app-base) are NOT misread as base images. <os-glob> scans
+# every platform's os file (shared/*/os) rather than one hardcoded path: once
+# `make bootstrap OS=macos` can clone a real macos-base (this repo now builds
+# more than the linux platform), a caller that only knew shared/linux/os would
+# wave a "macos-base" dev VM straight through. Desktops stay a single file —
+# GUI flavors are a linux-only concept, so shared/linux/desktops is the only
+# one that exists.
 tart_is_base_image() {
-  local bare="$1" stacks_dir="$2" os_file="$3" desktops_file="$4" d de rest
+  local bare="$1" stacks_dir="$2" os_glob="$3" desktops_file="$4" d de rest f
   # The classification gates destructive paths (tart-rm's delete) — refusing
   # to answer beats silently failing open when the data is unreadable.
-  [ -r "$os_file" ]  || { echo "${prog:-${0##*/}}: cannot read OS file '$os_file' — cannot tell dev VMs from base images." >&2; exit 1; }
-  [ -r "$desktops_file" ] || { echo "${prog:-${0##*/}}: cannot read desktops file '$desktops_file' — cannot tell dev VMs from base images." >&2; exit 1; }
   [ -d "$stacks_dir" ]    || { echo "${prog:-${0##*/}}: stacks dir '$stacks_dir' not found — cannot tell dev VMs from base images." >&2; exit 1; }
-  while IFS= read -r d; do
-    case "$bare" in
-      "$d"-base) return 0 ;;
-      "$d"-*)
-        rest="${bare#"$d"-}"
-        [ -d "$stacks_dir/$rest" ] && return 0
-        # GUI flavor: <stack>-<de>, de anchored on the supported desktop set
-        # so a dev VM named e.g. fedora-php-2 stays a dev VM.
-        while IFS= read -r de; do
-          case "$rest" in
-            *-"$de") [ -d "$stacks_dir/${rest%-"$de"}" ] && return 0 ;;
-          esac
-        done < <(grep -vE '^[[:space:]]*(#|$)' "$desktops_file")
-        ;;
-    esac
-  done < <(grep -vE '^[[:space:]]*(#|$)' "$os_file")
+  [ -r "$desktops_file" ] || { echo "${prog:-${0##*/}}: cannot read desktops file '$desktops_file' — cannot tell dev VMs from base images." >&2; exit 1; }
+  # shellcheck disable=SC2086  # deliberately unquoted: os_glob is a shell
+  # glob (e.g. shared/*/os) expanding to one file per platform; a literal
+  # path with no glob metacharacters expands to itself, unchanged.
+  for f in $os_glob; do
+    [ -r "$f" ] || { echo "${prog:-${0##*/}}: cannot read OS file '$f' — cannot tell dev VMs from base images." >&2; exit 1; }
+    while IFS= read -r d; do
+      case "$bare" in
+        "$d"-base) return 0 ;;
+        "$d"-*)
+          rest="${bare#"$d"-}"
+          [ -d "$stacks_dir/$rest" ] && return 0
+          # GUI flavor: <stack>-<de>, de anchored on the supported desktop set
+          # so a dev VM named e.g. fedora-php-2 stays a dev VM.
+          while IFS= read -r de; do
+            case "$rest" in
+              *-"$de") [ -d "$stacks_dir/${rest%-"$de"}" ] && return 0 ;;
+            esac
+          done < <(grep -vE '^[[:space:]]*(#|$)' "$desktops_file")
+          ;;
+      esac
+    done < <(grep -vE '^[[:space:]]*(#|$)' "$f")
+  done
   return 1
 }
 

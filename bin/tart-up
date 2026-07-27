@@ -36,10 +36,11 @@ SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 . "$SCRIPT_DIR/lib/common.sh"
 
 # Repo root + stacks dir (TART_STACKS_DIR overrides for tests), used by the
-# base-image guard below to recognize any built stack image regardless of OS.
+# base-image guard below to recognize any built stack image regardless of OS
+# or platform.
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
-OS_FILE="${TART_OS_FILE:-$REPO/shared/linux/os}"
+OS_FILES="${TART_OS_FILES:-$REPO/shared/*/os}"
 DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/linux/desktops}"
 
 # BSD nc's -G is the probe's connect bound; a PATH-shadowing GNU netcat parses
@@ -94,7 +95,7 @@ STATE=$(tart_vm_state "$VM") || list_failed
 # Base images (the `<os>-base` bootstrap intermediate + every
 # <os>-<stack>[-<de>] built image) are clone-sources, not dev VMs — but
 # the `tart-*` SSH wildcard matches them too. Refuse.
-if tart_is_base_image "$VM" "$STACKS_DIR" "$OS_FILE" "$DESKTOPS_FILE"; then
+if tart_is_base_image "$VM" "$STACKS_DIR" "$OS_FILES" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <os>'." >&2
   exit 1
 fi
