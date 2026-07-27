@@ -23,10 +23,10 @@ if grep -qF 'source /tmp/authorized-key-lib.sh' "$FINALIZE"; then
 else
   bad "sources /tmp/authorized-key-lib.sh" "no matching source line found"
 fi
-if grep -qE '^assert_authorized_key_safe .* \|\| exit 1$' "$FINALIZE"; then
-  ok "calls assert_authorized_key_safe ... || exit 1"
+if grep -qE '^assert_authorized_key_safe /tmp/authorized_key\.pub \|\| exit 1$' "$FINALIZE"; then
+  ok "calls assert_authorized_key_safe /tmp/authorized_key.pub || exit 1"
 else
-  bad "calls assert_authorized_key_safe ... || exit 1" "no matching call found"
+  bad "calls assert_authorized_key_safe /tmp/authorized_key.pub || exit 1" "no matching call found"
 fi
 # The gate's own logic must live in the library, not be pasted back in here —
 # a reimplementation would silently drift from what test/authorized-key-lib.sh
@@ -54,7 +54,7 @@ echo "99-finalize (linux) — the gate precedes the install and the lockout:"
 # rather than silently skips.
 line_of() { grep -nF -- "$1" "$FINALIZE" | head -n1 | cut -d: -f1; }
 line_re() { grep -nE -- "$1" "$FINALIZE" | head -n1 | cut -d: -f1; }
-gate_line=$(line_re '^assert_authorized_key_safe .* \|\| exit 1$')
+gate_line=$(line_re '^assert_authorized_key_safe /tmp/authorized_key\.pub \|\| exit 1$')
 install_line=$(line_of '.ssh/authorized_keys')
 lock_line=$(line_re '^passwd -l ')
 
