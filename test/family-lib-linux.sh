@@ -208,11 +208,11 @@ SKIP_REN="$WORK/skipped-renamed"
   pkg_install_optional oldname-devel ) >/dev/null 2>&1
 assert_eq "dnf: a package present under a Provides alias is not recorded" "" "$(cat "$SKIP_REN" 2>/dev/null)"
 
-# ── assert_mac_enforcing ─────────────────────────────────────────────────────
+# ── assert_integrity_enforced ────────────────────────────────────────────────
 # Its whole job is to fail a build, so an untested one can only be discovered by
 # shipping an image whose inherited MAC posture had silently regressed.
-echo "family-lib — assert_mac_enforcing:"
-mac_rc() { # <os-release-fixture> [KEY=VALUE…] — exit status of assert_mac_enforcing
+echo "family-lib — assert_integrity_enforced:"
+mac_rc() { # <os-release-fixture> [KEY=VALUE…] — exit status of assert_integrity_enforced
   local fixture="$1"; shift
   local rc=0
   # env, not export: the mock knobs arrive as KEY=VALUE words, which `export`
@@ -221,7 +221,7 @@ mac_rc() { # <os-release-fixture> [KEY=VALUE…] — exit status of assert_mac_e
   # shellcheck disable=SC2031  # the child process env IS the sandbox
   # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$fixture" "$@" \
-    bash -c '. "$1"; assert_mac_enforcing' _ "$REPO/shared/linux/scripts/family-lib.sh" \
+    bash -c '. "$1"; assert_integrity_enforced' _ "$REPO/shared/linux/scripts/family-lib.sh" \
     >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
@@ -245,7 +245,7 @@ unknown_family_rc() {
   # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
   # shellcheck disable=SC2031  # PATH is per-child on purpose; the mocks are the sandbox
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
-    bash -c '. "$1"; _TART_FAMILY=zypper; assert_mac_enforcing' _ \
+    bash -c '. "$1"; _TART_FAMILY=zypper; assert_integrity_enforced' _ \
       "$REPO/shared/linux/scripts/family-lib.sh" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }

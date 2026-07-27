@@ -338,13 +338,14 @@ install_guest_agent() {
   systemctl enable --now tart-guest-agent.service
 }
 
-# assert_mac_enforcing — fail if the inherited mandatory-access-control layer isn't
-# actively enforcing: SELinux in Enforcing mode on dnf; AppArmor with >0 profiles in
-# enforce mode on apt (a loaded module alone wouldn't prove enforcement is happening).
-# Every path here fails closed, including the two that mean "cannot tell": a query
-# that errors, and a family with no branch. An assertion whose whole job is to fail
-# a build must not pass by falling off the end of a case.
-assert_mac_enforcing() {
+# assert_integrity_enforced — fail if the platform's OS-level integrity mechanism
+# isn't actively enforcing. On linux that mechanism is the inherited mandatory-
+# access-control layer: SELinux in Enforcing mode on dnf; AppArmor with >0 profiles
+# in enforce mode on apt (a loaded module alone wouldn't prove enforcement is
+# happening). Every path here fails closed, including the two that mean "cannot
+# tell": a query that errors, and a family with no branch. An assertion whose
+# whole job is to fail a build must not pass by falling off the end of a case.
+assert_integrity_enforced() {
   local m n
   case "$_TART_FAMILY" in
     dnf) m="$(getenforce 2>/dev/null)" \

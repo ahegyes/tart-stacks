@@ -37,7 +37,7 @@ SUDOERS_FILE="/etc/sudoers.d/${TARGET_USER}-nopasswd"
 # silently shipped MAC disabled (or a stray provisioner that flipped it) fails the build
 # here instead of minting a downgraded image every clone would inherit.
 echo "==> Verifying mandatory access control is active..."
-assert_mac_enforcing || exit 1
+assert_integrity_enforced || exit 1
 
 # Clean the package cache before locking down the image — cached packages + metadata
 # (hundreds of MB) would otherwise ship in every clone. Runs in finalize so any package
