@@ -190,4 +190,34 @@ assert_contains "the daemon refusal names the missing path" "$agent_err" "nope-d
 agent_rc "$DAEMON" "$WORK/nope-agent.plist" >/dev/null
 assert_contains "the agent refusal names the missing path"  "$agent_err" "nope-agent.plist"
 
+# ── assert_nopasswd_sudo ────────────────────────────────────────────────────
+# The base ships this drop-in already (measured on a real Cirrus base), so
+# the assertion is existence + visudo syntax validity, not an install — the
+# same "assert what the base already guarantees" contract as
+# install_guest_agent above. A corrupt drop-in can break sudo for every
+# account, not just this one, which is why syntax gets its own case distinct
+# from plain existence.
+echo
+echo "family-lib (darwin) — assert_nopasswd_sudo:"
+sudoers_err=""
+sudoers_rc() {  # <sudoers-file-path>
+  local rc=0
+  sudoers_err=$( ( export SUDOERS_NOPASSWD_FILE="$1"
+                    # shellcheck source=/dev/null
+                    source "$LIB"
+                    assert_nopasswd_sudo ) 2>&1 ) || rc=$?
+  printf '%s' "$rc"
+}
+VALID_SUDOERS="$WORK/admin-nopasswd"
+printf 'admin ALL=(ALL) NOPASSWD: ALL\n' > "$VALID_SUDOERS"
+BAD_SUDOERS="$WORK/admin-nopasswd-bad"
+printf 'this is not valid sudoers syntax !!!\n' > "$BAD_SUDOERS"
+assert_eq "a present, syntactically valid drop-in passes"  0 "$(sudoers_rc "$VALID_SUDOERS")"
+assert_eq "a missing drop-in is refused"                   1 "$(sudoers_rc "$WORK/does-not-exist")"
+assert_eq "a present but malformed drop-in is refused"     1 "$(sudoers_rc "$BAD_SUDOERS")"
+sudoers_rc "$WORK/does-not-exist" >/dev/null
+assert_contains "the missing-file refusal names the path"    "$sudoers_err" "does-not-exist"
+sudoers_rc "$BAD_SUDOERS" >/dev/null
+assert_contains "the malformed-file refusal names visudo"    "$sudoers_err" "visudo"
+
 echo; echo "  $pass passed, $fail failed"; [ "$fail" -eq 0 ]

@@ -11,11 +11,14 @@
 #   - No SSH key is authorized for admin.
 #
 # Unlike the linux peer, this script never locks the account password (see
-# the `password:` manifest line below for why), so the "shrink the window
-# between disabling password auth and Packer disconnecting" pressure that
-# shapes the linux script's bundling does not apply here in the same way —
-# the surface this script closes is the listening services and SSH password
-# auth, not the console account itself.
+# the `password:` manifest line below for why) and never installs its own
+# NOPASSWD sudoers drop-in — the base ships one already, so this script
+# asserts it rather than reinstalling it (the same contract
+# install_guest_agent uses). So the "shrink the window between disabling
+# password auth and Packer disconnecting" pressure that shapes the linux
+# script's bundling does not apply here in the same way — the surface this
+# script closes is the listening services and SSH password auth, not the
+# console account itself.
 #
 # Runs as root via sudo from Packer.
 
@@ -69,13 +72,23 @@ echo "==> Removing host keys so each clone generates its own on first connect...
 rm -f "${TART_ROOT}"/etc/ssh/ssh_host_*_key "${TART_ROOT}"/etc/ssh/ssh_host_*_key.pub
 
 # The base is a CI image; a dev VM inherits Actions-runner install artifacts
-# it will never use. rm -rf regardless of shape: whether a given path is a
-# leftover file or an account's whole home directory varies by base revision,
-# and `rm -f` on a directory fails outright under set -e — which would abort
-# this, the LAST provisioner, mid-script.
+# it will never use: ~/actions-runner (the build user's own runner checkout,
+# a directory) and /Users/runner — measured: a SYMLINK to /Users/admin, not a
+# second account's home directory, hence no trailing slash on the target
+# below (one would make rm follow the link and recurse into the real home).
+# rm -rf for both regardless of shape: `rm -f` on a directory fails outright
+# under set -e, which would abort this, the LAST provisioner, mid-script.
 echo "==> Removing CI runner artifacts not used by a dev VM..."
 rm -rf "${TARGET_HOME}/actions-runner"
 rm -rf "${TART_ROOT}/Users/runner"
+
+# Part of the same final-posture sweep as the listener assert below: a
+# non-interactive `ssh <vm> sudo ...` (which tart-up's escalation and any
+# script/agent driving this VM depends on) hangs or fails without a working
+# NOPASSWD rule, and an unlocked-but-unprompted console password (see
+# password: below) does not by itself guarantee one.
+echo "==> Verifying NOPASSWD sudo is in place..."
+assert_nopasswd_sudo || exit 1
 
 # The whole access posture of this image is "one listener, key-only", so it
 # is asserted rather than documented. Runs after the services above are
@@ -166,4 +179,4 @@ StreamLocalBindUnlink yes
 EOF
 sshd -t
 
-echo "==> 99-finalize.sh complete. Key authorized, remote-access services disabled, password auth disabled via sshd, host keys cleared, listener surface verified."
+echo "==> 99-finalize.sh complete. Key authorized, remote-access services disabled, password auth disabled via sshd, host keys cleared, NOPASSWD sudo verified, listener surface verified."

@@ -134,3 +134,30 @@ install_guest_agent() {
   done
   return 0
 }
+
+# The base-provided NOPASSWD sudoers drop-in for the build user (measured on
+# a real Cirrus base). Overridable for the same reason
+# TART_GUEST_DAEMON_PLIST/TART_GUEST_AGENT_PLIST are: testable without
+# writing under the real /etc.
+SUDOERS_NOPASSWD_FILE="${SUDOERS_NOPASSWD_FILE:-/etc/sudoers.d/${TART_BUILD_USER}-nopasswd}"
+
+# assert_nopasswd_sudo — the base ships this drop-in already (measured), so —
+# the same "assert what the base already guarantees" contract as
+# install_guest_agent — there is nothing here to install. Existence alone
+# isn't enough: a truncated or corrupted drop-in can break sudo for every
+# account on the system, not just this one, so the file is also syntax-
+# checked with visudo -cf before the build trusts it. A future base that
+# drops or corrupts the file fails the build here rather than shipping an
+# image where a clone's non-interactive `ssh <vm> sudo ...` hangs on a
+# password prompt nobody can answer.
+assert_nopasswd_sudo() {
+  [ -f "$SUDOERS_NOPASSWD_FILE" ] || {
+    echo "ERROR: no NOPASSWD sudoers drop-in at ${SUDOERS_NOPASSWD_FILE}. This base was expected to ship it already — nothing here installs one." >&2
+    return 1
+  }
+  visudo -cf "$SUDOERS_NOPASSWD_FILE" >/dev/null 2>&1 || {
+    echo "ERROR: ${SUDOERS_NOPASSWD_FILE} failed visudo's syntax check. Refusing to trust a malformed sudoers fragment." >&2
+    return 1
+  }
+  return 0
+}

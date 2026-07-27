@@ -8,15 +8,18 @@
 #
 #   1. The runtime-observable region (integrity re-check, package cache
 #      clean, the two service disables, host-key deletion, CI-artifact
-#      removal, the listener assert, and the manifest write) is lifted out of
-#      the SHIPPED script with awk — same technique test/base-darwin.sh uses
-#      — and run for real against a synthetic root via TART_ROOT, with every
-#      privileged/system command (launchctl, netstat, csrutil, sw_vers)
-#      PATH-mocked and its argv logged, same technique test/user-config-
-#      darwin.sh uses. assert_integrity_enforced and pkg_clean are stubbed
-#      exactly as test/base-darwin.sh stubs assert_release_supported /
-#      install_guest_agent, so the calls stay measurable rather than merely
-#      present.
+#      removal, the NOPASSWD sudo assert, the listener assert, and the
+#      manifest write) is lifted out of the SHIPPED script with awk — same
+#      technique test/base-darwin.sh uses — and run for real against a
+#      synthetic root via TART_ROOT, with every privileged/system command
+#      (launchctl, netstat, csrutil, sw_vers) PATH-mocked and its argv
+#      logged, same technique test/user-config-darwin.sh uses.
+#      assert_integrity_enforced, pkg_clean, and assert_nopasswd_sudo are
+#      stubbed exactly as test/base-darwin.sh stubs assert_release_supported
+#      / install_guest_agent, so the calls stay measurable rather than
+#      merely present — assert_nopasswd_sudo's own accept/refuse behavior is
+#      covered directly against family-lib.sh in test/family-lib-darwin.sh,
+#      not re-tested here.
 #   2. The SSH-key-gate wiring (source the shared lib, call it with the
 #      pinned literal path, ordering relative to the key install) is NEVER
 #      executed — it is checked statically against the shipped script's text,
@@ -167,6 +170,8 @@ GATE="$WORK/gate.sh"
   # shellcheck disable=SC2016
   printf 'assert_integrity_enforced() { return "${MOCK_INTEGRITY_RC:-0}"; }\n'
   printf 'pkg_clean() { :; }\n'
+  # shellcheck disable=SC2016
+  printf 'assert_nopasswd_sudo() { return "${MOCK_SUDOERS_RC:-0}"; }\n'
   awk '
     /^source \/tmp\/authorized-key-lib\.sh$/ { open = 1; next }
     /^assert_authorized_key_safe \/tmp\/authorized_key\.pub \|\| exit 1$/ { if (open) exit }
@@ -312,6 +317,20 @@ LOG5="$WORK5/log"
 rc=0
 invoke_gate "$WORK5" "$LOG5" MOCK_LISTEN_PORTS=22 MOCK_INTEGRITY_RC=1 || rc=$?
 assert_eq "a regressed integrity posture refuses the build" "1" "$rc"
+
+# ── the NOPASSWD sudo assertion is actually called, not merely defined ─────
+# assert_nopasswd_sudo's own accept/refuse logic (missing file, malformed
+# syntax) is covered directly against the library in
+# test/family-lib-darwin.sh; this case only proves 99-finalize.sh actually
+# CALLS it — a deleted call would otherwise go unnoticed with a stub that
+# always returns success.
+echo
+echo "99-finalize (darwin) — the NOPASSWD sudo assertion can fail the build on its own:"
+WORK6="$WORK/w6"; install -d "$WORK6"; setup_root "$WORK6" dir
+LOG6="$WORK6/log"
+rc=0
+invoke_gate "$WORK6" "$LOG6" MOCK_LISTEN_PORTS=22 MOCK_SUDOERS_RC=1 || rc=$?
+assert_eq "a missing/invalid NOPASSWD drop-in refuses the build" "1" "$rc"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
