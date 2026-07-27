@@ -7,8 +7,8 @@
 # packages.<family> list; identical across stacks until one needs more.
 set -euo pipefail
 # shellcheck source=/dev/null
-source /tmp/distro-lib.sh
-list="/tmp/packages.${_DISTRO_FAMILY}"
+source /tmp/family-lib.sh
+list="/tmp/packages.${_TART_FAMILY}"
 # grep exits 1 when the list is all-comments/empty; tolerate it (the empty case is
 # valid — a stack with no native deps) so set -e doesn't abort here.
 pkgs="$(grep -vE '^[[:space:]]*(#|$)' "$list" 2>/dev/null | tr '\n' ' ' || true)"

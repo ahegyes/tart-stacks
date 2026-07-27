@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # 00-base.sh — system update, core dev packages, zellij, build toolchain. Runs as
-# root; stack-agnostic, distro-agnostic via distro-lib.sh. Every stack runs this
+# root; stack-agnostic, distro-agnostic via family-lib.sh. Every stack runs this
 # before its own 00-stack.sh.
 set -euo pipefail
 # shellcheck source=/dev/null
-source /tmp/distro-lib.sh
+source /tmp/family-lib.sh
 
 # Assert the guest is the distro this build calls itself, first thing. The image
 # name and the provenance manifest are both written from the build's own DISTRO,
@@ -48,7 +48,7 @@ if [ "$agent_state" != enabled ]; then
   echo "       build installed it. 'tart exec' is a host->guest vsock call served by that agent" >&2
   echo "       inside the guest; the host's own tart install cannot supply it. The build owns this" >&2
   echo "       package now, so look at the install above, not at the base image — the version is" >&2
-  echo "       TART_GUEST_AGENT_VERSION in shared/linux/scripts/distro-lib.sh, and its unit ships with" >&2
+  echo "       TART_GUEST_AGENT_VERSION in shared/linux/scripts/family-lib.sh, and its unit ships with" >&2
   echo "       the package. Re-pulling a base cannot fix a package this build installs." >&2
   exit 1
 fi
@@ -75,7 +75,7 @@ pkg_refresh
 # right without per-connect terminfo push.
 echo "==> Installing core development packages (fail-loud)..."
 repo_add_github_cli
-case "$_DISTRO_FAMILY" in
+case "$_TART_FAMILY" in
   dnf) core="curl wget ca-certificates git gh zsh nano unzip tar ncurses ncurses-term gcc gcc-c++ make" ;;
   apt) core="curl wget ca-certificates git gh zsh nano unzip tar ncurses-base ncurses-bin ncurses-term g++ gcc make gnupg" ;;
 esac
@@ -83,7 +83,7 @@ esac
 pkg_install $core
 
 echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."
-case "$_DISTRO_FAMILY" in
+case "$_TART_FAMILY" in
   dnf) qol="htop lsof bind-utils nmap-ncat jq mariadb ShellCheck ripgrep fd-find fzf bat git-delta" ;;
   apt) qol="htop lsof bind9-dnsutils netcat-openbsd jq mariadb-client shellcheck ripgrep fd-find fzf bat git-delta" ;;
 esac

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Characterization test for gui-lib.sh: the DE × family selectors gui.sh keys
-# off. Sources distro-lib with a synthetic os-release (family seam), then
-# gui-lib on top — same technique as test/distro-lib.sh. No framework.
+# off. Sources family-lib with a synthetic os-release (family seam), then
+# gui-lib on top — same technique as test/family-lib-linux.sh. No framework.
 set -uo pipefail
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd); REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
 pass=0 fail=0
@@ -13,11 +13,11 @@ printf 'ID=fedora\n' > "$WORK/os-dnf"
 printf 'ID=debian\n' > "$WORK/os-apt"
 
 # with_family <dnf|apt> <cmd…> — run a selector under that family's libs.
-# Subshell per call: distro-lib exits the sourcing shell on a bad os-release,
-# and _DISTRO_FAMILY must not leak between cases.
+# Subshell per call: family-lib exits the sourcing shell on a bad os-release,
+# and _TART_FAMILY must not leak between cases.
 with_family() {
   local fam="$1"; shift
-  ( OS_RELEASE="$WORK/os-$fam" source "$REPO/shared/linux/scripts/distro-lib.sh"
+  ( OS_RELEASE="$WORK/os-$fam" source "$REPO/shared/linux/scripts/family-lib.sh"
     # shellcheck source=/dev/null
     source "$REPO/shared/linux/scripts/gui-lib.sh"
     "$@" ) 2>/dev/null

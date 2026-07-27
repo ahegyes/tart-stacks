@@ -26,7 +26,7 @@ variable "stack" {
 
 variable "distro" {
   type        = string
-  description = "Distro token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/linux/os and a branch in distro-lib.sh. The built image is <distro>-<stack>, cloned from <distro>-base."
+  description = "Distro token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/linux/os and a branch in family-lib.sh. The built image is <distro>-<stack>, cloned from <distro>-base."
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.distro))
     error_message = "Distro must be a lowercase alphanumeric token such as fedora, ubuntu, or debian."
@@ -113,8 +113,8 @@ build {
   # Staged for the release upgrade below, which is the only thing that reads it
   # before the reboot. Nothing else may be uploaded ahead of that block.
   provisioner "file" {
-    source      = "shared/linux/scripts/distro-lib.sh"
-    destination = "/tmp/distro-lib.sh"
+    source      = "shared/linux/scripts/family-lib.sh"
+    destination = "/tmp/family-lib.sh"
   }
 
   # Release upgrade — the first thing run in the guest, before anything is
@@ -124,7 +124,7 @@ build {
   #
   # Inline rather than a script file: the body is glue. Every decision it could
   # encode — which release, the two-release ceiling, the apt no-op, the unknown
-  # family — lives in distro-lib.sh's pkg_release_upgrade, where it is tested.
+  # family — lives in family-lib.sh's pkg_release_upgrade, where it is tested.
   #
   # ALONE IN THIS BLOCK, AND NOTHING MAY FOLLOW IT. pkg_release_upgrade reboots
   # the guest and never returns: `dnf offline reboot` only SCHEDULES the reboot,
@@ -141,7 +141,7 @@ build {
     expect_disconnect = true
     inline = [
       "set -euo pipefail",
-      "source /tmp/distro-lib.sh",
+      "source /tmp/family-lib.sh",
       "pkg_release_upgrade",
     ]
   }
@@ -149,15 +149,15 @@ build {
   # ─────────────────────────────────────────────────────────────────────────────
   # EVERY upload below this line must STAY below it. The reboot above empties
   # /tmp, so anything staged earlier is gone before a provisioner can read it —
-  # a build that gets this wrong dies at 00-base.sh with a missing distro-lib.sh.
-  # That is why distro-lib.sh is uploaded twice: the copy above serves the
+  # a build that gets this wrong dies at 00-base.sh with a missing family-lib.sh.
+  # That is why family-lib.sh is uploaded twice: the copy above serves the
   # upgrade, this one serves everything after the reboot.
   # ─────────────────────────────────────────────────────────────────────────────
 
-  # Distro abstraction, sourced by every system provisioner — must land before they run.
+  # Package-family abstraction, sourced by every system provisioner — must land before they run.
   provisioner "file" {
-    source      = "shared/linux/scripts/distro-lib.sh"
-    destination = "/tmp/distro-lib.sh"
+    source      = "shared/linux/scripts/family-lib.sh"
+    destination = "/tmp/family-lib.sh"
   }
 
   # DE × family abstraction for the optional GUI layer, sourced by gui.sh.

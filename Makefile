@@ -97,7 +97,7 @@ check-distro:
 		exit 1; \
 	fi
 	@if ! grep -qxF "$(DISTRO)" <(grep -vE '^\s*(#|$$)' shared/linux/os); then \
-		echo "ERROR: distro '$(DISTRO)' is not supported. Add it to shared/linux/os (and a branch in distro-lib.sh) first. Supported:" >&2; \
+		echo "ERROR: distro '$(DISTRO)' is not supported. Add it to shared/linux/os (and a branch in family-lib.sh) first. Supported:" >&2; \
 		grep -vE '^\s*(#|$$)' shared/linux/os | sed 's/^/  /' >&2; \
 		exit 1; \
 	fi

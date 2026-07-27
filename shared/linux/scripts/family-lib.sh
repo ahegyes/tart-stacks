@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# distro-lib.sh — package-manager + MAC-posture primitives so the shared/ and
-# stacks/ provisioners never call dnf or apt directly. Families: dnf (Fedora),
-# apt (Debian/Ubuntu). SOURCED, not run — uploaded to /tmp and sourced at the top of
-# each system provisioner, like mise-lib.sh. An unrecognized distro is a hard error.
+# family-lib.sh (linux) — package-manager + MAC-posture primitives for the dnf
+# and apt families, so the shared/ and stacks/ provisioners never call dnf or
+# apt directly. SOURCED, not run — uploaded to a fixed guest path
+# (/tmp/family-lib.sh) so every stack's 00-stack.sh can source one name, and
+# sourced at the top of each system provisioner, like mise-lib.sh. An
+# unrecognized family is a hard error.
 
 # _detect_family — print "dnf"|"apt" from os-release ID/ID_LIKE; rc 1 if neither.
 # Reads $OS_RELEASE (default /etc/os-release) so it is unit-testable, and keeps the
@@ -25,11 +27,11 @@ _detect_family() {
   esac
 }
 
-_DISTRO_FAMILY="$(_detect_family)" || {
-  echo "distro-lib: unrecognized distro (os-release ID/ID_LIKE is neither dnf- nor apt-family)." >&2
+_TART_FAMILY="$(_detect_family)" || {
+  echo "family-lib: unrecognized distro (os-release ID/ID_LIKE is neither dnf- nor apt-family)." >&2
   exit 1
 }
-export _DISTRO_FAMILY
+export _TART_FAMILY
 
 # FEDORA_TARGET_RELEASE — the Fedora release dnf-family images are lifted to before
 # anything is installed on them. The upstream base is published at a fixed release
@@ -54,13 +56,13 @@ FEDORA_TARGET_RELEASE="${FEDORA_TARGET_RELEASE:-44}"
 # it, and nothing may follow this call in the same provisioner block.
 pkg_release_upgrade() {
   local cur target hop
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     apt) return 0 ;;
     dnf) ;;
     # Fail closed rather than fall off the end of the case: a family added without
     # a branch here silently inherits whatever release its base was published at,
     # which is the exact problem this function exists to end.
-    *)   echo "ERROR: no release-upgrade branch for package family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2
+    *)   echo "ERROR: no release-upgrade branch for package family '$_TART_FAMILY' — add one before shipping images for it." >&2
          return 1 ;;
   esac
 
@@ -98,7 +100,7 @@ pkg_release_upgrade() {
 
 # pkg_refresh — refresh metadata + apply pending upgrades.
 pkg_refresh() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf upgrade -y --refresh ;;
     apt) export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get upgrade -y ;;
   esac
@@ -106,7 +108,7 @@ pkg_refresh() {
 
 # pkg_install <pkg…> — install required packages; fail if any is missing.
 pkg_install() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf install -y "$@" ;;
     apt) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
   esac
@@ -119,7 +121,7 @@ pkg_install() {
 # post-check is: an exact-name query reads a compat rename as absent, and the one
 # caller then silently drops a capability the image is carrying.
 pkg_installed() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) rpm -q --whatprovides "$1" >/dev/null 2>&1 ;;
     apt) dpkg -s "$1" >/dev/null 2>&1 ;;
   esac
@@ -133,7 +135,7 @@ pkg_installed() {
 # the rpm database; apt's per-package loop knows directly.
 pkg_install_optional() {
   local skipfile="${TART_SKIPPED_FILE:-/tmp/tart-stacks-skipped}" p policy showpkg
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf install -y --skip-unavailable "$@"
          for p in "$@"; do
            # --whatprovides, not the bare name: dnf resolves a renamed package
@@ -141,7 +143,7 @@ pkg_install_optional() {
            # different rpm name. An exact-name post-check cannot see that and
            # would record a capability the image is carrying as skipped.
            rpm -q --whatprovides "$p" >/dev/null 2>&1 || {
-             echo "distro-lib: optional package '$p' unavailable — skipped." >&2
+             echo "family-lib: optional package '$p' unavailable — skipped." >&2
              echo "$p" >> "$skipfile"
            }
          done ;;
@@ -164,7 +166,7 @@ pkg_install_optional() {
              # than drop a capability the archive carries).
              showpkg=$(apt-cache showpkg "$p") || return 1
              if [ -z "$(printf '%s\n' "$showpkg" | awk '/^Reverse Provides:/ { f = 1; next } f && NF { print $1 }')" ]; then
-               echo "distro-lib: optional package '$p' unavailable — skipped." >&2
+               echo "family-lib: optional package '$p' unavailable — skipped." >&2
                echo "$p" >> "$skipfile"
                continue
              fi
@@ -179,7 +181,7 @@ pkg_install_optional() {
 
 # pkg_group_devtools — the compiler + autotools build group.
 pkg_group_devtools() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf group install -y development-tools ;;
     apt) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
            build-essential autoconf automake libtool pkg-config ;;
@@ -188,7 +190,7 @@ pkg_group_devtools() {
 
 # pkg_clean — drop cached package data before the image is locked down.
 pkg_clean() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf clean all ;;
     apt) apt-get clean; rm -rf /var/lib/apt/lists/* ;;
   esac
@@ -198,7 +200,7 @@ pkg_clean() {
 # a repofile (config-manager addrepo, not `copr enable` — that flaked writing the
 # repofile mid-build; gpgcheck stays on). apt: the mise.jdx.dev signed apt repo.
 repo_add_mise() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf)
       local ver; ver="$(rpm -E %fedora)"
       dnf config-manager addrepo --from-repofile="https://copr.fedorainfracloud.org/coprs/jdxcode/mise/repo/fedora-${ver}/jdxcode-mise-fedora-${ver}.repo"
@@ -218,7 +220,7 @@ repo_add_mise() {
 # repo_add_github_cli — gh ships in dnf repos but not apt; add GitHub's signed apt
 # repo there. No-op on dnf (gh comes from the base package set).
 repo_add_github_cli() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) : ;;
     apt)
       export DEBIAN_FRONTEND=noninteractive
@@ -238,7 +240,7 @@ repo_add_github_cli() {
 # published .sha256sum lists the *binary's* hash (not the tarball's), so verify the
 # extracted binary against it, then install to /usr/local/bin (no apt package exists).
 install_zellij() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf copr enable -y "${ZELLIJ_COPR:-varlad/zellij}"; dnf install -y zellij ;;
     apt)
       local tmp asset sum base want bin
@@ -290,12 +292,12 @@ install_guest_agent() {
     x86_64|amd64)  arch=amd64 ;;
     *) echo "ERROR: no tart-guest-agent build for machine type '$(uname -m)'." >&2; return 1 ;;
   esac
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) ext=rpm ;;
     apt) ext=deb ;;
     # Fail closed: a family without a branch would silently keep whatever agent its
     # base shipped, which is the split this function exists to close.
-    *)   echo "ERROR: no tart-guest-agent package mapping for family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
+    *)   echo "ERROR: no tart-guest-agent package mapping for family '$_TART_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
   esac
 
   pkg="tart-guest-agent_${ver}_linux_${arch}.${ext}"
@@ -323,7 +325,7 @@ install_guest_agent() {
     rm -rf "$tmp"; return 1
   fi
 
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf install -y "$tmp/$pkg" ;;
     apt) DEBIAN_FRONTEND=noninteractive apt-get install -y "$tmp/$pkg" ;;
   esac || { echo "ERROR: installing $pkg failed." >&2; rm -rf "$tmp"; return 1; }
@@ -344,7 +346,7 @@ install_guest_agent() {
 # a build must not pass by falling off the end of a case.
 assert_mac_enforcing() {
   local m n
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) m="$(getenforce 2>/dev/null)" \
            || { echo "ERROR: getenforce failed or is unavailable — cannot confirm SELinux is enforcing." >&2; return 1; }
          [ "$m" = "Enforcing" ] || { echo "ERROR: SELinux is '${m:-unavailable}', expected 'Enforcing' — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
@@ -352,7 +354,7 @@ assert_mac_enforcing() {
            || { echo "ERROR: 'aa-status --enforced' failed or is unavailable — cannot confirm AppArmor is enforcing." >&2; return 1; }
          case "$n" in ''|*[!0-9]*) n=0 ;; esac
          [ "$n" -gt 0 ] || { echo "ERROR: AppArmor has no enforce-mode profiles — the base image's MAC posture regressed (inherited, not set by tart-stacks)." >&2; return 1; } ;;
-    *)   echo "ERROR: no MAC assertion for package family '$_DISTRO_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
+    *)   echo "ERROR: no MAC assertion for package family '$_TART_FAMILY' — add one before shipping images for it." >&2; return 1 ;;
   esac
 }
 
@@ -382,7 +384,7 @@ assert_release_supported() {
   echo "       Its repositories are no longer patched and are eventually purged, so this" >&2
   echo "       image would ship on a release nothing maintains — and the build that finally" >&2
   echo "       breaks would fail somewhere unrelated, long after the cause." >&2
-  echo "       On the dnf family, raise FEDORA_TARGET_RELEASE in shared/linux/scripts/distro-lib.sh" >&2
+  echo "       On the dnf family, raise FEDORA_TARGET_RELEASE in shared/linux/scripts/family-lib.sh" >&2
   echo "       (at most two releases above the base image's own) and rebuild." >&2
   return 1
 }

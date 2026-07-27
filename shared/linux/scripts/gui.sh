@@ -10,7 +10,7 @@
 # RAM only on boots that opt in. Runs as root via sudo from Packer.
 set -euo pipefail
 # shellcheck source=/dev/null
-source /tmp/distro-lib.sh
+source /tmp/family-lib.sh
 # shellcheck source=/dev/null
 source /tmp/gui-lib.sh
 
@@ -93,7 +93,7 @@ cat > /etc/tigervnc/vncserver.users <<EOF
 EOF
 
 install -d -m 700 -o "${TARGET_USER}" -g "${TARGET_USER}" "${TARGET_HOME}/.vnc"
-case "$_DISTRO_FAMILY" in
+case "$_TART_FAMILY" in
   dnf)
     # vncsession(8) grammar: one Xvnc option per line, no leading dash.
     cat > "${TARGET_HOME}/.vnc/config" <<EOF
@@ -134,7 +134,7 @@ Type=forking
 ExecStart=$(gui_vncsession_start) :1
 PIDFile=$(gui_vncsession_pidfile)
 EOF
-  if [ "$_DISTRO_FAMILY" = "dnf" ]; then
+  if [ "$_TART_FAMILY" = "dnf" ]; then
     echo "ExecStartPre=+/usr/libexec/vncsession-restore :1"
     echo "SELinuxContext=system_u:system_r:vnc_session_t:s0"
   fi
@@ -270,7 +270,7 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 # base image's renderer (systemd-networkd / ifupdown) already owns the
 # primary interface; unmanaged ethernet prevents a second DHCP client from
 # fighting it. On dnf NetworkManager IS the base's manager — leave it alone.
-if [ "$_DISTRO_FAMILY" = "apt" ] && [ -d /etc/NetworkManager ]; then
+if [ "$_TART_FAMILY" = "apt" ] && [ -d /etc/NetworkManager ]; then
   install -d -m 755 /etc/NetworkManager/conf.d
   cat > /etc/NetworkManager/conf.d/tart-stacks-unmanaged.conf <<'EOF'
 # tart-stacks GUI layer — the base image's network renderer keeps sole

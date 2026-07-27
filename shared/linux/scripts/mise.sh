@@ -3,7 +3,7 @@
 # install later via mise-install.sh, after mise.toml is uploaded. Runs as root.
 set -euo pipefail
 # shellcheck source=/dev/null
-source /tmp/distro-lib.sh
+source /tmp/family-lib.sh
 
 echo "==> Installing mise..."
 repo_add_mise

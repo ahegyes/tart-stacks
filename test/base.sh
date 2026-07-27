@@ -34,7 +34,7 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 GATE="$WORK/gate.sh"
 {
   printf 'set -euo pipefail\n'
-  # The region calls into distro-lib.sh, which the real script sources above the
+  # The region calls into family-lib.sh, which the real script sources above the
   # window and the fixture does not have. Supplied here alongside the shell options
   # for the same reason: to run the block under the shape production gives it.
   # Its status is a knob rather than a fixed 0 so the call itself stays measurable —

@@ -25,7 +25,7 @@
 
 set -euo pipefail
 # shellcheck source=/dev/null
-source /tmp/distro-lib.sh
+source /tmp/family-lib.sh
 
 TARGET_USER="${SUDO_USER:-admin}"
 TARGET_HOME="/home/${TARGET_USER}"
@@ -49,7 +49,7 @@ pkg_clean
 # latest tools), so record what they RESOLVED to — "what is this image
 # carrying?" must be answerable from a clone without booting and inspecting
 # tool-by-tool. Staged fragments: /tmp/tart-stacks-tools (mise-install) and
-# /tmp/tart-stacks-skipped (distro-lib's optional-install skips). STACK/DISTRO
+# /tmp/tart-stacks-skipped (family-lib's optional-install skips). STACK/DISTRO
 # arrive as environment_vars from the Packer template.
 echo "==> Writing /etc/tart-stacks-release..."
 {
