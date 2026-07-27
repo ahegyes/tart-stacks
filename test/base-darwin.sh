@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# Behavioral tests for shared/darwin/scripts/00-base.sh's os/release/agent
-# asserts — the checks that must stop the build before any package work runs.
-# Whether the guest itself is Darwin is family-lib.sh's assertion, not this
-# script's, and lives in test/family-lib-darwin.sh; the window extracted below
-# starts after that line for exactly this reason. The rest of 00-base.sh needs
-# a booted macOS guest (brew, sudo), so only this region is driven here; the
+# Behavioral tests for shared/darwin/scripts/00-base.sh: the os/release/agent
+# asserts that must stop the build before any package work runs, plus (below)
+# a static check that it pre-creates ~/.config/mise/ for the mise.toml upload
+# later in the pipeline. That pre-creation exists because a real build once
+# failed there: Packer's file provisioner does not create intermediate
+# destination directories, and this script is darwin's only mise-owning
+# script (mise ships in the Cirrus base, so there is no repo-add step the way
+# linux's mise.sh has — see its comment below), so it is where the
+# pre-creation has to live. Whether the guest itself is Darwin is
+# family-lib.sh's assertion, not this script's, and
+# lives in test/family-lib-darwin.sh; the window extracted below starts after
+# that line for exactly this reason. The rest of 00-base.sh needs a booted
+# macOS guest (brew, sudo, a real filesystem to chown), so only the assert
+# region is driven by execution — the mise-dir case below is a static check
+# against the shipped source instead, proven non-vacuous by mutation. The
 # shipped block is READ OUT of the script rather than restated, so weakening
 # it changes what these cases measure. Plain bash, no framework — same
 # technique as test/base-linux.sh, its linux peer.
@@ -113,6 +122,53 @@ assert_eq "unsupported release → build refused" \
 # shipped whatever agent components their base happened to carry.
 assert_eq "incomplete guest agent → build refused" \
   "refuse" "$(gate_verdict macos 0 1)"
+
+# mise_dir_check <file> — sets $MISE_DIR_LINE (whatever install -d
+# .../.config/mise line, if any, <file> contains) and $MISE_DIR_VERDICT
+# (pass/fail: owned by TART_BUILD_USER:staff). Static text match against the
+# file's own line, not execution: doing this for real would need root and a
+# writable /Users on the runner, neither of which CI has. Called directly,
+# never through $(...) — a command substitution would run the call in a
+# subshell and lose both globals, the same trap gate_verdict above avoids by
+# leaving GATE_ERR to a direct call rather than a captured one.
+MISE_DIR_LINE=""
+MISE_DIR_VERDICT=""
+mise_dir_check() {
+  MISE_DIR_LINE=$(grep -E 'install -d .*\.config/mise"?$' "$1" || true)
+  # shellcheck disable=SC2016  # matching 00-base.sh's own literal text, not expanding this shell's TART_BUILD_USER
+  case "$MISE_DIR_LINE" in
+    *'-o "$TART_BUILD_USER"'*'-g staff'*) MISE_DIR_VERDICT="pass" ;;
+    *) MISE_DIR_VERDICT="fail" ;;
+  esac
+}
+
+echo
+echo "00-base.sh — pre-creates ~/.config/mise/ before the mise.toml upload:"
+
+mise_dir_check "$BASE"
+assert_eq "the shipped script creates it, owned by TART_BUILD_USER:staff" \
+  "pass" "$MISE_DIR_VERDICT"
+echo "         matched: ${MISE_DIR_LINE# }"
+
+# Mutation 1: the group regresses to a linux-style guess (a user-private
+# group, or root — what `install -d` defaults to with no -g at all). Printing
+# the mutated line proves the sed pattern matched real content and actually
+# changed it, rather than silently matching nothing and leaving the case
+# trivially green.
+sed 's/-g staff/-g admin/' "$BASE" > "$WORK/00-base-wrong-group.sh"
+mise_dir_check "$WORK/00-base-wrong-group.sh"
+assert_eq "a -g admin regression (wrong group) is caught" \
+  "fail" "$MISE_DIR_VERDICT"
+echo "         mutated line: ${MISE_DIR_LINE# }"
+
+# Mutation 2: the line is gone entirely — the actual real-build failure this
+# case exists to catch a repeat of (Packer's scp upload aborted with "No such
+# file or directory" against a guest whose ~/.config/mise never got created).
+grep -v 'install -d .*\.config/mise' "$BASE" > "$WORK/00-base-no-predir.sh"
+mise_dir_check "$WORK/00-base-no-predir.sh"
+assert_eq "no pre-creation at all is caught" \
+  "fail" "$MISE_DIR_VERDICT"
+echo "         mutated file: $(grep -c 'install -d' "$WORK/00-base-no-predir.sh" || true) 'install -d' line(s) left (want 0)"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

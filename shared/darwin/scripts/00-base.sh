@@ -41,6 +41,18 @@ if ! command -v mise >/dev/null 2>&1; then
   pkg_install mise
 fi
 
+# Pre-create ~/.config/mise/ for the mise.toml upload later in this build:
+# Packer's file provisioner does not create intermediate destination
+# directories, and this script is where that upload's directory belongs —
+# the linux peer does the equivalent inside mise.sh, its own mise-owning
+# script; darwin has no mise.sh (see above), so this is that script here.
+# Owned by TART_BUILD_USER (family-lib.sh), not root: this runs as root via
+# sudo, but the later unprivileged mise-install.sh must be able to write
+# inside it. `staff`, not a user-private group — macOS has no per-user group
+# the way linux does.
+echo "==> Pre-creating ~/.config/mise/ for the mise.toml upload..."
+install -d -o "$TART_BUILD_USER" -g staff "/Users/${TART_BUILD_USER}/.config/mise"
+
 echo "==> Installing core tooling..."
 pkg_install zellij jq
 
