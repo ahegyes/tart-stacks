@@ -2,7 +2,7 @@
 
 [![validate](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml/badge.svg)](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml)
 
-Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported distro (Fedora, Ubuntu, Debian — see `shared/distros`), producing a `<distro>-<stack>` image. Any stack can additionally be built as a **GUI flavor** (`GUI=1 DE=kde|gnome|xfce`) — a desktop environment + loopback-only VNC layer baked on top, producing `<distro>-<stack>-<de>`; the boot contract lives in [shared/gui/README.md](./shared/gui/README.md). Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
+Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported distro (Fedora, Ubuntu, Debian — see `shared/linux/os`), producing a `<distro>-<stack>` image. Any stack can additionally be built as a **GUI flavor** (`GUI=1 DE=kde|gnome|xfce`) — a desktop environment + loopback-only VNC layer baked on top, producing `<distro>-<stack>-<de>`; the boot contract lives in [shared/gui/README.md](./shared/gui/README.md). Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
 
 ## Stacks
 
@@ -11,7 +11,7 @@ Multi-distro, multi-stack collection of [Tart](https://tart.run/) base images fo
 | `php` | `<distro>-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/php/](./stacks/php/README.md) |
 | `jvm` | `<distro>-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/jvm/](./stacks/jvm/README.md) |
 
-`<distro>` is the distribution token (e.g. `fedora`). `shared/distros` lists the supported values.
+`<distro>` is the distribution token (e.g. `fedora`). `shared/linux/os` lists the supported values.
 
 All stacks share a common base: mise + zellij + standard dev utilities, wired through a distro-abstraction layer (`shared/scripts/distro-lib.sh`) that handles dnf (Fedora) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
@@ -206,7 +206,7 @@ tart list                             # confirm fedora-php is present
 
 **Pin a base image tag:** `IMAGE_TAG=42 make bootstrap DISTRO=fedora`. Cirrus publishes `latest` and version-pinned tags per distro.
 
-**GUI flavor.** Add `GUI=1` (and optionally `DE=kde|gnome|xfce`, default `kde` — see `shared/desktops`) to bake a desktop environment, display manager, and a loopback-only VNC server on top of the same stack:
+**GUI flavor.** Add `GUI=1` (and optionally `DE=kde|gnome|xfce`, default `kde` — see `shared/linux/desktops`) to bake a desktop environment, display manager, and a loopback-only VNC server on top of the same stack:
 
 ```bash
 make build STACK=php DISTRO=fedora GUI=1 DE=kde    # builds fedora-php-kde (~+10 min, ~+2 GB)
@@ -305,16 +305,16 @@ nobody is talking to.
 
 1. `make scaffold STACK=<name>` — stamps `stacks/<name>/` from `templates/stack/`: a generic `00-stack.sh` (reads `packages.<family>` for the build distro), a `mise-install.sh` with a hard-gate smoke test, `files/mise.toml`, `packages.dnf`, `packages.apt`, and a `README.md`. One parameterized root `stack.pkr.hcl` already covers every stack — there's no per-stack Packer file to write.
 2. Edit `files/mise.toml` (tool versions) and `scripts/mise-install.sh` (install + smoke test). If the stack needs native build deps (e.g., compile-from-source runtimes), add them to `packages.dnf` (Fedora/dnf names) and `packages.apt` (Debian/Ubuntu/apt names) — keep the two files aligned.
-3. `make build STACK=<name> DISTRO=<distro>` — or `packer validate -var stack=<name> -var distro=<distro> stack.pkr.hcl` for a fast HCL pre-check. `<distro>` must appear in `shared/distros`.
-4. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/*/` and cross-products with `shared/distros` — no workflow edit needed.
+3. `make build STACK=<name> DISTRO=<distro>` — or `packer validate -var stack=<name> -var distro=<distro> stack.pkr.hcl` for a fast HCL pre-check. `<distro>` must appear in `shared/linux/os`.
+4. Add a row to the stack table at the top of this README. CI auto-discovers `stacks/*/` and cross-products with `shared/linux/os` — no workflow edit needed.
 
 ## Adding a distro
 
-1. Add the distro token (one line) to `shared/distros`.
+1. Add the distro token (one line) to `shared/linux/os`.
 2. Confirm a `ghcr.io/cirruslabs/<distro>` Tart image exists (Cirrus must publish it).
 3. Another **apt-family** distro needs nothing further — the apt branch is portable apt/dpkg only, so a Debian or Ubuntu derivative works with the steps above. The dnf branch is **Fedora-specific** (`rpm -E %fedora` builds a Fedora-release COPR URL, plus `copr enable` and the `development-tools` group), so an enterprise rebuild such as `rocky` is refused by `_detect_family` rather than failed partway through a build. A **new package family** is a code change, not configuration: add a branch to `shared/scripts/distro-lib.sh` exporting `_DISTRO_FAMILY` and implementing `pkg_install`, `pkg_install_optional`, `pkg_group_devtools`, `pkg_refresh`, `pkg_clean` and the relevant `repo_add_*` functions — plus `pkg_release_upgrade`, `install_guest_agent` and `assert_mac_enforcing`, which deliberately fail closed for a family they have no branch for rather than letting it inherit an unmanaged release, an unmanaged guest agent, or an unverified MAC posture; add a `packages.<family>` file to each stack; and add a matching `provisioner "file"` block to `stack.pkr.hcl`, which uploads `packages.dnf`/`packages.apt` by name — without it `00-stack.sh` reads the absent file as an empty package list and installs nothing.
 4. For each stack that has native build deps, add the equivalent packages to `packages.<new-family>` in that stack's directory.
-5. CI picks up the new distro automatically (matrix is `stacks/*` × `shared/distros`).
+5. CI picks up the new distro automatically (matrix is `stacks/*` × `shared/linux/os`).
 
 ## Troubleshooting
 

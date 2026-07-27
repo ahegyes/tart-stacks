@@ -24,9 +24,9 @@ ERR="$WORK/err"
 # what makes the blast radius the tmpdir. The copy is made fresh from the real
 # Makefile each run, so a deliberate mutation of it still shows up here.
 SANDBOX="$WORK/repo"
-mkdir -p "$SANDBOX/shared"
+mkdir -p "$SANDBOX/shared/linux"
 cp "$REPO/Makefile" "$SANDBOX/"
-cp "$REPO/shared/distros" "$REPO/shared/desktops" "$SANDBOX/shared/"
+cp "$REPO/shared/linux/os" "$REPO/shared/linux/desktops" "$SANDBOX/shared/linux/"
 cp -R "$REPO/stacks" "$REPO/templates" "$SANDBOX/"
 
 gate() { # <target> <VAR=VALUE…> — rc in $rc, stderr in $ERR
@@ -81,10 +81,10 @@ assert_rejects "unsupported DISTRO rejected" check-distro DISTRO=arch
 distro_cases=0
 while IFS= read -r d; do
   distro_cases=$((distro_cases + 1))
-  assert_accepts "shared/distros token '$d' accepted" check-distro DISTRO="$d"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/distros")
-if [ "$distro_cases" -gt 0 ]; then ok "shared/distros contributed $distro_cases case(s)"
-else bad "shared/distros contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+  assert_accepts "shared/linux/os token '$d' accepted" check-distro DISTRO="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
+if [ "$distro_cases" -gt 0 ]; then ok "shared/linux/os contributed $distro_cases case(s)"
+else bad "shared/linux/os contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
 # GUI is read by `$(if $(GUI),…)`, where make truthiness would treat GUI=0 as ON.
 echo "Makefile — check-gui:"
@@ -102,10 +102,10 @@ assert_accepts "an unsupported DE is ignored without GUI" check-de DE=cinnamon
 de_cases=0
 while IFS= read -r de; do
   de_cases=$((de_cases + 1))
-  assert_accepts "shared/desktops token '$de' accepted with GUI=1" check-de GUI=1 DE="$de"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
-if [ "$de_cases" -gt 0 ]; then ok "shared/desktops contributed $de_cases case(s)"
-else bad "shared/desktops contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+  assert_accepts "shared/linux/desktops token '$de' accepted with GUI=1" check-de GUI=1 DE="$de"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/desktops")
+if [ "$de_cases" -gt 0 ]; then ok "shared/linux/desktops contributed $de_cases case(s)"
+else bad "shared/linux/desktops contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
 echo "Makefile — scaffold refuses to overwrite:"
 assert_rejects "scaffold over an existing stack rejected" scaffold STACK=php

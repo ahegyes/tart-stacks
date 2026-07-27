@@ -21,7 +21,7 @@ jobs:
           shopt -s nullglob
           stacks=(); for d in stacks/*/; do stacks+=("$(basename "$d")"); done
           distros=(); while IFS= read -r line; do distros+=("$line"); done \
-            < <(grep -vE '^[[:space:]]*(#|$)' shared/distros)
+            < <(grep -vE '^[[:space:]]*(#|$)' shared/linux/os)
           jq -nc \
             --argjson s "$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)" \
             --argjson d "$(printf '%s\n' "${distros[@]}" | jq -R . | jq -sc .)" \

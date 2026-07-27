@@ -6,7 +6,7 @@
 # hard error, like an unrecognized distro in distro-lib.
 
 # gui_require_de <de> — hard-fail unless this lib has branches for <de>.
-# Keep the set in lockstep with shared/desktops (the Makefile validates
+# Keep the set in lockstep with shared/linux/desktops (the Makefile validates
 # against the file; this is the in-VM backstop for direct packer invocations).
 gui_require_de() {
   case "$1" in

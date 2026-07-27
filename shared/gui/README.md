@@ -183,7 +183,7 @@ fights or bypasses it:
 The DE token is the axis this layer varies on, so a new one touches every
 selector rather than a config file:
 
-1. Add the token to `shared/desktops` (that is what `tart-new`, the Makefile's
+1. Add the token to `shared/linux/desktops` (that is what `tart-new`, the Makefile's
    `check-de`, and the base-image guard read).
 2. Check `gui_require_cell` in `shared/scripts/gui-lib.sh`: if the DE cannot ship
    an X11 session on some family, refuse that cell there rather than letting the
@@ -196,13 +196,13 @@ selector rather than a config file:
 4. If the desktop needs anything baked beyond packages (a panel layout, an
    autologin stanza), add it to the `case "$DE"` in `shared/scripts/gui.sh`.
 5. Extend `test/gui-lib.sh` (the selectors are asserted in lockstep with
-   `shared/desktops`, so an unlisted token fails there) and
+   `shared/linux/desktops`, so an unlisted token fails there) and
    `test/display-scale.sh`.
 6. Build the cell and add it to the matrix below with an honest status.
 
 ## Support matrix
 
-`DE` must be a line in `shared/desktops`; the layer is Xvnc-based, so a cell
+`DE` must be a line in `shared/linux/desktops`; the layer is Xvnc-based, so a cell
 needs its DE to ship an X11 session — a cell that doesn't **fails loud at
 build time** (preflight or the post-install session assert), it never bakes a
 desktop that can't start.

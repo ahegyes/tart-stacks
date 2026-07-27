@@ -23,7 +23,7 @@ with_family() {
     "$@" ) 2>/dev/null
 }
 
-echo "gui-lib — every shared/desktops DE resolves on both families:"
+echo "gui-lib — every shared/linux/desktops DE resolves on both families:"
 while IFS= read -r de; do
   for fam in dnf apt; do
     pkgs="$(with_family "$fam" gui_packages "$de")"
@@ -38,7 +38,7 @@ while IFS= read -r de; do
   done
   sess="$(with_family dnf gui_session_candidates "$de")"
   if [ -n "$sess" ]; then ok "$de session candidates non-empty"; else bad "$de session candidates non-empty" "want » candidates « got » (empty) «"; fi
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/desktops")
 
 echo "gui-lib — family-keyed VNC machinery:"
 assert_eq "dnf session starter" "/usr/libexec/vncsession-start"      "$(with_family dnf gui_vncsession_start)"
@@ -96,12 +96,12 @@ for cell in dnf/kde dnf/xfce apt/kde apt/gnome apt/xfce; do
   assert_eq "$cell accepted" 0 "$rc"
 done
 
-# The lib's supported set and shared/desktops must not drift apart: the
+# The lib's supported set and shared/linux/desktops must not drift apart: the
 # Makefile validates against the file, the lib is the in-VM backstop.
-echo "gui-lib — shared/desktops ↔ gui_require_de lockstep:"
+echo "gui-lib — shared/linux/desktops ↔ gui_require_de lockstep:"
 while IFS= read -r de; do
   with_family dnf gui_require_de "$de"; rc=$?
   assert_eq "desktops-file token '$de' accepted by lib" 0 "$rc"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/desktops")
 
 echo; echo "  $pass passed, $fail failed"; [ "$fail" -eq 0 ]

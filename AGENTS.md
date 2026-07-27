@@ -1,6 +1,6 @@
 # tart-stacks
 
-Multi-distro, multi-stack collection of Packer templates that build Tart base VM images preconfigured for various language toolchains on Apple Silicon. Supports Fedora, Ubuntu, and Debian (all listed in `shared/distros`). Each stack is cloned per-project; each project VM is independent of the base.
+Multi-distro, multi-stack collection of Packer templates that build Tart base VM images preconfigured for various language toolchains on Apple Silicon. Supports Fedora, Ubuntu, and Debian (all listed in `shared/linux/os`). Each stack is cloned per-project; each project VM is independent of the base.
 
 ## What's here
 
@@ -38,14 +38,15 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   ├── kde-panel.sh                    # Behavioral tests for kde-panel.sh against synthetic Plasma 5/6 templates (anchor counts, launcher gates, indentation, rerun stability)
 │   ├── parsing.sh                      # Characterization tests for the tart-up + tart-ssh-sync config-line parsers
 │   ├── mise-lib.sh                     # Characterization tests for mise-lib's two hard gates: smoke_gate (argv-group grammar, word-split safety, hard-fail path) and membership_gate (line-anchored `php -m` matching, incl. the warning-polluted stdout fixture)
-│   ├── gui-lib.sh                      # Characterization tests for gui-lib's DE × family selectors + the shared/desktops ↔ gui_require_de lockstep
+│   ├── gui-lib.sh                      # Characterization tests for gui-lib's DE × family selectors + the shared/linux/desktops ↔ gui_require_de lockstep
 │   ├── gui.sh                          # Behavioral tests for gui.sh's X11-session gate — the shipped block lifted out and run against fixture xsessions dirs: candidate preference (plasmax11 over plasma), the Plasma-5 and Plasma-6 shapes both measured on real images, Wayland-only and empty guests refused, and the refusal naming the release and the sessions that DID materialize
 │   ├── finalize.sh                     # Behavioral tests for 99-finalize.sh's anti-lockout key gate: every private-key format refused, a pubkey whose comment says PRIVATE KEY accepted, and both gates ordered ahead of the install and `passwd -l`
 │   ├── makefile.sh                     # Behavioral tests for the Makefile's check-* gates (the only thing between a mistyped selector and bootstrap's destructive base re-clone); invokes the gate targets only — never build/bootstrap/smoke
 │   └── distro-lib.sh                   # Characterization tests for distro-lib: _detect_family (os-release ID → dnf, ID/ID_LIKE → apt), pkg_install_optional skip recording (incl. the compat-Provides and virtual-package cases), assert_mac_enforcing, pkg_release_upgrade (commands issued and their order, the apt no-op, the idempotent and already-ahead cases, the N→N+2 refusal landing before any download, and that the post-reboot wait stays finite), assert_release_supported (past/today/future, an absent SUPPORT_END as a skip, and the refusal naming release, dates and the knob), and install_guest_agent (per-family package name, arch mapping, and the three refusals that must land before the package manager is reached: sha256 mismatch, a package the checksums file does not list, and a failed download)
 ├── shared/                             # Stack-agnostic — runs verbatim in every stack's build
-│   ├── distros                         # Supported distro tokens, one per line; consumed by the Makefile, tart-new, the bin/ base-image guard, and the CI matrix
-│   ├── desktops                        # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de), tart-new (+ its zsh completion), and the bin/ base-image guard
+│   ├── linux/                          # Linux platform's token lists — grouped under the platform they build, not the repo root
+│   │   ├── os                          # Supported operating systems, one per line; consumed by the Makefile (check-distro), tart-new, tart-up, bin/lib/common.sh, and the CI matrix
+│   │   └── desktops                    # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de), tart-new (+ its zsh completion), and the bin/ base-image guard
 │   ├── gui/README.md                   # GUI-flavor image contract (engine-facing): boot modes, VNC surface, support matrix; change with gui.sh/gui-lib.sh
 │   ├── scripts/
 │   │   ├── 00-base.sh                  # First script (the release upgrade ahead of it is an inline block in stack.pkr.hcl, not a file). Asserts the guest's os-release ID and that its release is not past support end, installs the pinned tart-guest-agent and asserts the unit is enabled AND running, then system update + core dev pkgs + build toolchain + zellij via distro-lib.sh (root)
@@ -79,7 +80,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 └── .github/
     ├── dependabot.yml                  # Weekly grouped github-actions bumps only (no Packer-plugin ecosystem — that pin is bounded in stack.pkr.hcl, bumped by hand)
     └── workflows/
-        └── validate.yml                # packer validate + shellcheck (scripts AND scaffold templates) + the test suite, on push/PR to trunk; the packer matrix covers every stacks/* × shared/distros cell
+        └── validate.yml                # packer validate + shellcheck (scripts AND scaffold templates) + the test suite, on push/PR to trunk; the packer matrix covers every stacks/* × shared/linux/os cell
 ```
 
 ## Conventions
@@ -96,7 +97,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 
 ## Build pipeline — load-order rules
 
-The root `stack.pkr.hcl` (one parameterized template, built with `make build STACK=<name> DISTRO=<distro>` from the repo root) defines the provisioner chain combining shared and stack-specific scripts. `DISTRO` is mandatory — there is no default. The supported distros are listed in `shared/distros`. Two scripts have hard ordering constraints — `shared/scripts/00-base.sh` must run first and `shared/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. One step runs even earlier and is deliberately **not** a script: an inline `provisioner "shell"` at the top of the build block calls `pkg_release_upgrade` (from `distro-lib.sh`) to lift the guest to the release the image ships as. It leads because `00-base.sh`'s first act is a full system update, which on a release about to be replaced downloads packages the upgrade then discards. It stays inline because its body is glue — every decision lives in `distro-lib.sh`, where it is tested — and it must stay **alone** in its block with `expect_disconnect = true`, since it reboots the guest and never returns. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block; it sources `shared/scripts/distro-lib.sh` and reads the stack's `packages.<family>` file to install native build deps in a distro-agnostic way.
+The root `stack.pkr.hcl` (one parameterized template, built with `make build STACK=<name> DISTRO=<distro>` from the repo root) defines the provisioner chain combining shared and stack-specific scripts. `DISTRO` is mandatory — there is no default. The supported distros are listed in `shared/linux/os`. Two scripts have hard ordering constraints — `shared/scripts/00-base.sh` must run first and `shared/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. One step runs even earlier and is deliberately **not** a script: an inline `provisioner "shell"` at the top of the build block calls `pkg_release_upgrade` (from `distro-lib.sh`) to lift the guest to the release the image ships as. It leads because `00-base.sh`'s first act is a full system update, which on a release about to be replaced downloads packages the upgrade then discards. It stays inline because its body is glue — every decision lives in `distro-lib.sh`, where it is tested — and it must stay **alone** in its block with `expect_disconnect = true`, since it reboots the guest and never returns. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block; it sources `shared/scripts/distro-lib.sh` and reads the stack's `packages.<family>` file to install native build deps in a distro-agnostic way.
 
 `shared/scripts/distro-lib.sh` is the package-manager abstraction layer. It detects the package family from `/etc/os-release` (`dnf` for Fedora — ID only, since that branch is Fedora-specific; `apt` for Debian/Ubuntu and their derivatives, via ID_LIKE too) and exposes functions (`pkg_install`, `pkg_refresh`, `repo_add_mise`, `install_zellij`, etc.) that every provisioner uses. Provisioners do not call `dnf` or `apt` directly; the family-abstraction libraries (`distro-lib.sh`, `gui-lib.sh`) are where those calls live.
 

@@ -1,9 +1,11 @@
-# shared/desktops — desktop environments the optional GUI layer can bake
+# shared/linux/desktops — desktop environments the optional GUI layer can bake
 # (`make build … GUI=1 DE=<de>`). One token per line; '#' comments and blank
 # lines ignored. A supported DE needs a branch per package family in
-# shared/scripts/gui-lib.sh. Not every distro × DE cell is buildable — the
+# shared/linux/scripts/gui-lib.sh. Not every distro × DE cell is buildable — the
 # support matrix lives in shared/gui/README.md; an unbuildable cell fails
 # loud at build time.
+# Linux-only by construction: the darwin platform has no DE axis (its desktop is
+# intrinsic), which is why there is no shared/darwin/desktops peer.
 # Consumed by: Makefile (check-de), bin/tart-new (de validation; completion
 # via completions/_tart-new), bin/lib/common.sh (base-image guard).
 kde

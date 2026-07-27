@@ -4,12 +4,12 @@ SHELL := /bin/bash
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php DISTRO=fedora`.
 STACK ?=
 
-# Distro selector. Required for build/rebuild/bootstrap. Must be a line in shared/distros.
+# Distro selector. Required for build/rebuild/bootstrap. Must be a line in shared/linux/os.
 DISTRO ?=
 
 # GUI flavor. Optional: GUI=1 bakes the desktop layer (shared/scripts/gui.sh)
 # and names the image <distro>-<stack>-<de>; DE picks the desktop (a line in
-# shared/desktops). e.g. `make build STACK=php DISTRO=fedora GUI=1 DE=kde`.
+# shared/linux/desktops). e.g. `make build STACK=php DISTRO=fedora GUI=1 DE=kde`.
 # Strictly literal — check-gui rejects every other non-empty value: make
 # truthiness would read GUI=0 as ON, and an exported GUI in the caller's
 # environment must not silently flip a 40-min build either way.
@@ -40,10 +40,10 @@ help:
 	@echo "  make smoke STACK=<name> DISTRO=<distro>   Smoke-test a BUILT image end-to-end: clone, boot a real VM (~1 min), guest agent, ssh, assert, destroy. Local-only — never run in CI. GUI=1 [DE=<de>] smokes the GUI flavor"
 	@echo "  make clean                                Remove Packer build artifacts"
 	@echo ""
-	@echo "  DISTRO — required distro token (e.g. fedora). Must be listed in shared/distros."
+	@echo "  DISTRO — required distro token (e.g. fedora). Must be listed in shared/linux/os."
 	@echo "  IMAGE_TAG — override the base image tag (default: latest). e.g. IMAGE_TAG=42 make bootstrap DISTRO=fedora"
 	@echo "  GUI=1 — bake the desktop layer into build/rebuild (strictly 1 or unset); the image becomes <distro>-<stack>-<de>. See shared/gui/README.md"
-	@echo "  DE — desktop for GUI=1 (default: kde). Must be listed in shared/desktops. e.g. make build STACK=php DISTRO=fedora GUI=1 DE=xfce"
+	@echo "  DE — desktop for GUI=1 (default: kde). Must be listed in shared/linux/desktops. e.g. make build STACK=php DISTRO=fedora GUI=1 DE=xfce"
 
 list-stacks:
 	@ls -1 stacks 2>/dev/null | sed 's/^/  /' || echo "  (none)"
@@ -89,16 +89,16 @@ check-stack: check-stack-token
 		exit 1; \
 	fi
 
-# Validate DISTRO is set and supported (a non-comment line in shared/distros).
+# Validate DISTRO is set and supported (a non-comment line in shared/linux/os).
 check-distro:
 	@if [ -z "$(DISTRO)" ]; then \
 		echo "ERROR: DISTRO is required (e.g., make build STACK=php DISTRO=fedora). Supported distros:" >&2; \
-		grep -vE '^\s*(#|$$)' shared/distros | sed 's/^/  /' >&2; \
+		grep -vE '^\s*(#|$$)' shared/linux/os | sed 's/^/  /' >&2; \
 		exit 1; \
 	fi
-	@if ! grep -qxF "$(DISTRO)" <(grep -vE '^\s*(#|$$)' shared/distros); then \
-		echo "ERROR: distro '$(DISTRO)' is not supported. Add it to shared/distros (and a branch in distro-lib.sh) first. Supported:" >&2; \
-		grep -vE '^\s*(#|$$)' shared/distros | sed 's/^/  /' >&2; \
+	@if ! grep -qxF "$(DISTRO)" <(grep -vE '^\s*(#|$$)' shared/linux/os); then \
+		echo "ERROR: distro '$(DISTRO)' is not supported. Add it to shared/linux/os (and a branch in distro-lib.sh) first. Supported:" >&2; \
+		grep -vE '^\s*(#|$$)' shared/linux/os | sed 's/^/  /' >&2; \
 		exit 1; \
 	fi
 
@@ -110,14 +110,14 @@ check-gui:
 		exit 1 ;; \
 	esac
 
-# Validate DE is supported (a non-comment line in shared/desktops) — but only
+# Validate DE is supported (a non-comment line in shared/linux/desktops) — but only
 # when GUI is set: DE is meaningless for headless targets, and `DE ?=` picks
 # up the caller's environment, so an irrelevant stray value must not fail a
 # headless build/smoke.
 check-de:
-	@if [ -n "$(GUI)" ] && ! grep -qxF "$(DE)" <(grep -vE '^\s*(#|$$)' shared/desktops); then \
-		echo "ERROR: desktop '$(DE)' is not supported. Add it to shared/desktops (and branches in gui-lib.sh) first. Supported:" >&2; \
-		grep -vE '^\s*(#|$$)' shared/desktops | sed 's/^/  /' >&2; \
+	@if [ -n "$(GUI)" ] && ! grep -qxF "$(DE)" <(grep -vE '^\s*(#|$$)' shared/linux/desktops); then \
+		echo "ERROR: desktop '$(DE)' is not supported. Add it to shared/linux/desktops (and branches in gui-lib.sh) first. Supported:" >&2; \
+		grep -vE '^\s*(#|$$)' shared/linux/desktops | sed 's/^/  /' >&2; \
 		exit 1; \
 	fi
 

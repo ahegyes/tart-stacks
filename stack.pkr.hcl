@@ -26,7 +26,7 @@ variable "stack" {
 
 variable "distro" {
   type        = string
-  description = "Distro token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/distros and a branch in distro-lib.sh. The built image is <distro>-<stack>, cloned from <distro>-base."
+  description = "Distro token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/linux/os and a branch in distro-lib.sh. The built image is <distro>-<stack>, cloned from <distro>-base."
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.distro))
     error_message = "Distro must be a lowercase alphanumeric token such as fedora, ubuntu, or debian."
@@ -42,7 +42,7 @@ variable "gui" {
 variable "de" {
   type        = string
   default     = "kde"
-  description = "Desktop environment for gui=true. Ignored when gui=false. Must be a line in shared/desktops and a branch in gui-lib.sh (kde, gnome, xfce)."
+  description = "Desktop environment for gui=true. Ignored when gui=false. Must be a line in shared/linux/desktops and a branch in gui-lib.sh (kde, gnome, xfce)."
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.de))
     error_message = "DE must be a lowercase alphanumeric token such as kde, gnome, or xfce."
