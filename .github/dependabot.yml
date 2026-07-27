@@ -1,6 +1,6 @@
 version: 2
 # Only github-actions here: Dependabot has no Packer-plugin ecosystem, so the
-# cirruslabs/tart plugin version is bounded in stack.pkr.hcl and bumped by hand.
+# cirruslabs/tart plugin version is bounded in linux.pkr.hcl and bumped by hand.
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"

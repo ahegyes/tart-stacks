@@ -8,7 +8,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 .
 ├── README.md  CLAUDE.md  AGENTS.md  SECURITY.md  CONTRIBUTING.md  LICENSE
 ├── Makefile                            # Single top-level Makefile; `make setup`/`make uninstall` install/remove the host tools; STACK=<name> DISTRO=<distro> select the cell for build/rebuild/smoke; GUI=1 DE=<de> select the optional GUI flavor
-├── stack.pkr.hcl                       # the Packer template — one parameterized file (`-var stack= -var distro=` + optional `-var gui= -var de=`) builds every stack × distro [× DE]; defines the provisioner chain
+├── linux.pkr.hcl                       # the linux platform's Packer template — one parameterized file (`-var stack= -var distro=` + optional `-var gui= -var de=`) builds every stack × distro [× DE] on this platform; defines the provisioner chain
 ├── .shellcheckrc                       # external-sources=true so shellcheck follows `# shellcheck source=` into bin/lib
 ├── .gitignore                          # Packer build artifacts + editor/OS noise (Tart images live in ~/.tart/, never here)
 ├── bin/
@@ -52,7 +52,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │   │   ├── desktops                    # Desktop tokens the GUI layer can bake, one per line; consumed by the Makefile (check-de), tart-new (+ its zsh completion), and the bin/ base-image guard
 │   │   ├── gui/README.md               # GUI-flavor image contract (engine-facing): boot modes, VNC surface, support matrix; change with gui.sh/gui-lib.sh
 │   │   └── scripts/
-│   │       ├── 00-base.sh              # First script (the release upgrade ahead of it is an inline block in stack.pkr.hcl, not a file). Asserts the guest's os-release ID and that its release is not past support end, installs the pinned tart-guest-agent and asserts the unit is enabled AND running, then system update + core dev pkgs + build toolchain + zellij via family-lib.sh (root)
+│   │       ├── 00-base.sh              # First script (the release upgrade ahead of it is an inline block in linux.pkr.hcl, not a file). Asserts the guest's os-release ID and that its release is not past support end, installs the pinned tart-guest-agent and asserts the unit is enabled AND running, then system update + core dev pkgs + build toolchain + zellij via family-lib.sh (root)
 │   │       ├── 99-finalize.sh          # LAST. Authorize SSH key + sshd drop-in + NOPASSWD sudo + lock admin password; writes the provenance manifest incl. the gui:, support-end: and agent: lines (root)
 │   │       ├── display-scale.sh        # Install template for the per-boot, per-DE guest display-scale applier; gui.sh bakes the DE/account placeholders into /usr/local/bin
 │   │       ├── kde-panel.sh            # Install template for the KDE default-panel launcher pinning; gui.sh runs it for the kde DE only, standalone so its template transform is testable
@@ -66,7 +66,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 │       ├── xterm-ghostty.terminfo      # Ghostty terminfo source; compiled by terminfo.sh into the image
 │       └── zshrc                       # In-VM shell baseline, incl. the zsh-side mise activation; uploaded to /home/admin/.zshrc
 ├── stacks/
-│   ├── php/                            # PHP stack — per-stack content only; the template is the repo-root stack.pkr.hcl
+│   ├── php/                            # PHP stack — per-stack content only; the template is the repo-root linux.pkr.hcl
 │   │   ├── scripts/
 │   │   │   ├── 00-stack.sh             # Runs immediately after shared/00-base.sh; reads packages.<family> via family-lib.sh (root)
 │   │   │   └── mise-install.sh         # Installs PHP/Node from mise.toml + PECL + Composer + smoke test (user)
@@ -79,7 +79,7 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 ├── templates/
 │   └── stack/                          # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/ (README, mise.toml, packages.{dnf,apt}, 00-stack.sh, mise-install.sh — all *.tmpl, __STACK__ substituted)
 └── .github/
-    ├── dependabot.yml                  # Weekly grouped github-actions bumps only (no Packer-plugin ecosystem — that pin is bounded in stack.pkr.hcl, bumped by hand)
+    ├── dependabot.yml                  # Weekly grouped github-actions bumps only (no Packer-plugin ecosystem — that pin is bounded in linux.pkr.hcl, bumped by hand)
     └── workflows/
         └── validate.yml                # packer validate + shellcheck (scripts AND scaffold templates) + the test suite, on push/PR to trunk; the packer matrix covers every stacks/* × shared/linux/os cell
 ```
@@ -98,17 +98,19 @@ Multi-distro, multi-stack collection of Packer templates that build Tart base VM
 
 ## Build pipeline — load-order rules
 
-The root `stack.pkr.hcl` (one parameterized template, built with `make build STACK=<name> DISTRO=<distro>` from the repo root) defines the provisioner chain combining shared and stack-specific scripts. `DISTRO` is mandatory — there is no default. The supported distros are listed in `shared/linux/os`. Two scripts have hard ordering constraints — `shared/linux/scripts/00-base.sh` must run first and `shared/linux/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. One step runs even earlier and is deliberately **not** a script: an inline `provisioner "shell"` at the top of the build block calls `pkg_release_upgrade` (from `family-lib.sh`) to lift the guest to the release the image ships as. It leads because `00-base.sh`'s first act is a full system update, which on a release about to be replaced downloads packages the upgrade then discards. It stays inline because its body is glue — every decision lives in `family-lib.sh`, where it is tested — and it must stay **alone** in its block with `expect_disconnect = true`, since it reboots the guest and never returns. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block; it sources `shared/linux/scripts/family-lib.sh` and reads the stack's `packages.<family>` file to install native build deps in a distro-agnostic way.
+`make` resolves which template to build from the `DISTRO` token: `PLATFORM` is derived by asking which `shared/*/os` file lists it, then `build`/`rebuild` run `packer build … $(PLATFORM).pkr.hcl`. Today `shared/linux/os` is the only such file, so every supported distro resolves to `linux.pkr.hcl`; `check-distro` refuses before that lookup ever runs on an unset, unsupported, or unresolvable token, so a bad selector never reaches Packer with a malformed template name.
+
+The root `linux.pkr.hcl` (one parameterized template, built with `make build STACK=<name> DISTRO=<distro>` from the repo root) defines the provisioner chain combining shared and stack-specific scripts. `DISTRO` is mandatory — there is no default. The supported distros are listed in `shared/linux/os`. Two scripts have hard ordering constraints — `shared/linux/scripts/00-base.sh` must run first and `shared/linux/scripts/99-finalize.sh` must run last, hence the sentinel prefixes. One step runs even earlier and is deliberately **not** a script: an inline `provisioner "shell"` at the top of the build block calls `pkg_release_upgrade` (from `family-lib.sh`) to lift the guest to the release the image ships as. It leads because `00-base.sh`'s first act is a full system update, which on a release about to be replaced downloads packages the upgrade then discards. It stays inline because its body is glue — every decision lives in `family-lib.sh`, where it is tested — and it must stay **alone** in its block with `expect_disconnect = true`, since it reboots the guest and never returns. Stack-specific `00-stack.sh` runs immediately after `shared/00-base.sh` in the same root provisioner block; it sources `shared/linux/scripts/family-lib.sh` and reads the stack's `packages.<family>` file to install native build deps in a distro-agnostic way.
 
 `shared/linux/scripts/family-lib.sh` is the package-manager abstraction layer. It detects the package family from `/etc/os-release` (`dnf` for Fedora — ID only, since that branch is Fedora-specific; `apt` for Debian/Ubuntu and their derivatives, via ID_LIKE too) and exposes functions (`pkg_install`, `pkg_refresh`, `repo_add_mise`, `install_zellij`, etc.) that every provisioner uses. Provisioners do not call `dnf` or `apt` directly; the family-abstraction libraries (`family-lib.sh`, `gui-lib.sh`) are where those calls live.
 
 Native build deps for each stack live in `stacks/<name>/packages.dnf` (Fedora names) and `stacks/<name>/packages.apt` (Debian/Ubuntu names). Adding or removing a package there takes effect on the next rebuild for the relevant distro family.
 
-Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts share a provisioner block; user scripts share another), not by filename. The table below shows the execution order for the `php` stack.
+Other scripts are ordered by `linux.pkr.hcl`'s privilege grouping (root scripts share a provisioner block; user scripts share another), not by filename. The table below shows the execution order for the `php` stack.
 
 | Exec | Script | Privilege | Why this position |
 |---|---|---|---|
-| 1 | *(inline in `stack.pkr.hcl`)* — `pkg_release_upgrade` | root | **FIRST**, in a block of its own with `expect_disconnect = true`. Not a script file: the body is `source /tmp/family-lib.sh` + one call, and every decision lives in `family-lib.sh` where it is tested. Lifts a dnf-family guest to `FEDORA_TARGET_RELEASE` and reboots; a no-op on apt, whose bases their publisher keeps current. Ahead of `00-base.sh` because that script's first act is a full system update, and updating a release about to be replaced downloads packages the upgrade immediately discards. Alone in its block because it never returns — `dnf offline reboot` only *schedules* the reboot, so it blocks until the guest goes down; without that, the next provisioner runs inside the system-update boot and reads the OLD release, and the build ships an image labelled as something it is not. No `pause_before` on what follows: the SSH communicator blocks until the guest is reachable again |
+| 1 | *(inline in `linux.pkr.hcl`)* — `pkg_release_upgrade` | root | **FIRST**, in a block of its own with `expect_disconnect = true`. Not a script file: the body is `source /tmp/family-lib.sh` + one call, and every decision lives in `family-lib.sh` where it is tested. Lifts a dnf-family guest to `FEDORA_TARGET_RELEASE` and reboots; a no-op on apt, whose bases their publisher keeps current. Ahead of `00-base.sh` because that script's first act is a full system update, and updating a release about to be replaced downloads packages the upgrade immediately discards. Alone in its block because it never returns — `dnf offline reboot` only *schedules* the reboot, so it blocks until the guest goes down; without that, the next provisioner runs inside the system-update boot and reads the OLD release, and the build ships an image labelled as something it is not. No `pause_before` on what follows: the SSH communicator blocks until the guest is reachable again |
 | 2 | `shared/linux/scripts/00-base.sh` | root | Asserts the guest's os-release ID matches the build's `DISTRO` — the image name and manifest are both written from `DISTRO`, so a wrong base would ship mislabeled. Then `assert_release_supported`, which reads the guest's own `SUPPORT_END` and refuses a release past end of life: the target release is a hand-maintained pin, and a stale one is otherwise invisible until a repository is purged mid-build months later. Then asserts `tart-guest-agent.service` is both `enabled` (the literal state, since `is-enabled` also exits 0 for `static`/`enabled-runtime`, neither of which survives a clone's first boot) and running: `tart exec` is a host→guest vsock call served by that agent, nothing here installs it, and everything inside the build rides ssh — so a base without it builds clean, then silently leaves clones on the base image's hostname (`tart-up` warns) and hard-fails any GUI activation. Then system update, core dev packages, build toolchain, zellij — all via `family-lib.sh` |
 | 3 | `stacks/php/scripts/00-stack.sh` | root | Same root provisioner block as 00-base; reads `packages.<family>` and installs stack-specific native build deps via `pkg_install_optional`. Bundled with 00-base so the toolchain group and compile headers land in one transaction |
 | 4 | `shared/linux/scripts/mise.sh` | root | Same root block; installs mise system-wide via `repo_add_mise` (COPR on dnf, signed apt repo on apt) |
@@ -119,7 +121,7 @@ Other scripts are ordered by `stack.pkr.hcl`'s privilege grouping (root scripts 
 | 8 | `stacks/php/scripts/mise-install.sh` | user | Needs `~/.config/mise/config.toml` already uploaded by Packer; installs runtimes + Composer + runs hard-gated smoke test |
 | 9 | `shared/linux/scripts/99-finalize.sh` | root | **LAST** (`99-` sentinel). Establishes final SSH posture in one atomic step: authorizes user key (consumes `/tmp/authorized_key.pub`), installs NOPASSWD sudoers, writes sshd drop-in (`00-` prefix wins over cloud-init's `50-cloud-init.conf`), locks admin password. Bundled so the window between disabling password auth and Packer disconnecting is ~milliseconds. |
 
-If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the root `stack.pkr.hcl` provisioner block. Ordering within a privilege block is the list order in `stack.pkr.hcl`, not the filename. A file useful across every stack goes under `shared/`: `shared/scripts/` if it runs verbatim on both platforms, `shared/linux/scripts/` if it's linux-only — either way, referenced once in the root template. To add a whole new stack, use `make scaffold STACK=<name>`.
+If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/` (no numeric prefix unless it must anchor first or last — leave those slots to the sentinels) and reference it from the root `linux.pkr.hcl` provisioner block. Ordering within a privilege block is the list order in `linux.pkr.hcl`, not the filename. A file useful across every stack goes under `shared/`: `shared/scripts/` if it runs verbatim on both platforms, `shared/linux/scripts/` if it's linux-only — either way, referenced once in the root template. To add a whole new stack, use `make scaffold STACK=<name>`.
 
 ## Testing changes
 
@@ -127,7 +129,7 @@ If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/
 
 ```bash
 # Per-stack/distro syntax/schema check
-packer validate -var stack=php -var distro=fedora stack.pkr.hcl    # ~1s; catches HCL syntax errors (run from repo root)
+packer validate -var stack=php -var distro=fedora linux.pkr.hcl    # ~1s; catches HCL syntax errors (run from repo root)
 bash -n shared/scripts/*.sh shared/linux/scripts/*.sh stacks/php/scripts/*.sh
 make test                               # plain-bash test suite (test/*.sh) — mocked, no VM, what CI runs
 

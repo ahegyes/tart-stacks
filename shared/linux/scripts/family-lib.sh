@@ -83,7 +83,7 @@ pkg_release_upgrade() {
     echo "       and FEDORA_TARGET_RELEASE is $target — a $hop-release jump." >&2
     echo "       Crossing that needs one reboot per hop, and a reboot ends this provisioner," >&2
     echo "       so it cannot be looped here: reaching $target requires an additional" >&2
-    echo "       release-upgrade provisioner block per hop in stack.pkr.hcl. Until those" >&2
+    echo "       release-upgrade provisioner block per hop in linux.pkr.hcl. Until those" >&2
     echo "       exist, lower FEDORA_TARGET_RELEASE to at most $((cur + 2))." >&2
     return 1
   fi

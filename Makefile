@@ -89,6 +89,18 @@ check-stack: check-stack-token
 		exit 1; \
 	fi
 
+# Platform for the selected distro — the directory whose os file lists the
+# token. Derived rather than declared: membership is a property of the tree,
+# so there is no second list to drift out of sync with shared/*/os. `:=`
+# (not `=`) so it's computed once, from DISTRO's final value, and `make -p`
+# shows the resolved platform rather than this unexpanded shell text — the
+# `#` inside the regex must stay escaped (`\#`), since outside a recipe make
+# treats a bare `#` as the start of a make comment and truncates the line.
+PLATFORM := $(shell for f in shared/*/os; do \
+	grep -qxF "$(DISTRO)" <(grep -vE '^[[:space:]]*(\#|$$)' "$$f") \
+	  && basename "$$(dirname "$$f")" && break; \
+	done)
+
 # Validate DISTRO is set and supported (a non-comment line in shared/linux/os).
 check-distro:
 	@if [ -z "$(DISTRO)" ]; then \
@@ -99,6 +111,10 @@ check-distro:
 	@if ! grep -qxF "$(DISTRO)" <(grep -vE '^\s*(#|$$)' shared/linux/os); then \
 		echo "ERROR: distro '$(DISTRO)' is not supported. Add it to shared/linux/os (and a branch in family-lib.sh) first. Supported:" >&2; \
 		grep -vE '^\s*(#|$$)' shared/linux/os | sed 's/^/  /' >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$(PLATFORM)" ]; then \
+		echo "ERROR: distro '$(DISTRO)' passed the check above but resolved to no platform (no shared/*/os file lists it) — refusing rather than building a malformed 'packer build … .pkr.hcl'. This means the check above and the PLATFORM resolver have drifted out of sync." >&2; \
 		exit 1; \
 	fi
 
@@ -146,11 +162,11 @@ PACKER_VARS = -var stack=$(STACK) -var distro=$(DISTRO) $(if $(GUI),-var gui=tru
 # never reach bootstrap's destructive base re-clone (tart delete + clone).
 build: check-stack check-distro check-gui check-de
 	@$(MAKE) bootstrap
-	packer build $(PACKER_VARS) stack.pkr.hcl
+	packer build $(PACKER_VARS) $(PLATFORM).pkr.hcl
 
 rebuild: check-stack check-distro check-gui check-de
 	@$(MAKE) bootstrap
-	packer build -force $(PACKER_VARS) stack.pkr.hcl
+	packer build -force $(PACKER_VARS) $(PLATFORM).pkr.hcl
 
 # End-to-end proof of a BUILT image (clone → boot → ssh → assert → destroy).
 # Boots a real VM, so it stays a local dev-task — GitHub runners can't run

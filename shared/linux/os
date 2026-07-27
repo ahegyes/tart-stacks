@@ -3,7 +3,7 @@
 # a published ghcr.io/cirruslabs/<os> Tart image and a matching family branch
 # (dnf or apt) in shared/linux/scripts/family-lib.sh.
 # The platform that owns this file is its directory: every token here is built
-# by stack.pkr.hcl.
+# by linux.pkr.hcl.
 # Consumed by: Makefile (check-distro), bin/tart-new, bin/tart-up, bin/lib/common.sh,
 # the CI matrix.
 fedora

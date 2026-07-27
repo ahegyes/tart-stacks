@@ -50,7 +50,7 @@ jobs:
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub
       - name: packer validate
-        run: packer validate -var stack="${{ matrix.stack }}" -var distro="${{ matrix.distro }}" stack.pkr.hcl
+        run: packer validate -var stack="${{ matrix.stack }}" -var distro="${{ matrix.distro }}" linux.pkr.hcl
 
   shellcheck:
     name: shellcheck

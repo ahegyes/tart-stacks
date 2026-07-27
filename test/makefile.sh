@@ -29,6 +29,16 @@ cp "$REPO/Makefile" "$SANDBOX/"
 cp "$REPO/shared/linux/os" "$REPO/shared/linux/desktops" "$SANDBOX/shared/linux/"
 cp -R "$REPO/stacks" "$REPO/templates" "$SANDBOX/"
 
+# A second shared/*/os directory, present only in the sandbox, so the PLATFORM
+# tests below exercise dispatch across more than one candidate instead of just
+# finding shared/linux because it's the only one there. Its comment line
+# doubles as the "would match a comment" fixture: "decoytoken" only ever
+# appears inside a '#' line, so a token equal to it must still resolve to
+# nothing — proving comment-stripping runs before the exact-match check, not
+# after.
+mkdir -p "$SANDBOX/shared/decoy"
+printf '# decoytoken\nrealtoken\n' > "$SANDBOX/shared/decoy/os"
+
 gate() { # <target> <VAR=VALUE…> — rc in $rc, stderr in $ERR
   local target="$1"; shift
   rc=0
@@ -43,6 +53,20 @@ assert_accepts() { # label target VAR=VALUE…
   local label="$1"; shift
   gate "$@"
   if [ "$rc" -eq 0 ]; then ok "$label"; else bad "$label" "want exit 0, got $rc: $(head -1 "$ERR")"; fi
+}
+
+# `-p -q help` prints make's variable database without running any recipe:
+# `help` is a real .PHONY target so make has no rule-less-target error to swallow,
+# and `-q` skips its body regardless. PLATFORM is simply-expanded (`:=`), so the
+# database shows its resolved value rather than the unexpanded `$(shell …)` text.
+platform_of() { # DISTRO=value…
+  make -C "$SANDBOX" -s -p -q help "$@" 2>/dev/null \
+    | sed -n 's/^PLATFORM[[:space:]]*:\{0,1\}=[[:space:]]*//p' | head -1
+}
+assert_platform() { # label want DISTRO=value…
+  local label="$1" want="$2"; shift 2
+  local got; got=$(platform_of "$@")
+  if [ "$got" = "$want" ]; then ok "$label"; else bad "$label" "want PLATFORM='$want', got '$got'"; fi
 }
 
 # The token gate is shared by check-stack and scaffold. `STACK=.` is the case that
@@ -85,6 +109,30 @@ while IFS= read -r d; do
 done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
 if [ "$distro_cases" -gt 0 ]; then ok "shared/linux/os contributed $distro_cases case(s)"
 else bad "shared/linux/os contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# PLATFORM must fail EMPTY, never guess: an empty result turns
+# `packer build … $(PLATFORM).pkr.hcl` into `packer build … .pkr.hcl` — a
+# wrong-but-plausible command instead of a refusal. check-distro's own validity
+# check above computes a related fact by a different, hardcoded path
+# (shared/linux/os only); these cases exercise the resolver's own shared/*/os
+# scan directly, so they'd catch a divergence between the two that a
+# gate-only test never would.
+echo "Makefile — PLATFORM resolver:"
+unset DISTRO   # so "unset entirely" reflects the Makefile's own `?=` default,
+               # not whatever the invoking shell happened to export
+assert_platform "DISTRO unset entirely resolves to nothing"               ""
+assert_platform "DISTRO as an explicit empty string resolves to nothing"  "" DISTRO=
+assert_platform "an unsupported DISTRO resolves to nothing"               "" DISTRO=bogus
+assert_platform "a token matching only a comment line resolves to nothing" "" DISTRO=decoytoken
+assert_platform "the decoy fixture's real token resolves to its own dir"  "decoy" DISTRO=realtoken
+
+platform_cases=0
+while IFS= read -r d; do
+  platform_cases=$((platform_cases + 1))
+  assert_platform "shared/linux/os token '$d' resolves to linux" "linux" DISTRO="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
+if [ "$platform_cases" -gt 0 ]; then ok "shared/linux/os contributed $platform_cases PLATFORM case(s)"
+else bad "shared/linux/os contributed PLATFORM cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
 # GUI is read by `$(if $(GUI),…)`, where make truthiness would treat GUI=0 as ON.
 echo "Makefile — check-gui:"
