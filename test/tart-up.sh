@@ -125,6 +125,12 @@ case "$1" in
     # darwin --vnc-experimental prints its URL to STDOUT (Tart's own Run.swift
     # only merges it into the per-VM log when tart-up itself redirects stdout
     # there, which it does only for this exact mode).
+    # CAPTURED from tart 2.34.0. The phrasing depends on the flags, which is why
+    # the parser matches the URL rather than a sentence:
+    #   tart run --no-graphics --vnc-experimental  ->  VNC server is running at <url>
+    #   tart run --vnc-experimental                ->  Opening <url>...
+    # tart-up always passes --no-graphics in vnc mode, so the first is the line
+    # a real boot produces and the one reproduced here.
     case "$*" in
       *--vnc-experimental*)
         [ "${MOCK_TART_VNC_PRINT:-1}" = "1" ] && printf 'VNC server is running at %s\n' \
@@ -790,7 +796,12 @@ MOCK_PLATFORM=darwin MOCK_TART_VNC_PRINT=0 \
   runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
 assert_rc       "darwin vnc — Tart never prints a URL → exit 1" 1
 assert_contains "darwin vnc — no-URL diagnostic names the failure" "$(cat "$ERR")" "vnc gui activation failed"
-assert_contains "darwin vnc — no-URL diagnostic names the 30 s wait" "$(cat "$ERR")" "within 30 s"
+assert_contains "darwin vnc — no-URL diagnostic names the 90 s wait" "$(cat "$ERR")" "within 90 s"
+# Fail CLOSED, not just fail: `tart run` already carried --vnc-experimental, so
+# the listener binds whether or not this process saw the URL — and with no URL
+# there is no port to classify. Leaving the VM up would strand a VNC console
+# nothing had checked, which is the exposure the bind check exists to prevent.
+assert_contains "darwin vnc — no URL stops the VM rather than leaving it up" "$(cat "$CALLS")" "tart stop app-a"
 # "nc -z" alone would also match the unrelated :22 readiness probe that runs
 # earlier in every boot — pin the vnc host specifically.
 assert_absent   "darwin vnc — no-URL path never reaches the listener probe" "$(cat "$CALLS")" "nc -z -G 3 127.0.0.1"

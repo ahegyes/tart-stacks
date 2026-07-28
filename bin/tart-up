@@ -466,11 +466,21 @@ DARWIN_VNC_URL="" DARWIN_VNC_HOST="" DARWIN_VNC_PORT=""
 # Framework's VNC server has bound its (ephemeral, per-boot) port. There is no
 # guest-side signal to probe instead: unlike the linux image's systemd unit,
 # this surface never reaches the guest at all.
+# 90s, not 30: measured on an M-series host, a macOS guest's VNC server takes
+# well over 30 s from `tart run` to printing its URL, so a 30 s window expired
+# on every real boot — reporting failure while the listener came up moments
+# later, unclassified.
 darwin_vnc_wait_for_url() {
   local attempt line
-  for ((attempt = 1; attempt <= 30; attempt++)); do
-    if [ -n "$run_log" ] && line=$(grep -m1 '^VNC server is running at ' "$run_log" 2>/dev/null); then
-      DARWIN_VNC_URL="${line#VNC server is running at }"
+  for ((attempt = 1; attempt <= 90; attempt++)); do
+    # Match the URL itself, not the sentence around it: tart 2.34.0 phrases the
+    # line differently depending on its flags — `VNC server is running at <url>`
+    # under --no-graphics (what this script passes), `Opening <url>...` without
+    # it — so a fixed prefix pins this to one invocation's wording. Trailing
+    # punctuation belongs to the sentence, not the URL, so keep everything up to
+    # the last digit; the port is what ends it.
+    if [ -n "$run_log" ] && line=$(grep -m1 -o 'vnc://[^[:space:]]*' "$run_log" 2>/dev/null); then
+      DARWIN_VNC_URL="${line%"${line##*[0-9]}"}"
       return 0
     fi
     sleep 1
@@ -783,12 +793,20 @@ for _ in $(seq 1 30); do
         fi ;;
       vnc)
         if [ "$PLATFORM" = "darwin" ]; then
+          # Both failures below stop the VM rather than leaving it up. `tart run`
+          # was already given --vnc-experimental, so the listener binds whether
+          # or not this process ever saw the URL — and without the URL there is
+          # no port to classify, so an unread listener is exactly the state
+          # the bind check exists to refuse. Leaving the VM running here would
+          # strand a wildcard-bound VNC console that nothing had checked.
           if ! darwin_vnc_wait_for_url; then
-            echo "$prog: '$VM' vnc gui activation failed: Tart never printed a VNC URL to this boot's log within 30 s; the VM remains running and reachable over ssh." >&2
+            echo "$prog: '$VM' vnc gui activation failed: Tart never printed a VNC URL to this boot's log within 90 s, so its VNC listener could not be located or checked." >&2
+            darwin_vnc_fail_closed
             exit 1
           fi
           if ! darwin_vnc_parse_url "$DARWIN_VNC_URL"; then
-            echo "$prog: '$VM' vnc gui activation failed: could not parse Tart's VNC URL ('$DARWIN_VNC_URL'); the VM remains running and reachable over ssh." >&2
+            echo "$prog: '$VM' vnc gui activation failed: could not parse Tart's VNC URL ('$DARWIN_VNC_URL'), so its VNC listener could not be located or checked." >&2
+            darwin_vnc_fail_closed
             exit 1
           fi
           if ! darwin_vnc_wait_for_listener; then
