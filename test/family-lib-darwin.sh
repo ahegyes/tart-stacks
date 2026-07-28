@@ -278,6 +278,26 @@ assert_eq "a WRONG-USER grant (visudo -cf passes) is refused — not our user" 1
 # grant check and not from some other property of the empty/comment/wrong-
 # user fixtures.
 assert_eq "a real grant for the build user passes (must-pass control)"      0 "$(sudoers_rc "$EMPTY_SUDOERS" "$GRANT_OUTPUT")"
+
+# The runas field decides whether the grant reaches root, and `sudo -l` renders
+# it inline on every rule. A bare `NOPASSWD: ALL` substring test accepts a rule
+# that authorizes some OTHER account, which leaves `ssh <vm> sudo ...` prompting
+# exactly as if there were no drop-in at all — so the runas renderings sudo
+# actually emits are pinned here in both directions.
+assert_eq "runas '(ALL : ALL)' — sudo's two-field rendering — passes" \
+  0 "$(sudoers_rc "$EMPTY_SUDOERS" '(ALL) ALL
+    (ALL : ALL) NOPASSWD: ALL')"
+assert_eq "runas '(root)' passes — it does reach root" \
+  0 "$(sudoers_rc "$EMPTY_SUDOERS" '(ALL) ALL
+    (root) NOPASSWD: ALL')"
+assert_eq "runas '(daemon)' is refused — NOPASSWD, but never to root" \
+  1 "$(sudoers_rc "$EMPTY_SUDOERS" '(ALL) ALL
+    (daemon) NOPASSWD: ALL')"
+# Line-anchored, not a prefix: a NOPASSWD rule for a command whose path merely
+# begins with the letters ALL is not a blanket grant.
+assert_eq "a command-scoped rule sharing the 'ALL' prefix is refused" \
+  1 "$(sudoers_rc "$EMPTY_SUDOERS" '(ALL) ALL
+    (root) NOPASSWD: /usr/local/bin/ALLocate')"
 sudoers_rc "$EMPTY_SUDOERS" "$NO_GRANT_OUTPUT" >/dev/null
 assert_contains "the no-grant refusal names the build user" "$sudoers_err" "admin"
 assert_contains "the no-grant refusal shows what sudo -l -U actually reported" "$sudoers_err" "(ALL) ALL"

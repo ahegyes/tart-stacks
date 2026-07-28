@@ -100,16 +100,23 @@ tart_resolve_vm() {
 # tart_valid_vm_name <name> — 0 iff the name is a token every consumer can
 # carry: the ssh alias (tart-<name>), the guest hostname (`hostname -s` must
 # equal the name, so no dots), and the vm-pattern grammar (commas are list
-# separators, `*` is the wildcard). Letters/digits/_/-, alphanumeric head.
+# separators, `*` is the wildcard). Letters/digits/-, alphanumeric head.
 # The `tart-` prefix itself is reserved for SSH aliases; alias-aware commands
 # may strip it before resolving the bare stored VM name. Pure-bash glob
 # classes: no subprocess per check. LC_ALL=C is what makes the ranges
-# byte-exact — under a UTF-8 collation `[A-Za-z0-9_-]` also admits accented
+# byte-exact — under a UTF-8 collation `[A-Za-z0-9-]` also admits accented
 # letters, so `café` would pass here and then fail as a hostname downstream.
+#
+# Underscore is excluded because it is not a legal hostname character
+# (RFC 1034), and a guest is where that bites rather than here: macOS
+# SCPreferencesSetLocalHostName REFUSES a name containing `_` while
+# `scutil --set HostName` accepts it, so an underscore name renames a darwin
+# guest only partially. Rejecting it at creation keeps every downstream
+# consumer's assumption true by construction.
 tart_valid_vm_name() {
   local LC_ALL=C
   case "$1" in
-    ''|*[!A-Za-z0-9_-]*|[_-]*|tart-*) return 1 ;;
+    ''|*[!A-Za-z0-9-]*|[-]*|tart-*) return 1 ;;
   esac
   return 0
 }

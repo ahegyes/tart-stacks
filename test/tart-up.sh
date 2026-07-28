@@ -46,6 +46,7 @@ CALLS="$WORK/calls"; export CALLS
 ERR="$WORK/stderr"
 EMPTY="$WORK/empty"; : > "$EMPTY"
 SS_COUNT="$WORK/ss-count"
+SCUTIL_STATE="$WORK/scutil-state"
 
 # Mock `tart`: `list` emits one VM (name=$MOCK_VM, state=$MOCK_STATE), or —
 # with MOCK_TART_LIST_RC nonzero — prints a stderr marker and fails with that
@@ -86,6 +87,25 @@ case "$1" in
     fi
     case "$*" in
       "hostname -s") printf '%s\n' "${MOCK_HOSTNAME:-app-a}" ;;
+      # scutil is modelled as real per-name STATE, not just logged argv: the
+      # defect this covers is a rename that lands on some names and not others,
+      # which argv assertions cannot express. Each --set records the name, each
+      # --get reads it back, and MOCK_SCUTIL_SET_FAIL lists names whose --set
+      # silently no-ops (exit 0, nothing recorded) — the shape macOS produces
+      # when LocalHostName rejects a value HostName accepted.
+      # `argv` first: ${*##pattern} strips the pattern from EACH positional
+      # parameter, not from the joined string, so the join has to happen before
+      # any prefix removal.
+      "scutil --get "*)
+        argv="$*"; k="${argv##scutil --get }"; v=""
+        [ -n "${MOCK_SCUTIL_STATE:-}" ] && [ -f "$MOCK_SCUTIL_STATE" ] && \
+          v=$(awk -v k="$k" '$1 == k { print $2 }' "$MOCK_SCUTIL_STATE" | tail -1)
+        [ -n "$v" ] || v="${MOCK_HOSTNAME:-app-a}"
+        printf '%s\n' "$v" ;;
+      "sudo scutil --set "*)
+        argv="$*"; rest="${argv##sudo scutil --set }"; k="${rest%% *}"; v="${rest#* }"
+        case " ${MOCK_SCUTIL_SET_FAIL:-} " in *" $k "*) exit 0 ;; esac
+        [ -n "${MOCK_SCUTIL_STATE:-}" ] && printf '%s %s\n' "$k" "$v" >> "$MOCK_SCUTIL_STATE" ;;
       "ss -tln"|"sudo ss -tln")
         [ "${MOCK_SS_READ_FAIL:-0}" -eq 0 ] || exit 1
         if [ -n "${MOCK_SS_SEQUENCE_FILE:-}" ]; then
@@ -205,7 +225,7 @@ chmod +x "$MOCKBIN/system_profiler"
 runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-up argv...>
   local state="$1" hostname="$2" netpolicy="$3" mounts="$4" gui="$5"
   shift 5
-  : > "$CALLS"; : > "$SS_COUNT"; rc=0
+  : > "$CALLS"; : > "$SS_COUNT"; : > "$SCUTIL_STATE"; rc=0
   PATH="$MOCKBIN:$PATH" HOME="$SANDBOX_HOME" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP="${MOCK_IP-10.0.0.9}" MOCK_HOSTNAME="$hostname" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_PLATFORM="${MOCK_PLATFORM-linux}" \
     MOCK_TART_GET_RC="${MOCK_TART_GET_RC-0}" \
@@ -213,6 +233,7 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
     MOCK_SS_OUTPUT="${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_SS_SEQUENCE_FILE="${MOCK_SS_SEQUENCE_FILE-}" MOCK_SS_COUNT_FILE="$SS_COUNT" \
     MOCK_SS_READ_FAIL="${MOCK_SS_READ_FAIL-0}" \
+    MOCK_SCUTIL_STATE="$SCUTIL_STATE" MOCK_SCUTIL_SET_FAIL="${MOCK_SCUTIL_SET_FAIL-}" \
     MOCK_TART_EXEC_FAIL_MATCH="${MOCK_TART_EXEC_FAIL_MATCH-}" \
     MOCK_TART_FAIL_MATCH="${MOCK_TART_FAIL_MATCH-}" \
     MOCK_TART_VNC_PRINT="${MOCK_TART_VNC_PRINT-1}" MOCK_VNC_URL="${MOCK_VNC_URL-}" MOCK_VNC_PORT="${MOCK_VNC_PORT-61234}" \
@@ -647,15 +668,33 @@ assert_contains "TOCTOU diagnostic names the refusal" "$(cat "$ERR")" "could not
 assert_absent   "TOCTOU → never starts the VM under a guessed platform" "$(cat "$CALLS")" "tart run"
 
 # ---- darwin hostname: scutil, never hostnamectl ----------------------------
+# Asserted as resulting STATE rather than as argv: all three names must end up
+# equal to the VM name, because each feeds a different consumer (Bonjour/.local,
+# the desktop UI, DNS) and a rename that reaches only some of them is the defect.
 MOCK_PLATFORM=darwin runup stopped wrong-name "$EMPTY" "$EMPTY" "$EMPTY" app-a
 calls="$(cat "$CALLS")"
-assert_contains "darwin hostname mismatch → sets HostName via scutil"      "$calls" "tart exec app-a sudo scutil --set HostName app-a"
-assert_contains "darwin hostname mismatch → sets LocalHostName via scutil" "$calls" "tart exec app-a sudo scutil --set LocalHostName app-a"
-assert_contains "darwin hostname mismatch → sets ComputerName via scutil"  "$calls" "tart exec app-a sudo scutil --set ComputerName app-a"
+for key in HostName LocalHostName ComputerName; do
+  assert_eq "darwin hostname mismatch → $key ends up as the VM name" \
+    "app-a" "$(awk -v k="$key" '$1 == k { print $2 }' "$SCUTIL_STATE" | tail -1)"
+done
 assert_absent   "darwin hostname mismatch → never calls hostnamectl"       "$calls" "hostnamectl"
-# must-pass control: an already-correct hostname sets nothing, on darwin either.
+assert_rc       "darwin hostname mismatch → still exits 0" 0
+# must-pass control: an already-correct guest is left alone. Reads are expected
+# (each name is verified); what must not happen is a WRITE.
 MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
-assert_absent "darwin hostname already correct → no scutil calls" "$(cat "$CALLS")" "scutil"
+assert_absent "darwin hostname already correct → no scutil --set calls" "$(cat "$CALLS")" "scutil --set"
+
+# The partial-rename case: LocalHostName refuses the value HostName accepted —
+# what macOS really does for a name containing an underscore. `hostname -s`
+# reports HostName, so it reads as correct; only a per-name check can see this.
+MOCK_PLATFORM=darwin MOCK_SCUTIL_SET_FAIL="LocalHostName" \
+  runup stopped wrong-name "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_contains "darwin partial rename → warns rather than reporting success" \
+  "$(cat "$ERR")" "could not set guest hostname"
+assert_contains "darwin partial rename → names the name that did not apply" \
+  "$(cat "$ERR")" "LocalHostName"
+assert_absent   "darwin partial rename → does not blame the names that DID apply" \
+  "$(cat "$ERR")" "ComputerName"
 
 # ---- darwin --gui=window: the macOS desktop needs no isolate/DM/scale step -
 MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
