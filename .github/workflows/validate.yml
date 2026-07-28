@@ -56,8 +56,18 @@ jobs:
             fi
           done
           [ "$refused" -eq 0 ] || exit 1
+          # An empty stacks/ is a legitimate "nothing to validate" state, not
+          # a broken tree — unlike the os-token walk above, it must reach the
+          # packer job's `!= '[]'` skip gate as a genuine []. printf on a
+          # zero-element array still emits one blank line (its format runs
+          # once even with no arguments), so build the JSON directly instead.
+          if [ "${#stacks[@]}" -eq 0 ]; then
+            s_json='[]'
+          else
+            s_json="$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)"
+          fi
           jq -nc \
-            --argjson s "$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)" \
+            --argjson s "$s_json" \
             --argjson o "$(printf '%s\n' "${os_tokens[@]}" | jq -R . | jq -sc .)" \
             --argjson p "$(printf '%s\n' "${platforms[@]}" | jq -R . | jq -sc .)" \
             '[$s[] as $stack | range(0; ($o|length)) as $i | {stack:$stack, os:$o[$i], platform:$p[$i]}]' \
