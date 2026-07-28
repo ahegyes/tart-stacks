@@ -656,6 +656,29 @@ elif [ "$STATE" = "stopped" ]; then
     echo "$prog: could not determine whether '$VM' is a darwin or linux VM (a failed 'tart get', or an empty/unrecognized OS field — see any error above); refusing to start without knowing which platform-specific boot steps it needs." >&2
     exit 1
   }
+  # tart 2.34's softnet integration closes tart's own stdout right after
+  # spawning softnet (cirruslabs/tart#1287: Softnet.run()'s defer closes an
+  # unset Process.standardOutput, which Foundation resolves to the parent's
+  # fd 1 — measured: lsof shows fd 1 become a kqueue). Under a softnet
+  # net-policy the "VNC server is running at" line — the only place the
+  # per-boot VNC password ever exists — can therefore never reach the run
+  # log, and no host-side redirect can recover it. Refuse up front — before
+  # even announcing a start — instead of burning the 90 s URL wait and then
+  # fail-closing a VM that booted for nothing. Every other version falls
+  # through: pre-2.34 lacks the bug, and for anything newer the URL wait
+  # below still fails closed. The gate keys on softnet flags, not net-policy
+  # presence — --net-bridged never touches the broken path. CAPTURED:
+  # `tart --version` prints the bare version ("2.34.0").
+  if [ "$PLATFORM" = "darwin" ] && [ "$GUI_MODE" = "vnc" ]; then
+    case " ${NETPOLICY_ARGS[*]-} " in
+      *" --net-softnet"*)
+        case "$(tart --version 2>/dev/null)" in
+          2.34.*)
+            echo "$prog: refusing '--gui=vnc' for '$VM': tart $(tart --version) discards its own VNC URL when run under a softnet net-policy (cirruslabs/tart#1287 closes tart's stdout), so the listener could never be located or verified. Boot headless, temporarily empty $NETPOLICY_CONFIG, or use a tart release without the regression." >&2
+            exit 1 ;;
+        esac ;;
+    esac
+  fi
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
