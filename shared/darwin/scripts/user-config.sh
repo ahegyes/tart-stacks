@@ -35,17 +35,20 @@ chown -R "${TARGET_USER}:staff" "${TARGET_HOME}/.config"
 # linux images serve them at /mnt/shared/<name>. Matching the path means a mounts
 # entry and any tooling that references it work identically on either platform.
 # The sealed system volume forbids creating a symlink at /, so synthetic.conf is
-# the supported mechanism — and it is WRITE-ONCE: the first value materialises at
-# the next boot and later edits never update it, so a wrong value here needs a
-# rebuild, not a fix. Two hops for `mnt` because synthetic.conf cannot create a
-# nested path.
+# the supported mechanism. apfs.util(8) reads it during early boot, which is the
+# ONLY time it is read: entries materialise at boot and cannot be changed on a
+# running system, so a wrong value here is not fixable in place — it needs a
+# rebuild (or, for a VM already up, a reboot). That is also why this script
+# writes the file exactly once, with every entry the image needs: a second write
+# elsewhere in the pipeline would not merge, it would replace. Two hops for
+# `mnt` because synthetic.conf cannot create a nested path.
 #
 # macOS ships no top-level /run at all (only /var/run, via the pre-existing
 # /var -> /private/var symlink), while tart-ssh-sync emits every RemoteForward
 # target at /run/tart/agent-<name>.sock unconditionally, with no platform branch.
 # The `run` entry below resolves /run straight to /private/var/run so that path
 # exists on darwin too — bundled into the one synthetic.conf write below rather
-# than a second write, since the mechanism is write-once per file.
+# than a second write, which would replace the file rather than add to it.
 echo "==> Registering synthetic.conf: /mnt/shared for Tart directory shares, /run for forwarded agent sockets..."
 install -d -m 755 "${TART_ROOT}/opt/tart/mnt"
 ln -sfn "/Volumes/My Shared Files" "${TART_ROOT}/opt/tart/mnt/shared"

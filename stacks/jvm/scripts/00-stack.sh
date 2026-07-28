@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # 00-stack.sh — install this stack's build dependencies from packages.<family>
 # (uploaded to /tmp). OS variance lives in those data files, not here. A missing
-# package silently drops the capability it provides, so the stack's smoke test (in
-# mise-install.sh) is the backstop. Runs as root after shared/linux/scripts/00-base.sh.
+# package drops the capability it provides — family-lib.sh warns and records it in
+# the image manifest — so the stack's smoke test (in mise-install.sh) is the backstop.
+# Runs as root immediately after the platform's own 00-base.sh: shared/linux/scripts/
+# on linux, shared/darwin/scripts/ on darwin. This file is shared by both.
 # Per-stack on purpose — the slot for any imperative build-prep beyond the
 # packages.<family> list; identical across stacks until one needs more.
 set -euo pipefail

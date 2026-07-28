@@ -395,8 +395,10 @@ elif [ "$PLATFORM" = "darwin" ]; then
   # The claim worth asserting AT RUNTIME is "no listener beyond :22 reachable
   # from outside the guest" — not "no listener beyond :22, full stop". The
   # two differ deliberately: 99-finalize.sh's build-time assert (the one it
-  # runs) stays absolute, because a Packer build has no ssh sessions open
-  # against it and no RemoteForwards to tolerate. This check runs against a
+  # runs) stays absolute. Not because the build has no ssh session — Packer's
+  # own communicator session is open the entire time — but because a session
+  # without RemoteForwards binds no listener, and Packer requests none. This
+  # check runs against a
   # live clone the OPERATOR is (or was) ssh'd into, and a `Host tart-*
   # RemoteForward …` in ~/.config/tart-stacks/forwards makes sshd-sess bind
   # the forwarded port on the GUEST's loopback for the life of that session —

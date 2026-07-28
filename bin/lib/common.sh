@@ -134,10 +134,9 @@ tart_ssh_has_sessiontype() {
 # <os>-<stack> built image, or a <os>-<stack>-<de> GUI flavor), not a
 # dev VM. Anchored on the supported OS set so hyphenated dev-VM names
 # (e.g. web-php, app-base) are NOT misread as base images. <os-glob> scans
-# every platform's os file (shared/*/os) rather than one hardcoded path: once
-# `make bootstrap OS=macos` can clone a real macos-base (this repo now builds
-# more than the linux platform), a caller that only knew shared/linux/os would
-# wave a "macos-base" dev VM straight through. Desktops stay a single file —
+# every platform's os file (shared/*/os) rather than one hardcoded path:
+# `make bootstrap OS=macos` clones a real macos-base, so a caller that knew
+# only shared/linux/os would wave a "macos-base" dev VM straight through. Desktops stay a single file —
 # GUI flavors are a linux-only concept, so shared/linux/desktops is the only
 # one that exists.
 tart_is_base_image() {

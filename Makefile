@@ -139,8 +139,9 @@ PLATFORM := $(shell count=0; chosen=""; \
 # Validate OS is set, supported, and claimed by exactly one platform. Scans
 # every shared/*/os rather than hardcoding shared/linux/os, so a new
 # platform's token list is picked up by construction rather than a second
-# edit here — the two had already drifted once (this gate vs. the PLATFORM
-# resolver above) before this fix. The "Supported:" listing groups tokens
+# edit here — this gate and the PLATFORM resolver above are two readers of the
+# same tree, and a hardcoded list in either one drifts from it. The
+# "Supported:" listing groups tokens
 # under the platform that claims them: a flattened "macos fedora ubuntu"
 # gives a reader no way to route a token back to a directory.
 check-os:

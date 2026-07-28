@@ -210,9 +210,12 @@ emit() {
   # Live IP resolution for every client. %n (the alias) not %h: a client that
   # sets `-o HostName=<ip>` would poison %h, but %n is always the typed alias.
   # Passed as $1 (not interpolated into the script body); a stopped VM yields no
-  # IP, so fail fast with a clear "run tart-up" message rather than letting nc
-  # connect to nothing — BSD nc exits 0 on a bad host, which SSH then surfaces as
-  # an opaque protocol error. `nc -G 5` bounds the *connect* so a stale/unreachable
+  # IP, so fail fast with a clear "run tart-up" message. The guard is for the
+  # DIAGNOSTIC, not for nc's exit status: nc does fail on an empty or unreachable
+  # host (measured: rc=1 for an unresolvable name and for a closed port), but it
+  # fails by closing the ProxyCommand's stdout with nothing written, and ssh
+  # reports that as "Connection closed by UNKNOWN port 65535" — which names
+  # neither the VM nor the reason. `nc -G 5` bounds the *connect* so a stale/unreachable
   # IP fails fast (~5s). Do NOT add `nc -w`: it also closes an *idle established*
   # connection, silently killing interactive sessions ~10s after they go quiet
   # ("closed by remote host" / broken-pipe). SSH keepalives own session liveness.

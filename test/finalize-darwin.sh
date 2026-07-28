@@ -178,8 +178,12 @@ M
 # MOCK_SIP/MOCK_SSV and assert the manifest tracks them.
 cat > "$MOCKBIN/csrutil" <<'M'
 #!/usr/bin/env bash
+# The trailing period is NOT symmetric between the two subcommands — captured
+# from real csrutil on macOS 26: `status` ends "enabled." while
+# `authenticated-root status` ends "enabled" with none. Both are reproduced
+# exactly, because a fixture is a claim about what the tool prints.
 case "$1" in
-  authenticated-root) printf 'Authenticated Root status: %s.\n' "${MOCK_SSV:-enabled}" ;;
+  authenticated-root) printf 'Authenticated Root status: %s\n'  "${MOCK_SSV:-enabled}" ;;
   *)                  printf 'System Integrity Protection status: %s.\n' "${MOCK_SIP:-disabled}" ;;
 esac
 M

@@ -29,7 +29,8 @@ trap 'rm -rf "$WORK"' EXIT
 # clone, which must land here, never in the developer's real ~/.ssh.
 mkdir -p "$WORK/home/.ssh"
 
-# Fixture stacks/ tree: two stacks present (dirs no longer carry OS prefix).
+# Fixture stacks/ tree: two stacks present. Directory names are bare stack
+# tokens; the OS is a build argument, never part of the path.
 mkdir -p "$WORK/stacks/php/scripts" "$WORK/stacks/jvm/scripts"
 
 # Supported-OS fixture used by the pure-helper and main-flow sections.

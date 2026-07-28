@@ -71,8 +71,9 @@ printf 'not a key at all\n' > "$WORK/junk"
 # A public key's comment is free text. One reading "PRIVATE KEY" must not abort a
 # 20-minute build at its last step.
 ssh-keygen -q -t ed25519 -N '' -C 'backup of PRIVATE KEY' -f "$WORK/poisoned" >/dev/null
-# A valid pubkey line followed by a private block — the parse check sees only the
-# first line and exits 0, so the armor match is the only thing that can refuse it.
+# A valid pubkey line followed by a private block — the parse check exits 0 when
+# ANY line parses as a key, so the armor match is the only thing that can refuse
+# it.
 # Indented as well as flush, because a line-anchored pattern misses the indented
 # form and 99-finalize.sh's `install` copies the WHOLE file into authorized_keys.
 { cat "$WORK/plain.pub"; cat "$WORK/plain"; } > "$WORK/compound"
