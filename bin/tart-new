@@ -247,16 +247,13 @@ set_args=()
 # property of the virtual display, not of the desktop session — so a clone
 # left at the default is stuck there for its whole life (measured: a real
 # macos-php clone's config.json ships 1024x768 with no displayRefit key). Any
-# clone given a geometry gets --display-refit with it. On linux this is
-# long-established: the guest follows the host window as it is resized, and
-# the flag is a no-op on a headless clone, which has no desktop to reflow —
-# unchanged by this task. This task is what first sets the flag on darwin at
-# all; what's actually measured there is narrower — `tart set --display …
-# --display-refit` returns rc=0 and the flag persists in config.json — not
-# that the guest reflows on a host resize, which no guest-side probe run
-# through `tart exec` can observe (see the task-16 report). A darwin clone
-# has no <de> to key the default off at all (the macOS desktop is intrinsic,
-# not optional), so it defaults on PLATFORM alone regardless.
+# clone given a geometry gets --display-refit with it: on linux the guest
+# follows the host window as it's resized, inert on a headless clone with no
+# desktop to reflow. On darwin, `tart set --display <geom> --display-refit`
+# succeeds and persists in config.json; whether the guest reflows is
+# unverified — that needs a human resizing a host window, which no automated
+# run does. A darwin clone has no <de> to key the default off — the macOS
+# desktop is intrinsic, not optional — so it defaults on PLATFORM alone.
 if [ -n "$DISPLAY_GEOMETRY" ]; then
   display="$DISPLAY_GEOMETRY"
 elif [ -n "$DE" ] || [ "$PLATFORM" = "darwin" ]; then
