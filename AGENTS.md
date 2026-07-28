@@ -155,13 +155,18 @@ If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/
 
 ## Testing changes
 
-`packer validate` + `bash -n` catch syntax only — a real `make rebuild` is the only proof of provisioner behavior, and `make smoke` is the scripted end-to-end proof of the built image. Run the fast checks first, then rebuild, then smoke:
+`packer validate` + `bash -n` + `shellcheck` catch syntax and lint only — a real `make rebuild` is the only proof of provisioner behavior, and `make smoke` is the scripted end-to-end proof of the built image. Run the fast checks first, then rebuild, then smoke:
 
 ```bash
 # Per-stack/OS syntax/schema check
 packer validate -var stack=php -var os=fedora linux.pkr.hcl    # ~1s; catches HCL syntax errors (run from repo root)
 packer validate -var stack=php -var os=macos darwin.pkr.hcl    # same check, darwin platform
 bash -n shared/scripts/*.sh shared/linux/scripts/*.sh shared/darwin/scripts/*.sh stacks/php/scripts/*.sh stacks/php/scripts/*/*.sh
+# `git ls-files` (not a hand-maintained path list) so this always matches what
+# CI's ludeeus/action-shellcheck actually lints: every tracked script,
+# test/*.sh included — a narrower, hand-listed set of directories silently
+# drifts from CI's whole-repo scan the moment a new path is added anywhere.
+shellcheck -f gcc $(git ls-files '*.sh')
 make test                               # plain-bash test suite (test/*.sh) — mocked, no VM, what CI runs
 
 # Full rebuild (~15-20 min for PHP)

@@ -136,11 +136,26 @@ NC
 chmod +x "$MOCKBIN/nc"
 
 # VNC listener polling waits one second in production. Keep the characterization
-# suite instant while recording each requested wait so immediate-failure and
-# timeout behavior can be distinguished without wall-clock assertions.
+# suite instant by default while recording each requested wait so
+# immediate-failure and timeout behavior can be distinguished without
+# wall-clock assertions. $MOCK_SLEEP_DELAY (real seconds, via /bin/sleep —
+# this mock shadows `sleep` on PATH, so an unqualified call would recurse
+# into itself) is an opt-in floor the darwin-vnc cases below turn on: those
+# paths poll a log file that `tart run` (backgrounded with `& disown` in
+# bin/tart-up) writes from a separately scheduled process, and a truly
+# zero-delay retry loop can exhaust all 30 iterations before the OS ever
+# schedules that process — reproduced by injecting delay into the mocked
+# `tart run` and watching the loop give up before the mock ever wrote its
+# output, reliably once the injected delay passed roughly 50ms. A 10ms floor
+# (up to 300ms of real margin per 30-iteration loop) held clean against
+# injected delay up to 400ms in that same test, an ample margin over
+# ordinary fork/exec latency — left opt-in rather than the default so the
+# other ~250 sleep calls in this suite, none of which wait on a backgrounded
+# process, stay instant.
 cat > "$MOCKBIN/sleep" <<'SLEEP'
 #!/usr/bin/env bash
 echo "sleep $*" >> "$CALLS"
+[ "${MOCK_SLEEP_DELAY:-0}" = "0" ] || /bin/sleep "$MOCK_SLEEP_DELAY"
 exit 0
 SLEEP
 chmod +x "$MOCKBIN/sleep"
@@ -182,8 +197,9 @@ chmod +x "$MOCKBIN/system_profiler"
 # TOCTOU where the VM vanished between `tart list` and `tart get`),
 # MOCK_NC_RC, MOCK_NC_VNC_RC, MOCK_SS_OUTPUT, MOCK_SS_SEQUENCE_FILE,
 # MOCK_SS_READ_FAIL, MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH,
-# MOCK_TART_VNC_PRINT, MOCK_VNC_URL, MOCK_VNC_PORT, MOCK_SYSTEM_PROFILER_RC,
-# MOCK_SYSTEM_PROFILER_JSON, TART_DISPLAY_SCALE, and RUNUP_LOG_DIR. Exit code
+# MOCK_TART_VNC_PRINT, MOCK_VNC_URL, MOCK_VNC_PORT, MOCK_SLEEP_DELAY,
+# MOCK_SYSTEM_PROFILER_RC, MOCK_SYSTEM_PROFILER_JSON, TART_DISPLAY_SCALE, and
+# RUNUP_LOG_DIR. Exit code
 # lands in $rc, stderr in $ERR, recorded mock calls in $CALLS. The sequenced
 # listener counter is reset for every invocation.
 runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-up argv...>
@@ -200,6 +216,7 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
     MOCK_TART_EXEC_FAIL_MATCH="${MOCK_TART_EXEC_FAIL_MATCH-}" \
     MOCK_TART_FAIL_MATCH="${MOCK_TART_FAIL_MATCH-}" \
     MOCK_TART_VNC_PRINT="${MOCK_TART_VNC_PRINT-1}" MOCK_VNC_URL="${MOCK_VNC_URL-}" MOCK_VNC_PORT="${MOCK_VNC_PORT-61234}" \
+    MOCK_SLEEP_DELAY="${MOCK_SLEEP_DELAY-0}" \
     TART_NC_BIN="$MOCKBIN/nc" TART_NETPOLICY="$netpolicy" TART_MOUNTS="$mounts" TART_GUI="$gui" \
     TART_LOG_DIR="${RUNUP_LOG_DIR:-$WORK/logs}" \
     bash "$BIN/tart-up" "$@" >/dev/null 2>"$ERR" || rc=$?
@@ -654,7 +671,7 @@ assert_absent   "darwin window → no guest display-scale application" "$calls" 
 # must-pass control: Tart prints the URL, the host port answers — the same
 # proof-before-trust shape as the linux loopback verify, classifying a HOST
 # port instead of a guest one.
-MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 \
+MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 MOCK_SLEEP_DELAY=0.01 \
   runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
 assert_rc       "darwin vnc → exit 0" 0
 calls="$(cat "$CALLS")"
@@ -678,7 +695,7 @@ assert_absent   "darwin vnc — no-URL path never reaches the listener probe" "$
 
 # must-fail: Tart prints an unparseable URL — refuse rather than probe a
 # nonsense host/port pair.
-MOCK_PLATFORM=darwin MOCK_VNC_URL="vnc://onlyhost-no-port" \
+MOCK_PLATFORM=darwin MOCK_VNC_URL="vnc://onlyhost-no-port" MOCK_SLEEP_DELAY=0.01 \
   runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
 assert_rc       "darwin vnc — malformed URL from Tart → exit 1" 1
 assert_contains "darwin vnc — malformed-URL diagnostic names the failure" "$(cat "$ERR")" "could not parse Tart's VNC URL"
@@ -686,7 +703,7 @@ assert_absent   "darwin vnc — malformed URL never reaches the listener probe" 
 
 # must-fail: the URL parses, but the host port never actually accepts a
 # connection — proves the verify is a REAL probe, not a trust of the print.
-MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 MOCK_NC_VNC_RC=1 \
+MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 MOCK_NC_VNC_RC=1 MOCK_SLEEP_DELAY=0.01 \
   runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
 assert_rc       "darwin vnc — host port never accepts → exit 1" 1
 assert_contains "darwin vnc — listener-timeout diagnostic names host:port" "$(cat "$ERR")" "127.0.0.1:61234"

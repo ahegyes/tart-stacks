@@ -28,8 +28,11 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 # restatement of it.
 LIB="$REPO/shared/scripts/authorized-key-lib.sh"
 line_re() { grep -nE -- "$1" "$LIB" | head -n1 | cut -d: -f1; }
+# shellcheck disable=SC2016  # the literal `\$key_path` is grep's ERE for the
+# library's own source text, not a variable this shell should expand
 exists_line=$(line_re '^  if \[ ! -f "\$key_path" \]; then$')
 private_line=$(line_re "^  if grep -q .* \\\"\\\$key_path\\\"; then\$")
+# shellcheck disable=SC2016  # same as exists_line above: matches source text, not an expansion
 parse_line=$(line_re '^  if ! ssh-keygen -l -f "\$key_path"')
 check_order() { # <earlier-label> <earlier-line> <later-label> <later-line>
   if [ -n "$2" ] && [ -n "$4" ] && [ "$2" -lt "$4" ]; then

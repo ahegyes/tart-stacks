@@ -62,8 +62,15 @@ chmod +x "$MOCKBIN/sudo" "$MOCKBIN/csrutil" "$MOCKBIN/sw_vers" "$MOCKBIN/uname"
 
 # ── _detect_family ───────────────────────────────────────────────────────────
 echo "family-lib (darwin) — _detect_family:"
-# shellcheck source=/dev/null
-fam_out=$( ( source "$LIB"; printf '%s' "$_TART_FAMILY" ) )
+# MOCKBIN's uname defaults to Darwin (see above), so this exercises the
+# healthy path on a real Linux runner exactly as it does on macOS — without
+# it, sourcing the library reaches the real `uname -s` and hard-exits before
+# _TART_FAMILY is ever set, on any host that isn't actually Darwin.
+# shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+fam_out=$( ( export PATH="$MOCKBIN:$PATH"
+             # shellcheck source=/dev/null
+             source "$LIB"
+             printf '%s' "$_TART_FAMILY" ) )
 assert_eq "the only family is brew" "brew" "$fam_out"
 
 # Both platforms' libraries upload to the same /tmp/family-lib.sh; the one
@@ -72,6 +79,7 @@ assert_eq "the only family is brew" "brew" "$fam_out"
 wrong_platform_rc() {
   local rc=0
   # shellcheck disable=SC2016  # $1 is bash -c's own argument, not this shell's
+  # shellcheck disable=SC2031  # the subshell-scoped env IS the sandbox
   env PATH="$MOCKBIN:$PATH" MOCK_UNAME_S=Linux \
     bash -c '. "$1"' _ "$LIB" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
@@ -85,7 +93,7 @@ assert_eq "a non-Darwin guest hard-exits rather than guessing a family" 1 "$(wro
 echo
 echo "family-lib (darwin) — pkg_install:"
 LOG="$WORK/sudo-log"
-# shellcheck disable=SC2030  # the subshell-scoped env IS the sandbox
+# shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" MOCK_LOG="$LOG" TART_BUILD_USER=admin
   # shellcheck source=/dev/null
   source "$LIB"
@@ -176,7 +184,8 @@ DAEMON="$WORK/tart-guest-daemon.plist"; AGENT="$WORK/tart-guest-agent.plist"
 agent_err=""
 agent_rc() {  # <daemon-plist> <agent-plist>
   local rc=0
-  agent_err=$( ( export TART_GUEST_DAEMON_PLIST="$1" TART_GUEST_AGENT_PLIST="$2"
+  # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+  agent_err=$( ( export TART_GUEST_DAEMON_PLIST="$1" TART_GUEST_AGENT_PLIST="$2" PATH="$MOCKBIN:$PATH"
                  # shellcheck source=/dev/null
                  source "$LIB"
                  install_guest_agent ) 2>&1 ) || rc=$?
@@ -207,7 +216,12 @@ echo "family-lib (darwin) — assert_nopasswd_sudo, layers 1-2 (existence, synta
 sudoers_err=""
 sudoers_rc() {  # <sudoers-file-path> [sudo -l -U output]
   local rc=0
-  sudoers_err=$( ( export SUDOERS_NOPASSWD_FILE="$1" PATH="$SUDOBIN:$PATH" \
+  # SUDOBIN ahead of MOCKBIN so its sudo (a controllable `-l -U` policy
+  # answer) wins over MOCKBIN's own sudo (argv-logging, always rc=0); MOCKBIN
+  # still supplies uname (defaults to Darwin), csrutil and sw_vers so sourcing
+  # the library here doesn't hard-exit on a non-Darwin runner.
+  # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
+  sudoers_err=$( ( export SUDOERS_NOPASSWD_FILE="$1" PATH="$SUDOBIN:$MOCKBIN:$PATH" \
                       MOCK_SUDO_L_OUTPUT="${2:-(ALL) ALL}"
                     # shellcheck source=/dev/null
                     source "$LIB"

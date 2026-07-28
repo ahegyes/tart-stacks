@@ -45,8 +45,13 @@ chmod +x "$MOCKBIN/tart"
 # The closing tart-ssh-sync run refuses on ssh without `Match sessiontype`
 # (OpenSSH < 10, e.g. the ubuntu CI runner), which would abort setup under
 # set -e. Shim ssh to a parse-anything stub there so the install flow stays
-# testable; full-fidelity validation runs wherever ssh is current.
+# testable; full-fidelity validation runs wherever ssh is current. The probe
+# result is also kept in $SSH_HAS_SESSIONTYPE (same flag test/parsing.sh
+# uses) for the later assertions below that call the real system ssh
+# directly rather than through this shim.
+SSH_HAS_SESSIONTYPE=1
 if ! printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/dev/null 2>&1; then
+  SSH_HAS_SESSIONTYPE=0
   printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCKBIN/ssh"
   chmod +x "$MOCKBIN/ssh"
   ok "old ssh detected: sync's ssh shimmed (full validation needs OpenSSH >= 10)"
@@ -373,8 +378,19 @@ assert_contains "spaced generated path → Include is quoted" "$(cat "$SSHCFG")"
 run_setup
 run_setup
 assert_eq "spaced generated path → still one Include after three runs" "1" "$(grep -c 'out dir/tart-vms' "$SSHCFG")"
-if ssh -G -F "$SSHCFG" someprobe >/dev/null 2>&1; then ok "spaced generated path → ssh still parses the config"
-else bad "spaced generated path → ssh still parses the config" "ssh -G rejected it"; fi
+# This call goes straight to the real system ssh (unlike run_setup, it never
+# routes through $MOCKBIN), and the generated file it follows the Include
+# into still carries the `Match sessiontype` line regardless of that shim —
+# tart-ssh-sync's own probe only gates whether it writes the file, not what
+# it writes. On OpenSSH < 10 that Match line alone fails the parse ("Unsupported
+# Match attribute sessiontype"), which would misreport as a quoting regression
+# in the very thing this case exists to check.
+if [ "$SSH_HAS_SESSIONTYPE" -eq 1 ]; then
+  if ssh -G -F "$SSHCFG" someprobe >/dev/null 2>&1; then ok "spaced generated path → ssh still parses the config"
+  else bad "spaced generated path → ssh still parses the config" "ssh -G rejected it"; fi
+else
+  ok "skipped: spaced generated path → ssh still parses the config (needs OpenSSH >= 10, Match sessiontype)"
+fi
 
 # setup is run through a symlink by anything that puts script/ on a path; the
 # repo it links the commands from must still be this checkout.
