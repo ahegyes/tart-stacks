@@ -39,8 +39,8 @@ nl=$'\n'
 
 # ── bin/tart-ssh-sync: forwards parser (exercised via --dry-run) ────────────
 # Mock `tart` so the script's `command -v tart` resolves (it bakes that path
-# into the generated ProxyCommand). The generator no longer reads `tart list`,
-# so the mock's output is irrelevant — only its presence on PATH matters.
+# into the generated ProxyCommand). The generator never reads `tart list`, so
+# the mock's output is irrelevant — only its presence on PATH matters.
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/tart" <<'TART'
 #!/usr/bin/env bash

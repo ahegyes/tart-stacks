@@ -85,7 +85,21 @@ assert_nopasswd_sudo || exit 1
 # is asserted rather than documented. Runs after the services above are
 # down, so it observes the surface this script actually produced.
 echo "==> Verifying the listener surface is :22 alone..."
-unexpected="$(netstat -an -p tcp | awk '$NF == "LISTEN" { n = split($4, a, "."); print a[n] }' | sort -u | grep -vx 22 || true)"
+# Parsed once, into a variable, so a failing netstat aborts here under
+# `set -euo pipefail` instead of being swallowed. Folding the read into the
+# `|| true` below would make an unreadable table indistinguishable from a
+# clean one.
+listen_ports="$(netstat -an -p tcp | awk '$NF == "LISTEN" { n = split($4, a, "."); print a[n] }' | sort -u)"
+# Must-pass control, the same one script/smoke's runtime peer applies: :22 has
+# to appear in the parsed set on its own. Without it "nothing unexpected is
+# listening" is vacuously true of an empty read or a parse that stopped
+# matching — which is exactly how this assert would fail silently if a future
+# macOS changed netstat's column shape.
+if ! printf '%s\n' "$listen_ports" | grep -qx 22; then
+  echo "ERROR: the listener table does not show :22 itself (got: $(printf '%s' "$listen_ports" | tr '\n' ' ')). sshd is serving this very build, so this read is not trustworthy evidence — refusing to certify the listener surface from it." >&2
+  exit 1
+fi
+unexpected="$(printf '%s\n' "$listen_ports" | grep -vx 22 || true)"
 if [ -n "$unexpected" ]; then
   echo "ERROR: unexpected listening port(s): $(echo "$unexpected" | tr '\n' ' ')— this image is supposed to expose ssh and nothing else." >&2
   exit 1
@@ -174,6 +188,27 @@ EOF
 # positioned AFTER this line, not simplified back above it alongside the
 # other service teardown near the top of this script.
 sshd -t
+# `sshd -t` checks syntax and key sanity — it says nothing about which value
+# WINS. The drop-in's whole premise is that `00-` outranks the base's shipped
+# `100-macos.conf` under first-occurrence-wins, so read the EFFECTIVE config
+# and assert the directives that matter actually took. This platform never
+# locks the account password (see the manifest note above), which makes
+# `passwordauthentication no` the only thing standing between a clone and the
+# publicly-known admin password.
+echo "==> Verifying sshd's effective config carries the hardening..."
+sshd_effective="$(sshd -T)"
+for want in \
+  "passwordauthentication no" \
+  "kbdinteractiveauthentication no" \
+  "permitrootlogin no" \
+  "pubkeyauthentication yes" \
+  "streamlocalbindunlink yes"
+do
+  printf '%s\n' "$sshd_effective" | grep -qix "$want" || {
+    echo "ERROR: sshd's effective configuration does not carry '${want}' — the drop-in was written but something outranks it. This image would ship with the posture it claims to close." >&2
+    exit 1
+  }
+done
 
 # macOS regenerates host keys itself: sshd runs via
 # Program=/usr/libexec/sshd-keygen-wrapper under inetdCompatibility, which

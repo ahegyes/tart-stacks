@@ -81,7 +81,7 @@ fi
 
 # gate_verdict <OS> [release-rc] [agent-rc] — "pass" or "refuse"; stderr of the
 # run is left in $GATE_ERR for the message assertion. No uname mock: the
-# window no longer calls uname (family-lib.sh owns that assertion, above the
+# window does not call uname (family-lib.sh owns that assertion, above the
 # window — see the comment on the extraction above), so nothing here would
 # exercise one. The extra statuses are positional rather than environment
 # prefixes on the call: bash leaves a `VAR=x func` assignment set after the

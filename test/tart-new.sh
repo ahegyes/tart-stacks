@@ -29,7 +29,8 @@ trap 'rm -rf "$WORK"' EXIT
 # clone, which must land here, never in the developer's real ~/.ssh.
 mkdir -p "$WORK/home/.ssh"
 
-# Fixture stacks/ tree: two stacks present (dirs no longer carry OS prefix).
+# Fixture stacks/ tree: two stacks present. Directory names are bare stack
+# tokens; the OS is a build argument, never part of the path.
 mkdir -p "$WORK/stacks/php/scripts" "$WORK/stacks/jvm/scripts"
 
 # Supported-OS fixture used by the pure-helper and main-flow sections.
@@ -389,11 +390,16 @@ assert_contains "look-alike project name clones" "$(<"$TART_CALLS")" "clone fedo
 
 echo "bin/lib/common.sh — tart_valid_vm_name:"
 check "plain name valid"             0 tart_valid_vm_name app-a
-check "digits and underscore valid"  0 tart_valid_vm_name a1_b2
+check "digits valid"                 0 tart_valid_vm_name a1b2
 check "dotted name invalid"          1 tart_valid_vm_name app.v2
 check "comma name invalid"           1 tart_valid_vm_name a,b
 check "star invalid"                 1 tart_valid_vm_name '*'
 check "leading dash invalid"         1 tart_valid_vm_name -x
+# Underscore is not a legal hostname character (RFC 1034), and macOS enforces
+# that asymmetrically: `scutil --set LocalHostName` refuses it while
+# `--set HostName` accepts it, so an underscore name renames a darwin guest
+# only partially. Refusing it here is what keeps that from ever being created.
+check "embedded underscore invalid"  1 tart_valid_vm_name a1_b2
 check "leading underscore invalid"   1 tart_valid_vm_name _x
 check "empty invalid"                1 tart_valid_vm_name ''
 check "reserved tart- prefix invalid" 1 tart_valid_vm_name tart-x

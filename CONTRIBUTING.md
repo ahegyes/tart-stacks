@@ -19,7 +19,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 2. Fast pre-checks — mirror the CI gates locally:
    - `packer validate -var stack=<name> -var os=<os> linux.pkr.hcl` (or `darwin.pkr.hcl`, for an `<os>` from `shared/darwin/os`) (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed — **syntax only, not proof of runtime behavior**.
    - `make test` — the plain-bash test suite (`test/*.sh`), exactly what the CI tests job runs.
-   - `shellcheck -f gcc $(git ls-files '*.sh')` — the CI job lints every tracked script this way (`test/` included, not just `shared/`/`stacks/`/`bin/`) and fails on shellcheck **warnings**, not just errors, so locally-clean on the whole repo is the bar, not just the file you touched. (Scaffold templates get linted too, with `__STACK__` substituted; see `.github/workflows/validate.yml`.)
+   - `make lint` — **the same target the CI job runs**, so a clean local run and a clean CI run mean the same thing. It lints every tracked script (`test/` included, and the extensionless host commands under `bin/`/`script/` that a `*.sh` glob would skip) plus the scaffold templates with `__STACK__` substituted, and fails on shellcheck **warnings**, not just errors — so whole-repo clean is the bar, not just the file you touched.
 3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name> OS=<os>` (15-20 min for PHP). Follow with `make smoke STACK=<name> OS=<os>` (~1 min; boots a real VM, so local-only). The manual equivalent, for poking around inside:
    ```bash
    tart-new test-vm <name> <os>   # guarded clone

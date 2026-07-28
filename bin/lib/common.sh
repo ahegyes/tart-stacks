@@ -100,16 +100,23 @@ tart_resolve_vm() {
 # tart_valid_vm_name <name> — 0 iff the name is a token every consumer can
 # carry: the ssh alias (tart-<name>), the guest hostname (`hostname -s` must
 # equal the name, so no dots), and the vm-pattern grammar (commas are list
-# separators, `*` is the wildcard). Letters/digits/_/-, alphanumeric head.
+# separators, `*` is the wildcard). Letters/digits/-, alphanumeric head.
 # The `tart-` prefix itself is reserved for SSH aliases; alias-aware commands
 # may strip it before resolving the bare stored VM name. Pure-bash glob
 # classes: no subprocess per check. LC_ALL=C is what makes the ranges
-# byte-exact — under a UTF-8 collation `[A-Za-z0-9_-]` also admits accented
+# byte-exact — under a UTF-8 collation `[A-Za-z0-9-]` also admits accented
 # letters, so `café` would pass here and then fail as a hostname downstream.
+#
+# Underscore is excluded because it is not a legal hostname character
+# (RFC 1034), and a guest is where that bites rather than here: macOS
+# SCPreferencesSetLocalHostName REFUSES a name containing `_` while
+# `scutil --set HostName` accepts it, so an underscore name renames a darwin
+# guest only partially. Rejecting it at creation keeps every downstream
+# consumer's assumption true by construction.
 tart_valid_vm_name() {
   local LC_ALL=C
   case "$1" in
-    ''|*[!A-Za-z0-9_-]*|[_-]*|tart-*) return 1 ;;
+    ''|*[!A-Za-z0-9-]*|[-]*|tart-*) return 1 ;;
   esac
   return 0
 }
@@ -127,10 +134,9 @@ tart_ssh_has_sessiontype() {
 # <os>-<stack> built image, or a <os>-<stack>-<de> GUI flavor), not a
 # dev VM. Anchored on the supported OS set so hyphenated dev-VM names
 # (e.g. web-php, app-base) are NOT misread as base images. <os-glob> scans
-# every platform's os file (shared/*/os) rather than one hardcoded path: once
-# `make bootstrap OS=macos` can clone a real macos-base (this repo now builds
-# more than the linux platform), a caller that only knew shared/linux/os would
-# wave a "macos-base" dev VM straight through. Desktops stay a single file —
+# every platform's os file (shared/*/os) rather than one hardcoded path:
+# `make bootstrap OS=macos` clones a real macos-base, so a caller that knew
+# only shared/linux/os would wave a "macos-base" dev VM straight through. Desktops stay a single file —
 # GUI flavors are a linux-only concept, so shared/linux/desktops is the only
 # one that exists.
 tart_is_base_image() {

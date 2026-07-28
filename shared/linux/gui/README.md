@@ -280,12 +280,14 @@ treats an empty file as an absent one, so scaling still works and the file is
 rebuilt on the next run; only settings made through the desktop's own tools are
 lost. Waiting ~20 s between stopping the desktop and stopping the VM avoids it.
 
-Every OS × DE cell is supported; there is no refused combination. The X
-session assert above is the only gate, and it reads `/usr/share/xsessions/`
-rather than package names — which is what a cell actually needs. Debian's
-`plasma-workspace` ships no `plasma-x11-session` package but does ship
-`plasmax11.desktop`, so a package-name probe refused a cell that builds and
-boots. Add an OS or a DE and the assert covers it without a new special case.
+Cells are gated on what the guest can actually serve, not on a hardcoded
+matrix. `gui_require_cell` refuses the one combination that cannot work
+(fedora × gnome — see the table above), and everything else is decided by the X
+session assert, which reads `/usr/share/xsessions/` rather than package names —
+which is what a cell actually needs. Debian's `plasma-workspace` ships no
+`plasma-x11-session` package but does ship `plasmax11.desktop`, so a
+package-name probe refused a cell that builds and boots. Add an OS or a DE and
+the assert covers it without a new special case.
 
 ## Sizing
 

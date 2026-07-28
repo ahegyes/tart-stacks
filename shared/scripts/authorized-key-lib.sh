@@ -25,7 +25,9 @@
 # "-----BEGIN" prefix, so it does not match. And the match is NOT anchored to
 # the start of a line: an anchor would miss an indented private block pasted
 # below a valid pubkey line — a compound file the parse check alone accepts,
-# since it only reads the first line.
+# since `ssh-keygen -l -f` exits 0 when ANY line of the file parses as a key,
+# not merely the first (measured on OpenSSH 10.2: garbage on line 1 followed by
+# a valid pubkey on line 2 still exits 0).
 #
 # Takes the key path as an argument rather than a fixed location, so the same
 # gate serves every platform's upload destination and can be driven against

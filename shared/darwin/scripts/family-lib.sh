@@ -157,11 +157,17 @@ SUDOERS_NOPASSWD_FILE="${SUDOERS_NOPASSWD_FILE:-/etc/sudoers.d/${TART_BUILD_USER
 # false-passing check. `-l -U` instead asks the sudoers POLICY what that
 # user may run — the same thing a real `ssh <vm> sudo ...` consults — and,
 # unlike `visudo -cf`, works when invoked as root without prompting.
-# Matched against the standard sudoers `-l` rendering (confirmed on a real
-# macOS host): a full grant renders as the literal line `(ALL) NOPASSWD:
-# ALL`; a merely-password-required default (e.g. the base's own %admin
-# group rule, present regardless of this file's content) renders as `(ALL)
-# ALL` with no NOPASSWD tag, which correctly does NOT match.
+#
+# The match is LINE-ANCHORED and reads the runas field, because `sudo -l`
+# renders every matching rule as `(runas) NOPASSWD: cmnds` and lists them all
+# without resolving precedence. A bare `NOPASSWD: ALL` substring would accept
+# two grants that do not authorize ordinary sudo-to-root: one whose runas is
+# some other account (`(daemon) NOPASSWD: ALL`), and one that is merely a
+# prefix of a longer command path. Only a runas including root counts, in the
+# renderings sudo actually emits — `(ALL)`, `(ALL : ALL)`, `(root)`,
+# `(root : ALL)`. A merely-password-required default (e.g. the base's own
+# %admin group rule, present regardless of this file's content) renders as
+# `(ALL) ALL` with no NOPASSWD tag, which correctly does NOT match.
 assert_nopasswd_sudo() {
   [ -f "$SUDOERS_NOPASSWD_FILE" ] || {
     echo "ERROR: no NOPASSWD sudoers drop-in at ${SUDOERS_NOPASSWD_FILE}. This base was expected to ship it already — nothing here installs one." >&2
@@ -173,9 +179,9 @@ assert_nopasswd_sudo() {
   }
   local grant
   grant="$(sudo -n -l -U "$TART_BUILD_USER" 2>&1)"
-  case "$grant" in
-    *"NOPASSWD: ALL"*) return 0 ;;
-  esac
-  echo "ERROR: ${TART_BUILD_USER} has no (ALL) NOPASSWD: ALL grant in the sudoers policy, even though ${SUDOERS_NOPASSWD_FILE} exists and parses (sudo -l -U reports: ${grant}). A syntactically valid drop-in that grants nothing, or grants a different user, still leaves 'ssh <vm> sudo ...' hanging on a password prompt no one can answer." >&2
+  if printf '%s\n' "$grant" | grep -qE '^[[:space:]]*\((ALL|root)([[:space:]]*:[[:space:]]*[^)]*)?\)[[:space:]]+NOPASSWD:[[:space:]]+ALL[[:space:]]*$'; then
+    return 0
+  fi
+  echo "ERROR: ${TART_BUILD_USER} has no root-granting NOPASSWD: ALL rule in the sudoers policy, even though ${SUDOERS_NOPASSWD_FILE} exists and parses (sudo -l -U reports: ${grant}). A syntactically valid drop-in that grants nothing, grants a different user, or grants NOPASSWD for a runas other than root still leaves 'ssh <vm> sudo ...' hanging on a password prompt no one can answer." >&2
   return 1
 }

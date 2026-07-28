@@ -425,10 +425,53 @@ assert_rc       "a headless image smoked as a GUI flavor → FAIL" 1
 MOCK_TOOL_RC=127 run_smoke php fedora
 assert_rc       "toolchain unreachable non-interactively → FAIL" 1
 assert_contains "toolchain failure explains the consequence" "$(cat "$ERR")" "PATH wiring is broken"
+# The probe list is read from stacks/<stack>/smoke-probe, so each stack is
+# checked against what IT declares — not against a php-or-else-jvm fork that
+# probes a third stack for a runtime it does not have. Asserted against the
+# real files rather than a fixture: the point is that the shipped declarations
+# are the ones that run.
 run_smoke php fedora
-assert_contains "php stack probes php"  "$(cat "$CALLS")" "php --version"
+assert_rc       "php declaration-driven run → exit 0 (probe loop actually ran)" 0
+assert_contains "php stack probes php"      "$(cat "$CALLS")" "php --version"
+assert_contains "php stack probes composer" "$(cat "$CALLS")" "composer --version"
+assert_absent   "php stack does not probe java" "$(cat "$CALLS")" "java"
 MOCK_MANIFEST_STACK=jvm run_smoke jvm fedora
-assert_contains "jvm stack probes java" "$(cat "$CALLS")" "java -version"
+# The rc control is load-bearing: the loop below emits one assertion per
+# DATA line, so a comment-only smoke-probe would shrink it to zero
+# assertions and this whole block would silently stop testing anything.
+assert_rc       "jvm declaration-driven run → exit 0 (probe loop actually ran)" 0
+jvm_calls="$(cat "$CALLS")"
+while IFS= read -r want; do
+  assert_contains "jvm stack probes '$want'" "$jvm_calls" "$want"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/stacks/jvm/smoke-probe")
+assert_absent "jvm stack does not probe php" "$jvm_calls" "php --version"
+
+# A stack with no declaration must FAIL rather than silently probe nothing:
+# "toolchain passed" having probed zero commands is the failure mode the data
+# file exists to prevent. Pinned to this gate's own wording — the empty-file
+# gate below also says "smoke-probe", so a looser match would stay green with
+# this branch deleted.
+MOCK_MANIFEST_STACK=ghost run_smoke ghost fedora
+assert_rc       "a stack with no smoke-probe file → FAIL" 1
+assert_contains "missing probe list names the file" "$(cat "$ERR")" "no probe list at"
+
+# Present but declaring nothing is the same defect in a different shape, and
+# takes the OTHER gate. script/smoke resolves stacks/ from its own location,
+# so the fixture is a scratch repo holding a copy of the script, the libs it
+# sources, the os token lists, and one stack whose smoke-probe is comment-only.
+FAKE_REPO="$WORK/hollow-repo"
+mkdir -p "$FAKE_REPO/script" "$FAKE_REPO/bin/lib" "$FAKE_REPO/shared/linux" \
+         "$FAKE_REPO/shared/darwin" "$FAKE_REPO/stacks/hollow"
+cp "$SMOKE" "$FAKE_REPO/script/smoke"
+cp "$REPO"/bin/lib/*.sh "$FAKE_REPO/bin/lib/"
+cp "$REPO/shared/linux/os" "$FAKE_REPO/shared/linux/os"
+cp "$REPO/shared/darwin/os" "$FAKE_REPO/shared/darwin/os"
+printf '# a probe list holding only commentary\n\n' > "$FAKE_REPO/stacks/hollow/smoke-probe"
+SMOKE_REAL="$SMOKE"; SMOKE="$FAKE_REPO/script/smoke"
+MOCK_MANIFEST_STACK=hollow run_smoke hollow fedora
+SMOKE="$SMOKE_REAL"
+assert_rc       "a comment-only smoke-probe → FAIL" 1
+assert_contains "empty probe list names the vacuous pass it prevents" "$(cat "$ERR")" "lists no commands"
 
 # The hardening posture, read from sshd's effective config rather than the file.
 for missing in "passwordauthentication no" "permitrootlogin no" "kbdinteractiveauthentication no" "streamlocalbindunlink yes"; do
@@ -514,6 +557,19 @@ MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
 assert_rc       "darwin Screen Sharing listening → FAIL" 1
 assert_contains "Screen Sharing failure names the service" "$(cat "$ERR")" "Screen Sharing"
 assert_contains "Screen Sharing failure names the threat"  "$(cat "$ERR")" "admin/admin"
+
+# A LOOPBACK-bound :5900 is the only case this gate catches that the general
+# non-loopback check below does not — every other shape trips that one too, so
+# without this row the Screen Sharing gate could be deleted outright and the
+# suite would stay green on the strength of its neighbour. The bind is
+# deliberately not tolerated the way an operator's RemoteForward is: nothing
+# legitimately forwards a tunnel onto :5900, so its appearance means the base's
+# disabled service came back.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 127.0.0.1.5900 *.* LISTEN')" \
+  run_smoke php macos
+assert_rc       "darwin LOOPBACK-bound :5900 → FAIL (not excused as a tunnel)" 1
+assert_contains "loopback :5900 failure still names Screen Sharing" "$(cat "$ERR")" "Screen Sharing"
 
 # An unexpected port that is NOT Screen Sharing (e.g. the base's Kerberos KDC
 # on :88) must still fail the general :22-alone claim, naming the port.

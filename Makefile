@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-token list-stacks check-os check-gui check-de
+.PHONY: help setup uninstall test lint smoke init bootstrap build rebuild scaffold clean check-stack check-stack-token list-stacks check-os check-gui check-de
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php OS=fedora`.
 STACK ?=
@@ -63,6 +63,31 @@ uninstall:
 test:
 	@"$(CURDIR)/script/test"
 
+# lint — the ONE definition of what shellcheck covers, so the docs and CI
+# cannot describe different sets. A `*.sh` glob is not that set: every host
+# command (bin/tart-*, script/*) is extensionless, so a glob-based command
+# silently skips the most security-relevant files in the repo while
+# a whole-repo scan lints them. Discovery here matches what such a scan finds —
+# tracked *.sh, plus tracked executables with no extension whose first line is
+# a shell shebang. Scaffold templates are linted with __STACK__ substituted,
+# since their .tmpl suffix hides them from any name-based match.
+lint:
+	@files=$$(git ls-files '*.sh'); \
+	for f in $$(git ls-files); do \
+	  case "$$f" in *.*) continue ;; esac; \
+	  [ -f "$$f" ] && [ -x "$$f" ] || continue; \
+	  if head -n1 "$$f" | grep -qE '^#! */[^ ]*/(env +)?[abk]*sh'; then files="$$files $$f"; fi; \
+	done; \
+	n=$$(printf '%s\n' $$files | grep -c .); \
+	echo "==> shellcheck: $$n tracked scripts"; \
+	shellcheck -f gcc $$files || exit 1; \
+	for t in templates/stack/scripts/*.sh.tmpl templates/stack/scripts/*/*.sh.tmpl; do \
+	  [ -e "$$t" ] || continue; \
+	  echo "==> shellcheck: $$t (__STACK__ substituted)"; \
+	  sed 's/__STACK__/x/g' "$$t" | shellcheck -f gcc - || exit 1; \
+	done; \
+	echo "lint: clean"
+
 # STACK is set and is a bare lowercase-alphanumeric token — the shared gate
 # behind check-stack (an existing stack) and scaffold (a new one). The token
 # rule is load-bearing for scaffold, which interpolates STACK into mkdir paths
@@ -114,8 +139,9 @@ PLATFORM := $(shell count=0; chosen=""; \
 # Validate OS is set, supported, and claimed by exactly one platform. Scans
 # every shared/*/os rather than hardcoding shared/linux/os, so a new
 # platform's token list is picked up by construction rather than a second
-# edit here — the two had already drifted once (this gate vs. the PLATFORM
-# resolver above) before this fix. The "Supported:" listing groups tokens
+# edit here — this gate and the PLATFORM resolver above are two readers of the
+# same tree, and a hardcoded list in either one drifts from it. The
+# "Supported:" listing groups tokens
 # under the platform that claims them: a flattened "macos fedora ubuntu"
 # gives a reader no way to route a token back to a directory.
 check-os:
@@ -262,7 +288,7 @@ scaffold: check-stack-token
 	done
 	@chmod +x "$(STACK_DIR)"/scripts/*.sh "$(STACK_DIR)"/scripts/*/*.sh
 	@echo "scaffolded $(STACK_DIR)/ — next:"
-	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions)"
+	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions) and $(STACK_DIR)/smoke-probe"
 	@echo "  2. in scripts/linux/mise-install.sh AND scripts/darwin/mise-install.sh, add"
 	@echo "     ONE smoke_gate check per tool — a missing check ships an unverified"
 	@echo "     runtime (the gate only tests what you list); the two files start"
