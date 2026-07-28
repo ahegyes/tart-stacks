@@ -37,18 +37,27 @@ chown -R "${TARGET_USER}:staff" "${TARGET_HOME}/.config"
 # The sealed system volume forbids creating a symlink at /, so synthetic.conf is
 # the supported mechanism — and it is WRITE-ONCE: the first value materialises at
 # the next boot and later edits never update it, so a wrong value here needs a
-# rebuild, not a fix. Two hops because synthetic.conf cannot create a nested path.
-echo "==> Registering /mnt/shared for Tart directory shares..."
+# rebuild, not a fix. Two hops for `mnt` because synthetic.conf cannot create a
+# nested path.
+#
+# macOS ships no top-level /run at all (only /var/run, via the pre-existing
+# /var -> /private/var symlink), while tart-ssh-sync emits every RemoteForward
+# target at /run/tart/agent-<name>.sock unconditionally, with no platform branch.
+# The `run` entry below resolves /run straight to /private/var/run so that path
+# exists on darwin too — bundled into the one synthetic.conf write below rather
+# than a second write, since the mechanism is write-once per file.
+echo "==> Registering synthetic.conf: /mnt/shared for Tart directory shares, /run for forwarded agent sockets..."
 install -d -m 755 "${TART_ROOT}/opt/tart/mnt"
 ln -sfn "/Volumes/My Shared Files" "${TART_ROOT}/opt/tart/mnt/shared"
-printf 'mnt\t/opt/tart/mnt\n' > "${TART_ROOT}/etc/synthetic.conf"
+printf 'mnt\t/opt/tart/mnt\nrun\t/private/var/run\n' > "${TART_ROOT}/etc/synthetic.conf"
 chmod 644 "${TART_ROOT}/etc/synthetic.conf"
 
 # /var/run is cleared at boot on macOS exactly as /run is on linux, so the parent
 # of the per-agent sockets has to be recreated every boot — this is the tmpfiles.d
 # analogue. The dev user owns it because sshd binds the socket as the session user
 # and a root-owned parent refuses the bind with EACCES, which the generated SSH
-# config's LogLevel ERROR hides.
+# config's LogLevel ERROR hides. The synthetic.conf entry above is what makes
+# /run/tart (the path tart-ssh-sync actually emits) resolve to this directory.
 echo "==> Registering /var/run/tart for forwarded agent sockets..."
 cat > "${TART_ROOT}/Library/LaunchDaemons/tart-stacks-runtime-dir.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

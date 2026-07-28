@@ -65,9 +65,12 @@ echo "user-config (darwin) — synthetic.conf:"
 SC="$WORK/etc/synthetic.conf"
 # od -c renders a literal TAB as the two-character sequence \t; a
 # space-separated line (the form macOS silently ignores) would not contain it.
-tabs=$(od -c "$SC" | grep -c '\\t')
-assert_eq "single TAB-separated line — a space is silently ignored by macOS" "1" "$tabs"
+# -o counts every occurrence, not just matching od-output lines, since od wraps
+# at 16 bytes/line and could fold two TABs onto — or split them across — one line.
+tabs=$(od -c "$SC" | grep -o '\\t' | wc -l | tr -d '[:space:]')
+assert_eq "two TAB-separated lines — a space is silently ignored by macOS" "2" "$tabs"
 assert_contains "names mnt -> /opt/tart/mnt" "$(cat "$SC")" "$(printf 'mnt\t/opt/tart/mnt')"
+assert_contains "names run -> /private/var/run (parity: darwin ships no top-level /run)" "$(cat "$SC")" "$(printf 'run\t/private/var/run')"
 
 # ── shared symlink ───────────────────────────────────────────────────────────
 echo
