@@ -22,8 +22,14 @@
 # tart-up STARTS the VM — see dir_args.
 # GUI mode: `--gui=` overrides an exact-name entry in
 # ~/.config/tart-stacks/gui (override $TART_GUI); absent means headless. On a
-# window boot, the guest desktop is scaled to the main host display's backing
-# scale before its session starts (override $TART_DISPLAY_SCALE).
+# LINUX window boot, the guest desktop is scaled to the main host display's
+# backing scale before its session starts (override $TART_DISPLAY_SCALE) — a
+# macOS guest's own window needs no such step. VNC differs by platform too:
+# linux serves it from a guest-side systemd unit; darwin has no guest listener
+# at all, serving it host-side via Tart's own `--vnc-experimental`. Platform is
+# read from Tart itself (`tart get --format json`'s OS field), never guessed
+# from the image name — see tart_vm_platform in bin/lib/common.sh, which
+# refuses to answer rather than default to linux on a failed read.
 
 set -euo pipefail
 
@@ -36,11 +42,12 @@ SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 . "$SCRIPT_DIR/lib/common.sh"
 
 # Repo root + stacks dir (TART_STACKS_DIR overrides for tests), used by the
-# base-image guard below to recognize any built stack image regardless of OS.
+# base-image guard below to recognize any built stack image regardless of OS
+# or platform.
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
-DISTROS_FILE="${TART_DISTROS:-$REPO/shared/distros}"
-DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/desktops}"
+OS_FILES="${TART_OS_FILES:-$REPO/shared/*/os}"
+DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/linux/desktops}"
 
 # BSD nc's -G is the probe's connect bound; a PATH-shadowing GNU netcat parses
 # -G as a no-op, so pin the system binary (TART_NC_BIN is the test seam).
@@ -57,11 +64,19 @@ An absent entry defaults to headless. Corrupt or duplicate entries fail closed.
 
 Window mode opens Tart's VM window. Closing that window kills the VM, and a
 windowed launch needs a GUI login session; a daemon context may not be able to
-open the window. Before starting that boot's desktop session, tart-up applies
-the main host display's integer backing scale (native pixels / logical points).
+open the window. On a LINUX guest, tart-up applies the main host display's
+integer backing scale (native pixels / logical points) before starting that
+boot's desktop session; a macOS guest's own window needs no such step, since
+it is up as soon as the VM is.
 Set TART_DISPLAY_SCALE to force a scale: non-integers warn and use 1, and values
 outside 1-3 are clamped into that range with a warning.
 Detection failures use 1, and guest application failures warn but continue.
+
+VNC mode differs by platform: a LINUX guest serves it from a guest-side
+systemd unit on 127.0.0.1:5901 (tunnel with ssh -L). A darwin guest has no
+guest-side VNC listener at all — Tart's own --vnc-experimental serves it from
+the HOST, on an ephemeral per-boot port; point a VNC client straight at the
+vnc:// URL tart-up prints once it has verified that port is live.
 EOF
 }
 
@@ -83,7 +98,7 @@ tart_need_cmd jq   "Install: brew install jq"
 # 30 silent probe failures and a misleading ":22 timeout" diagnosis.
 [ -x "$NC_BIN" ] || { echo "$prog: SSH probe binary '$NC_BIN' not found or not executable." >&2; exit 1; }
 
-VM=$(tart_resolve_vm "$VM" " Or create it: tart-new ${VM#tart-} <stack> <distro>.") || exit 1
+VM=$(tart_resolve_vm "$VM" " Or create it: tart-new ${VM#tart-} <stack> <os>.") || exit 1
 # A nonzero tart_vm_state means the tool is broken, not that the name missed.
 list_failed() {
   echo "$prog: 'tart list' failed — cannot read VM states; see the error above." >&2
@@ -91,11 +106,11 @@ list_failed() {
 }
 STATE=$(tart_vm_state "$VM") || list_failed
 
-# Base images (the `<distro>-base` bootstrap intermediate + every
-# <distro>-<stack>[-<de>] built image) are clone-sources, not dev VMs — but
+# Base images (the `<os>-base` bootstrap intermediate + every
+# <os>-<stack>[-<de>] built image) are clone-sources, not dev VMs — but
 # the `tart-*` SSH wildcard matches them too. Refuse.
-if tart_is_base_image "$VM" "$STACKS_DIR" "$DISTROS_FILE" "$DESKTOPS_FILE"; then
-  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <distro>'." >&2
+if tart_is_base_image "$VM" "$STACKS_DIR" "$OS_FILES" "$DESKTOPS_FILE"; then
+  echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <os>'." >&2
   exit 1
 fi
 
@@ -406,6 +421,75 @@ vnc_fail_closed() {
   fi
 }
 
+# ---- darwin-only boot steps -------------------------------------------------
+# macOS has no hostnamectl; scutil is the guest-side equivalent. All three
+# names are set because different consumers read a different one: `hostname
+# -s` follows LocalHostName, ComputerName is what the UI shows, and HostName
+# is what a DNS/mDNS resolver would return — setting only one leaves a clone
+# half-renamed in a way that surfaces only when the missed consumer is read.
+darwin_set_hostname() {
+  tart exec "$1" sudo scutil --set HostName      "$1" >/dev/null 2>&1 || return 1
+  tart exec "$1" sudo scutil --set LocalHostName "$1" >/dev/null 2>&1 || return 1
+  tart exec "$1" sudo scutil --set ComputerName  "$1" >/dev/null 2>&1 || return 1
+}
+
+DARWIN_VNC_URL="" DARWIN_VNC_HOST="" DARWIN_VNC_PORT=""
+
+# darwin_vnc_wait_for_url — poll this boot's run log for the "VNC server is
+# running at vnc://..." line --vnc-experimental prints once Virtualization.
+# Framework's VNC server has bound its (ephemeral, per-boot) port. There is no
+# guest-side signal to probe instead: unlike the linux image's systemd unit,
+# this surface never reaches the guest at all.
+darwin_vnc_wait_for_url() {
+  local attempt line
+  for ((attempt = 1; attempt <= 30; attempt++)); do
+    if [ -n "$run_log" ] && line=$(grep -m1 '^VNC server is running at ' "$run_log" 2>/dev/null); then
+      DARWIN_VNC_URL="${line#VNC server is running at }"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# darwin_vnc_parse_url <url> — split Tart's `vnc://:<password>@<host>:<port>`
+# into DARWIN_VNC_HOST/DARWIN_VNC_PORT. The port is ephemeral per boot (unlike
+# the linux image's fixed guest-side 5901), so it is only ever knowable by
+# reading what Tart itself printed.
+darwin_vnc_parse_url() {
+  local url="$1" rest
+  case "$url" in
+    vnc://*@*:*) ;;
+    *) return 1 ;;
+  esac
+  rest="${url#vnc://}"
+  rest="${rest#*@}"
+  DARWIN_VNC_HOST="${rest%:*}"
+  DARWIN_VNC_PORT="${rest##*:}"
+  case "$DARWIN_VNC_PORT" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ -n "$DARWIN_VNC_HOST" ]
+}
+
+# darwin_vnc_wait_for_listener — verify the HOST port Tart printed actually
+# accepts a connection before reporting success: the same fail-closed shape
+# the linux vnc path applies via vnc_wait_for_loopback (probe rather than
+# trust the advertised state), but on a HOST port instead of a guest one, and
+# reachability only — unlike vnc_listener_state, this never inspects the bind
+# address, so it trusts DARWIN_VNC_HOST rather than classifying it. Safe today
+# because Tart hardcodes the VNC listener to 127.0.0.1. Tart's own print can
+# race ahead of the framework's server actually being ready to accept a
+# connection.
+darwin_vnc_wait_for_listener() {
+  local attempt
+  for ((attempt = 1; attempt <= 30; attempt++)); do
+    "$NC_BIN" -z -G 3 "$DARWIN_VNC_HOST" "$DARWIN_VNC_PORT" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
 # Resolve this VM's net-policy + mounts + gui once (bare name for the per-VM
 # planes; netpolicy is VM-agnostic). Reuse them in the start + warning paths.
 # Net-policy is captured via command substitution so a bad token aborts right
@@ -477,12 +561,31 @@ if [ "$STATE" = "running" ]; then
     echo "$prog: '$VM' already running — gui mode '$GUI_MODE' applies at boot, so it has whatever it started with (stop + start to apply gui mode changes)." >&2
   fi
 elif [ "$STATE" = "stopped" ]; then
+  # Branch on what Tart reports about this VM, never the `<os>-<stack>`
+  # naming convention this repo's own images follow. Resolved only here, not
+  # unconditionally up front: this is the only branch that ever reads
+  # $PLATFORM (an already-running VM's hostname/gui were set on the boot that
+  # started it), and it must fail closed rather than default to linux —
+  # tart_vm_platform refuses to answer on a failed `tart get` or an
+  # empty/unrecognized OS field (a real TOCTOU here: tart_vm_state above
+  # already confirmed this VM exists, via a SEPARATE `tart list` call, and it
+  # can still vanish or become briefly unreadable before this one runs).
+  PLATFORM=$(tart_vm_platform "$VM") || {
+    echo "$prog: could not determine whether '$VM' is a darwin or linux VM (a failed 'tart get', or an empty/unrecognized OS field — see any error above); refusing to start without knowing which platform-specific boot steps it needs." >&2
+    exit 1
+  }
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
   # tart's --net-* family is mutually exclusive, so keep them visually adjacent.
   run_cmd=(tart run "$VM")
-  [ "$GUI_MODE" = "window" ] || run_cmd+=(--no-graphics)
+  if [ "$GUI_MODE" != "window" ]; then
+    run_cmd+=(--no-graphics)
+    # darwin's vnc surface is Tart's OWN host-side VNC server
+    # (Virtualization.Framework), added only here — unlike linux's guest-side
+    # systemd unit, it opens no listener inside the guest at all.
+    [ "$PLATFORM" = "darwin" ] && [ "$GUI_MODE" = "vnc" ] && run_cmd+=(--vnc-experimental)
+  fi
   [ "${#NETPOLICY_ARGS[@]}" -gt 0 ] && run_cmd+=("${NETPOLICY_ARGS[@]}")
   [ "${#DIR_ARGS[@]}" -gt 0 ] && run_cmd+=("${DIR_ARGS[@]}")
   # Capture tart's stderr (stdout is just VM console noise). A Tart crash is an
@@ -499,7 +602,14 @@ elif [ "$STATE" = "stopped" ]; then
   # run_log is what stops the timeout diagnostics below pointing at a log that
   # captured nothing.
   : >>"$run_log" 2>/dev/null || run_log=""
-  ( "${run_cmd[@]}" >/dev/null 2>"${run_log:-/dev/null}" & disown )
+  if [ "$PLATFORM" = "darwin" ] && [ "$GUI_MODE" = "vnc" ]; then
+    # --vnc-experimental's "VNC server is running at ..." line is Tart's own
+    # stdout, not stderr — the only mode that needs it merged into the per-VM
+    # log the darwin vnc verify below reads back.
+    ( "${run_cmd[@]}" >"${run_log:-/dev/null}" 2>&1 & disown )
+  else
+    ( "${run_cmd[@]}" >/dev/null 2>"${run_log:-/dev/null}" & disown )
+  fi
   STARTED=1
 else
   # Any other state (e.g. another invocation already started it) — don't issue
@@ -540,61 +650,89 @@ for _ in $(seq 1 30); do
     # the base-image default), yet consumers key on it: a downstream `hostname -s`
     # lookup and the zsh "which-VM" prompt. Use the guest
     # agent (`tart exec`, over vsock) — NOT ssh — so it never triggers Touch ID.
-    # Idempotent + best-effort: an older guest agent / missing hostnamectl no-ops.
+    # Idempotent + best-effort: an older guest agent / missing hostnamectl (linux)
+    # or a failed scutil call (darwin — see darwin_set_hostname) no-ops.
     if [ "$(tart exec "$VM" hostname -s 2>/dev/null)" != "$VM" ]; then
-      tart exec "$VM" sudo hostnamectl set-hostname "$VM" >/dev/null 2>&1 || true
-      # Re-check: a silent miss (old guest agent / no hostnamectl) leaves the base
-      # default, and hostname-keyed lookups in downstream tooling (via
-      # `hostname -s`) then resolve wrong — painful to trace back here. Warn if so.
+      if [ "$PLATFORM" = "darwin" ]; then
+        darwin_set_hostname "$VM" || true
+      else
+        tart exec "$VM" sudo hostnamectl set-hostname "$VM" >/dev/null 2>&1 || true
+      fi
+      # Re-check: a silent miss (old guest agent / no hostnamectl on linux, a
+      # failed scutil call on darwin) leaves the base default, and
+      # hostname-keyed lookups in downstream tooling (via `hostname -s`) then
+      # resolve wrong — painful to trace back here. Warn if so.
       [ "$(tart exec "$VM" hostname -s 2>/dev/null)" = "$VM" ] || \
         echo "$prog: warning: could not set guest hostname to '$VM' — hostname-keyed lookups in downstream tooling may resolve wrong." >&2
     fi
     case "$GUI_MODE" in
       window)
-        # Tart refits a native window's framebuffer in host device pixels, so
-        # apply that window's host backing scale before the display manager
-        # creates the first session. VNC deliberately has no equivalent: it has
-        # no host window whose backing scale the guest inherits.
-        display_scale=$(main_display_scale)
-        # `2>&1 >/dev/null` captures stderr only: the guest names WHICH step
-        # failed — wrong user, unsupported DE, missing python3 or dbus, an
-        # unparseable XFCE settings file — and that reason is the whole
-        # diagnosis of a symptom ("my desktop is the wrong size") that looks
-        # identical from here whatever caused it.
-        if ! scale_err=$(tart exec "$VM" /usr/local/bin/tart-stacks-display-scale "$display_scale" 2>&1 >/dev/null); then
-          echo "$prog: warning: could not apply display scale '$display_scale' in '$VM'; continuing with window gui activation." >&2
-          [ -n "$scale_err" ] && printf '  %s\n' "$scale_err" >&2
-        fi
-        if ! tart exec "$VM" sudo systemctl isolate graphical.target >/dev/null; then
-          echo "$prog: '$VM' window gui activation failed: 'systemctl isolate graphical.target' did not succeed; the VM remains running and headless-usable." >&2
-          exit 1
-        fi
-        # Isolating graphical.target only Wants= the display manager, so the
-        # isolate succeeds even on an image with no DM baked (or a DM that
-        # fails). The desktop is the point of window mode — verify the DM
-        # actually comes up before reporting success.
-        dm_active=""
-        for _ in $(seq 1 15); do
-          if tart exec "$VM" systemctl is-active --quiet display-manager.service 2>/dev/null; then
-            dm_active=1
-            break
+        if [ "$PLATFORM" = "darwin" ]; then
+          : # A macOS guest's window IS its desktop session — up as soon as
+            # the VM is, with no display manager to isolate into and no host
+            # backing-scale mismatch to correct (Tart renders it natively).
+        else
+          # Tart refits a native window's framebuffer in host device pixels, so
+          # apply that window's host backing scale before the display manager
+          # creates the first session. VNC deliberately has no equivalent: it has
+          # no host window whose backing scale the guest inherits.
+          display_scale=$(main_display_scale)
+          # `2>&1 >/dev/null` captures stderr only: the guest names WHICH step
+          # failed — wrong user, unsupported DE, missing python3 or dbus, an
+          # unparseable XFCE settings file — and that reason is the whole
+          # diagnosis of a symptom ("my desktop is the wrong size") that looks
+          # identical from here whatever caused it.
+          if ! scale_err=$(tart exec "$VM" /usr/local/bin/tart-stacks-display-scale "$display_scale" 2>&1 >/dev/null); then
+            echo "$prog: warning: could not apply display scale '$display_scale' in '$VM'; continuing with window gui activation." >&2
+            [ -n "$scale_err" ] && printf '  %s\n' "$scale_err" >&2
           fi
-          sleep 1
-        done
-        if [ -z "$dm_active" ]; then
-          echo "$prog: '$VM' window gui activation failed: display-manager.service did not become active after isolating graphical.target (is a desktop baked into this image? see /etc/tart-stacks-release); the VM remains running and headless-usable." >&2
-          exit 1
+          if ! tart exec "$VM" sudo systemctl isolate graphical.target >/dev/null; then
+            echo "$prog: '$VM' window gui activation failed: 'systemctl isolate graphical.target' did not succeed; the VM remains running and headless-usable." >&2
+            exit 1
+          fi
+          # Isolating graphical.target only Wants= the display manager, so the
+          # isolate succeeds even on an image with no DM baked (or a DM that
+          # fails). The desktop is the point of window mode — verify the DM
+          # actually comes up before reporting success.
+          dm_active=""
+          for _ in $(seq 1 15); do
+            if tart exec "$VM" systemctl is-active --quiet display-manager.service 2>/dev/null; then
+              dm_active=1
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$dm_active" ]; then
+            echo "$prog: '$VM' window gui activation failed: display-manager.service did not become active after isolating graphical.target (is a desktop baked into this image? see /etc/tart-stacks-release); the VM remains running and headless-usable." >&2
+            exit 1
+          fi
         fi ;;
       vnc)
-        if ! tart exec "$VM" sudo systemctl start tart-stacks-vnc.service >/dev/null; then
-          echo "$prog: '$VM' vnc gui activation failed: 'systemctl start tart-stacks-vnc.service' did not succeed; the VM remains running and headless-usable." >&2
-          exit 1
-        fi
-        if ! vnc_wait_for_loopback; then
-          vnc_fail_closed
-          exit 1
-        fi
-        echo "$prog: VNC ready for '$VM'. Tunnel with: ssh -L 5901:127.0.0.1:5901 tart-$VM ; then point a VNC client at localhost:5901." >&2 ;;
+        if [ "$PLATFORM" = "darwin" ]; then
+          if ! darwin_vnc_wait_for_url; then
+            echo "$prog: '$VM' vnc gui activation failed: Tart never printed a VNC URL to this boot's log within 30 s; the VM remains running and reachable over ssh." >&2
+            exit 1
+          fi
+          if ! darwin_vnc_parse_url "$DARWIN_VNC_URL"; then
+            echo "$prog: '$VM' vnc gui activation failed: could not parse Tart's VNC URL ('$DARWIN_VNC_URL'); the VM remains running and reachable over ssh." >&2
+            exit 1
+          fi
+          if ! darwin_vnc_wait_for_listener; then
+            echo "$prog: '$VM' vnc gui activation failed: no listener came up on $DARWIN_VNC_HOST:$DARWIN_VNC_PORT within 30 s; the VM remains running and reachable over ssh." >&2
+            exit 1
+          fi
+          echo "$prog: VNC ready for '$VM'. Point a VNC client at $DARWIN_VNC_URL" >&2
+        else
+          if ! tart exec "$VM" sudo systemctl start tart-stacks-vnc.service >/dev/null; then
+            echo "$prog: '$VM' vnc gui activation failed: 'systemctl start tart-stacks-vnc.service' did not succeed; the VM remains running and headless-usable." >&2
+            exit 1
+          fi
+          if ! vnc_wait_for_loopback; then
+            vnc_fail_closed
+            exit 1
+          fi
+          echo "$prog: VNC ready for '$VM'. Tunnel with: ssh -L 5901:127.0.0.1:5901 tart-$VM ; then point a VNC client at localhost:5901." >&2
+        fi ;;
     esac
     exit 0
   fi

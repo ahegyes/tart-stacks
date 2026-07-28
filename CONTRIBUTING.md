@@ -15,14 +15,14 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 
 ## Making changes
 
-1. Edit the relevant `shared/scripts/*.sh`, `stacks/<name>/scripts/*.sh`, or `*/files/*` file.
+1. Edit the relevant `shared/scripts/*.sh` (both platforms), `shared/linux/scripts/*.sh` or `shared/darwin/scripts/*.sh` (platform-only), `stacks/<name>/scripts/*.sh`, or `*/files/*` file.
 2. Fast pre-checks — mirror the CI gates locally:
-   - `packer validate -var stack=<name> -var distro=<distro> stack.pkr.hcl` (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed — **syntax only, not proof of runtime behavior**.
+   - `packer validate -var stack=<name> -var os=<os> linux.pkr.hcl` (or `darwin.pkr.hcl`, for an `<os>` from `shared/darwin/os`) (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed — **syntax only, not proof of runtime behavior**.
    - `make test` — the plain-bash test suite (`test/*.sh`), exactly what the CI tests job runs.
    - `shellcheck` on any script you changed — the CI job fails on shellcheck **warnings**, not just errors, so locally-clean is the bar. (Scaffold templates get linted too, with `__STACK__` substituted; see `.github/workflows/validate.yml`.)
-3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name> DISTRO=<distro>` (15-20 min for PHP). Follow with `make smoke STACK=<name> DISTRO=<distro>` (~1 min; boots a real VM, so local-only). The manual equivalent, for poking around inside:
+3. For anything that touches a provisioner or a file baked into the image, a real rebuild is the **only** behavioral proof — `make rebuild STACK=<name> OS=<os>` (15-20 min for PHP). Follow with `make smoke STACK=<name> OS=<os>` (~1 min; boots a real VM, so local-only). The manual equivalent, for poking around inside:
    ```bash
-   tart-new test-vm <name> <distro>   # guarded clone
+   tart-new test-vm <name> <os>   # guarded clone
    ssh tart-test-vm                   # auto-starts the stopped VM, then connects
    # inside the VM (example for the php stack):
    node --version && php --version && composer --version
@@ -30,13 +30,13 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
    tart-rm test-vm                    # guarded teardown when done
    ```
 
-> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, and `test`, run via `make`. `shared/scripts/` and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
+> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, and `test`, run via `make`. `shared/scripts/`, `shared/linux/scripts/`, and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
 
 ## PR conventions
 
 - **One logical change per PR.** Renaming + a bug fix in the same PR is two PRs.
 - **`shared/` changes affect every stack.** Bear that in mind — a tweak that helps one stack may regress another.
-- **If you add a new script** to an existing stack, reference it from the root `stack.pkr.hcl` provisioner block (parameterized by `var.stack`). To add a new stack, run `make scaffold STACK=<name>` and add a row to the stack table in the top-level `README.md` — CI runs `packer validate` for every `stacks/*/` × `shared/distros` cell automatically, no workflow edit needed for new stacks or new distros.
+- **If you add a new script** to an existing stack, reference it from the relevant platform template's provisioner block — `linux.pkr.hcl`, `darwin.pkr.hcl`, or both, depending on where the script lives (each parameterized by `var.stack`). To add a new stack, run `make scaffold STACK=<name>` and add a row to the stack table in the top-level `README.md` — CI runs `packer validate` for every `stacks/*/` × `shared/*/os` cell on both platforms automatically, no workflow edit needed for new stacks or new OSes on either platform.
 - **Comments explain WHY, not WHAT** — see [`AGENTS.md`](./AGENTS.md) for the full convention list.
 
 ## Reporting bugs

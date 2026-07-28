@@ -2,11 +2,16 @@
 #
 # Zsh completion for tart-new. Positional 1 is the new VM name (no completion);
 # positional 2 is the stack token, completed from stacks/*/ in the repo this
-# command is symlinked from (real path via `:A`); positional 3 is the distro
-# token, completed from shared/distros; optional positional 4 is the GUI
-# desktop token, completed from shared/desktops. _arguments tracks positions
-# net of options, so the tokens still complete when resource flags come first
-# (e.g. `tart-new --cpu 4 myvm <TAB>`), and the flags complete too.
+# command is symlinked from (real path via `:A`); positional 3 is the OS
+# token, completed from every shared/*/os (fedora/ubuntu/debian AND macos —
+# tart-new clones on any platform whose token is listed there, not just
+# linux); optional positional 4 is the GUI desktop token, completed from
+# shared/linux/desktops regardless of which OS was typed at positional 3 —
+# darwin has no DE axis at all, but the runtime refusal in tart-new is the
+# real gate, so this stays simple rather than tracking $line[3] to suppress
+# it. _arguments tracks positions net of options, so the tokens still
+# complete when resource flags come first (e.g. `tart-new --cpu 4 myvm
+# <TAB>`), and the flags complete too.
 #
 # Install:
 #   fpath=(/path/to/tart-stacks/completions $fpath)   # before compinit
@@ -25,10 +30,10 @@ _tart-new() {
     '(-h --help)'{-h,--help}'[show usage and exit]' \
     '1:new VM name:' \
     '2:stack:->stack' \
-    '3:distro:->distro' \
+    '3:os:->os' \
     '4::desktop (GUI flavor):->de'
 
-  [[ $state == stack || $state == distro || $state == de ]] || return 0
+  [[ $state == stack || $state == os || $state == de ]] || return 0
 
   bin=${commands[tart-new]}
   [[ -n $bin ]] || { _message 'tart-new not on PATH'; return 1; }
@@ -40,15 +45,17 @@ _tart-new() {
     _describe -t stacks 'stack' stacks; return 0
   }
 
-  [[ $state == distro ]] && {
-    local -a distros
-    distros=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' "${repo}/shared/distros" 2>/dev/null)"})
-    _describe -t distros 'distro' distros; return 0
+  [[ $state == os ]] && {
+    local -a os_tokens
+    # -h suppresses the per-file "==>" headers grep adds for multiple
+    # filename args, so every platform's tokens land in one flat list.
+    os_tokens=(${(f)"$(grep -vhE '^[[:space:]]*(#|$)' ${repo}/shared/*/os 2>/dev/null)"})
+    _describe -t os-tokens 'os' os_tokens; return 0
   }
 
   [[ $state == de ]] && {
     local -a desktops
-    desktops=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' "${repo}/shared/desktops" 2>/dev/null)"})
+    desktops=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' "${repo}/shared/linux/desktops" 2>/dev/null)"})
     _describe -t desktops 'desktop (GUI flavor)' desktops; return 0
   }
 }

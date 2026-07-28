@@ -75,9 +75,14 @@ case "$*" in
     # image can be staged — which is the whole point of the check.
     printf 'built: 2026-01-01T00:00:00Z\n'
     printf 'stack: %s\n'  "${MOCK_MANIFEST_STACK:-php}"
-    printf 'distro: %s\n' "${MOCK_MANIFEST_DISTRO:-fedora}"
+    printf 'os: %s\n' "${MOCK_MANIFEST_OS:-fedora}"
+    # Stages the failure mode the regression guard exists for: a second
+    # top-level `os:` line, which field()'s first-match-then-exit semantics
+    # would otherwise read past silently.
+    [ "${MOCK_MANIFEST_OS_DUP:-0}" = "1" ] && printf 'os: %s\n' "Fedora Linux 44 (Cloud Edition) (44)"
     printf 'gui: %s\n'    "${MOCK_MANIFEST_GUI:-none}"
-    printf 'os-id: %s\n'  "${MOCK_MANIFEST_OSID:-fedora}" ;;
+    printf 'os-id: %s\n'  "${MOCK_MANIFEST_OSID:-fedora}"
+    printf 'sw-vers-id: %s\n' "${MOCK_MANIFEST_SWVERSID:-macos}" ;;
   *"sshd -T"*)
     [ "${MOCK_SSHD_T_RC:-0}" -eq 0 ] || exit "$MOCK_SSHD_T_RC"
     printf '%s\n' "${MOCK_SSHD_T-passwordauthentication no
@@ -93,6 +98,13 @@ streamlocalbindunlink yes}" ;;
     # the read itself, which must not read as "nothing is listening".
     [ "${MOCK_VNC_SS_RC:-0}" -eq 0 ] || exit "$MOCK_VNC_SS_RC"
     printf '%s\n' "${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" ;;
+  *"netstat -an -p tcp"*)
+    # darwin's listener-surface read (99-finalize.sh's own idiom). Default is
+    # the healthy image's own posture (:22 alone); the knobs stage the two
+    # failure shapes: an extra bound port, and the read itself failing (which
+    # must not be reported the same as "the table has no extra port").
+    [ "${MOCK_NETSTAT_RC:-0}" -eq 0 ] || exit "$MOCK_NETSTAT_RC"
+    printf '%s\n' "${MOCK_NETSTAT_LISTENERS-tcp4 0 0 *.22 *.* LISTEN}" ;;
   *)
     printf '%s\n' "${MOCK_SSH_HOSTNAME:-smoke-vm}" ;;
 esac
@@ -143,9 +155,13 @@ run_smoke() { # args... — exit code in $rc, stderr in $ERR, recorded calls in 
     MOCK_VNC_LISTENERS="${MOCK_VNC_LISTENERS-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_VNC_SS_RC="${MOCK_VNC_SS_RC-0}" \
     MOCK_MANIFEST_STACK="${MOCK_MANIFEST_STACK-php}" \
-    MOCK_MANIFEST_DISTRO="${MOCK_MANIFEST_DISTRO-fedora}" \
+    MOCK_MANIFEST_OS="${MOCK_MANIFEST_OS-fedora}" \
+    MOCK_MANIFEST_OS_DUP="${MOCK_MANIFEST_OS_DUP-0}" \
     MOCK_MANIFEST_GUI="${MOCK_MANIFEST_GUI-none}" \
     MOCK_MANIFEST_OSID="${MOCK_MANIFEST_OSID-fedora}" \
+    MOCK_MANIFEST_SWVERSID="${MOCK_MANIFEST_SWVERSID-macos}" \
+    MOCK_NETSTAT_LISTENERS="${MOCK_NETSTAT_LISTENERS-tcp4 0 0 *.22 *.* LISTEN}" \
+    MOCK_NETSTAT_RC="${MOCK_NETSTAT_RC-0}" \
     MOCK_SSHD_T="${MOCK_SSHD_T-passwordauthentication no
 permitrootlogin no
 kbdinteractiveauthentication no
@@ -380,15 +396,24 @@ assert_rc       "manifest stack mismatch → FAIL" 1
 assert_contains "stack mismatch names both values" "$(cat "$ERR")" "expected 'php', guest reports 'jvm'"
 assert_contains "stack mismatch → teardown still ran" "$(cat "$CALLS")" "tart-rm smoke-vm"
 
-MOCK_MANIFEST_DISTRO=ubuntu run_smoke php fedora
-assert_rc       "manifest distro mismatch → FAIL" 1
-assert_contains "distro mismatch names both values" "$(cat "$ERR")" "expected 'fedora', guest reports 'ubuntu'"
+MOCK_MANIFEST_OS=ubuntu run_smoke php fedora
+assert_rc       "manifest OS mismatch → FAIL" 1
+assert_contains "OS mismatch names both values" "$(cat "$ERR")" "expected 'fedora', guest reports 'ubuntu'"
 
-# The manifest is written from the build's own DISTRO, so it can agree with the
+# The manifest is written from the build's own OS, so it can agree with the
 # request and still be wrong about the guest. os-release is the guest's own answer.
 MOCK_MANIFEST_OSID=ubuntu run_smoke php fedora
 assert_rc       "guest os-release disagrees with the manifest → FAIL" 1
 assert_contains "os-release mismatch is reported separately" "$(cat "$ERR")" "guest os-release id"
+
+# Regression guard: field() returns only the FIRST match on a key and exits, so
+# a duplicate `os:` line (as a real manifest once shipped) would silently
+# orphan the second instead of failing the attest above. This must fail loudly
+# on its own, before field() ever gets a chance to look right.
+MOCK_MANIFEST_OS_DUP=1 run_smoke php fedora
+assert_rc       "duplicate manifest 'os:' key → FAIL" 1
+assert_contains "duplicate os: key names the count" "$(cat "$ERR")" "manifest has 2 'os:' line(s)"
+assert_contains "duplicate os: key explains why"     "$(cat "$ERR")" "silently orphans the rest"
 
 MOCK_MANIFEST_GUI=kde run_smoke php fedora
 assert_rc       "a GUI image smoked as headless → FAIL" 1
@@ -415,6 +440,128 @@ done
 MOCK_SSHD_T_RC=1 run_smoke php fedora
 assert_rc       "sshd -T unreadable → FAIL" 1
 assert_contains "unreadable sshd config says the posture is unverified" "$(cat "$ERR")" "hardening posture is unverified"
+
+# darwin platform: script/smoke resolves the OS token to a platform via
+# tart_os_platform (bin/lib/common.sh) against the REAL shared/*/os — "macos"
+# and "fedora" are both real tokens there, so no fixture glob is needed the
+# way tart-new.sh's tests build one; every "fedora" run above already IS the
+# must-pass control proving this gate does not block a real linux token.
+echo "  -- darwin platform --"
+
+# An OS token claimed by no platform (shared/*/os lists neither) is refused
+# before tart-new ever runs — smoke must not clone against an unresolvable
+# platform.
+run_smoke php bogus-os
+assert_rc       "unsupported OS token → FAIL before cloning" 1
+assert_contains "unsupported OS names the refusal" "$(cat "$ERR")" "not claimed by exactly one platform"
+assert_absent   "unsupported OS → tart-new never runs" "$(cat "$CALLS")" "tart-new"
+
+# darwin has no DE axis — tart-new (Task 16) refuses a <de> too, but smoke
+# catches it first so the failure reads as smoke's own, not a downstream
+# tart-new error.
+run_smoke php macos kde
+assert_rc       "darwin <de> → FAIL before cloning" 1
+assert_contains "darwin <de> refusal names the reason" "$(cat "$ERR")" "linux-only argument"
+assert_absent   "darwin <de> refusal → tart-new never runs" "$(cat "$CALLS")" "tart-new"
+
+# Happy path: darwin's guest self-ID, listener-surface, and Screen Sharing
+# stages, plus the closing verdict line's platform-specific wording.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos run_smoke php macos
+assert_rc       "darwin happy path → exit 0" 0
+assert_contains "darwin manifest read uses sw_vers, not os-release" "$(cat "$CALLS")" "sw_vers -productName"
+assert_absent   "darwin manifest read never sources os-release"    "$(cat "$CALLS")" "/etc/os-release"
+assert_contains "darwin verdict names the sw_vers attest"  "$(cat "$ERR")" "guest sw_vers id"
+assert_absent   "darwin verdict never names os-release id" "$(cat "$ERR")" "guest os-release id"
+assert_contains "darwin listener-table must-pass control"  "$(cat "$ERR")" "22 present (must-pass control)"
+assert_contains "darwin screen-sharing ok line"             "$(cat "$ERR")" "screen sharing"
+assert_contains "darwin listener-surface ok line"           "$(cat "$ERR")" ":22 alone beyond loopback (survived clone)"
+assert_contains "darwin verdict names sw_vers, not os-release" "$(cat "$ERR")" "manifest, sw_vers, toolchain"
+assert_absent   "darwin verdict never says os-release"      "$(cat "$ERR")" "os-release"
+assert_contains "darwin verdict names the closing stages"   "$(cat "$ERR")" "sshd posture, listener surface, screen sharing"
+assert_absent   "darwin run never touches the linux VNC surface" "$(cat "$CALLS")" "tart-stacks-vnc"
+
+# Regression control: a plain linux run must never touch darwin's stage.
+run_smoke php fedora
+assert_absent   "linux run never touches darwin's netstat check" "$(cat "$CALLS")" "netstat -an -p tcp"
+
+# guest sw_vers disagrees with the manifest → FAIL, same shape as linux's
+# os-release-vs-manifest attest (guest self-ID stays independent of the
+# manifest's own os:/os-pretty: fields either way).
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=ubuntu run_smoke php macos
+assert_rc       "darwin guest sw_vers disagrees with manifest → FAIL" 1
+assert_contains "sw_vers mismatch names both values" "$(cat "$ERR")" "expected 'macos', guest reports 'ubuntu'"
+
+# darwin's manifest carries no gui: key — the attest must not even run there.
+# A bogus gui: value would fail the attest instantly on linux (must-pass
+# control: a mismatched value on linux DOES fail, per the existing "GUI image
+# smoked as headless" test above) but must pass clean through a darwin run.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos MOCK_MANIFEST_GUI=bogus-gui-value run_smoke php macos
+assert_rc       "darwin never attests manifest gui: (no axis to check)" 0
+
+# hostname-failure wording: darwin names scutil, never hostnamectl (tart-up
+# has no hostnamectl branch on that platform — see bin/tart-up's own
+# darwin_set_hostname). The linux wording's own must-pass control already
+# exists above ("stale hostname offers the guest cause").
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos MOCK_TART_EXEC_HOSTNAME=stale-name run_smoke php macos
+assert_rc       "darwin agent healthy but hostname stale → FAIL" 1
+assert_contains "darwin stale-hostname names scutil"      "$(cat "$ERR")" "scutil failed in the guest"
+assert_absent   "darwin stale-hostname never names hostnamectl" "$(cat "$ERR")" "hostnamectl/systemd-hostnamed"
+
+# Screen Sharing present on :5900 → FAIL, naming the concrete threat.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 *.5900 *.* LISTEN')" \
+  run_smoke php macos
+assert_rc       "darwin Screen Sharing listening → FAIL" 1
+assert_contains "Screen Sharing failure names the service" "$(cat "$ERR")" "Screen Sharing"
+assert_contains "Screen Sharing failure names the threat"  "$(cat "$ERR")" "admin/admin"
+
+# An unexpected port that is NOT Screen Sharing (e.g. the base's Kerberos KDC
+# on :88) must still fail the general :22-alone claim, naming the port.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 *.88 *.* LISTEN')" \
+  run_smoke php macos
+assert_rc       "darwin unexpected non-5900 port → FAIL" 1
+assert_contains "unexpected-port failure names :22-alone" "$(cat "$ERR")" "non-loopback listener beyond :22"
+assert_contains "unexpected-port failure names the port"  "$(cat "$ERR")" "88"
+
+# The real-gate regression: a `Host tart-* RemoteForward …` block in
+# ~/.config/tart-stacks/forwards makes sshd-sess bind the forwarded port on
+# the GUEST's loopback for the life of the operator's ssh session — real
+# sockets on 127.0.0.1/::1, not exposure. Both families (v4 loopback, v6
+# loopback), both operator ports (4445, 8080) from the real failure, MUST
+# still pass. Fixture format measured directly against the real `netstat -an
+# -p tcp` binary (macOS host) — IPv6 loopback prints unbracketed (`::1.PORT`),
+# NOT `[::1].PORT`; a bracketed fixture here would pass against code that
+# can't actually classify the real guest's output (round-1 mistake: both the
+# fixture and the classifier were wrong the same way, so the test proved
+# nothing).
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 127.0.0.1.4445 *.* LISTEN\ntcp6 0 0 ::1.4445 *.* LISTEN\ntcp4 0 0 127.0.0.1.8080 *.* LISTEN\ntcp6 0 0 ::1.8080 *.* LISTEN')" \
+  run_smoke php macos
+assert_rc       "darwin loopback-bound RemoteForward ports → smoke PASSES" 0
+assert_contains "loopback-forward run still reports the listener-surface ok line" "$(cat "$ERR")" ":22 alone beyond loopback"
+
+# The same ports on a NON-loopback bind (e.g. GatewayPorts, or a forward gone
+# wrong) must still fail — the classifier reads the actual bind address off
+# each row, not "is this port one of the known forward numbers".
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 *.4445 *.* LISTEN')" \
+  run_smoke php macos
+assert_rc       "darwin non-loopback bind on a forward's OWN port → FAIL" 1
+assert_contains "non-loopback forward-port failure names the address" "$(cat "$ERR")" "*:4445"
+
+# must-pass control: an empty/broken listener-table read that still exits 0
+# must not pass either claim vacuously — :22 has to show up in the parsed set
+# on its own for either downstream claim to be trustworthy.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos MOCK_NETSTAT_LISTENERS='' run_smoke php macos
+assert_rc       "darwin empty listener table → FAIL (must-pass control)" 1
+assert_contains "empty table names the missing must-pass control" "$(cat "$ERR")" "never showed :22 itself"
+
+# The read itself failing (e.g. sudo denied) is a distinct verdict from "the
+# table has no extra port" — one is a defective image, the other unverified.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos MOCK_NETSTAT_RC=1 run_smoke php macos
+assert_rc       "darwin netstat read failure → FAIL" 1
+assert_contains "netstat read failure says unverified" "$(cat "$ERR")" "unverified"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

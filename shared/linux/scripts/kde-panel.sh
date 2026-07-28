@@ -84,7 +84,7 @@ cat > "${PANEL_TARGET}/metadata.json" <<'EOF'
 }
 EOF
 
-# Only the launcher anchor changes; the distro template keeps ownership of panel
+# Only the launcher anchor changes; the OS template keeps ownership of panel
 # height, aspect-ratio clamping, and input-method behaviour. The injected
 # binding is uniquely named: this is not a JavaScript-aware transform, and a
 # future template declaring its own top-level `tasks` would otherwise collide
@@ -113,7 +113,7 @@ chmod 644 "${PANEL_TARGET}/metadata.json" "${PANEL_TARGET}/contents/layout.js"
 
 # Every check above proves the artifact on disk; none proves Plasma will load
 # it. Ask KPackage which path the id now resolves to, so a changed XDG_DATA_DIRS
-# or a relocated distro template fails the build instead of silently restoring
+# or a relocated OS template fails the build instead of silently restoring
 # the packaged panel. Skipped when the tool is absent — the assertion is a
 # safeguard, not a new build dependency.
 if command -v kpackagetool6 >/dev/null 2>&1; then

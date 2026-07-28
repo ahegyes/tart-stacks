@@ -10,39 +10,39 @@ packer {
   }
 }
 
-# One parameterized template builds every stack: `packer build -var stack=<name> -var distro=<distro>`
+# One parameterized template builds every stack: `packer build -var stack=<name> -var os=<os>`
 # from the repo root (the Makefile runs it there — provisioner script paths
 # resolve against the cwd, not this file). The invariant pipeline lives here;
 # per-stack content is just stacks/<stack>/{scripts,files}.
 
 variable "stack" {
   type        = string
-  description = "Short stack token (php, jvm, …). The built image is <distro>-<stack>, cloned from stacks/<stack>/."
+  description = "Short stack token (php, jvm, …). The built image is <os>-<stack>, cloned from stacks/<stack>/."
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.stack))
     error_message = "Stack must be a lowercase alphanumeric token such as php or jvm."
   }
 }
 
-variable "distro" {
+variable "os" {
   type        = string
-  description = "Distro token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/distros and a branch in distro-lib.sh. The built image is <distro>-<stack>, cloned from <distro>-base."
+  description = "OS token (fedora, ubuntu, debian). Mandatory — no default. Must be a line in shared/linux/os and a branch in family-lib.sh. The built image is <os>-<stack>, cloned from <os>-base."
   validation {
-    condition     = can(regex("^[a-z0-9]+$", var.distro))
-    error_message = "Distro must be a lowercase alphanumeric token such as fedora, ubuntu, or debian."
+    condition     = can(regex("^[a-z0-9]+$", var.os))
+    error_message = "OS must be a lowercase alphanumeric token such as fedora, ubuntu, or debian."
   }
 }
 
 variable "gui" {
   type        = bool
   default     = false
-  description = "Bake the optional desktop layer (shared/scripts/gui.sh): a desktop environment, display manager, and a localhost-only VNC server. The built image is <distro>-<stack>-<de>. Boot contract in shared/gui/README.md."
+  description = "Bake the optional desktop layer (shared/linux/scripts/gui.sh): a desktop environment, display manager, and a localhost-only VNC server. The built image is <os>-<stack>-<de>. Boot contract in shared/linux/gui/README.md."
 }
 
 variable "de" {
   type        = string
   default     = "kde"
-  description = "Desktop environment for gui=true. Ignored when gui=false. Must be a line in shared/desktops and a branch in gui-lib.sh (kde, gnome, xfce)."
+  description = "Desktop environment for gui=true. Ignored when gui=false. Must be a line in shared/linux/desktops and a branch in gui-lib.sh (kde, gnome, xfce)."
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.de))
     error_message = "DE must be a lowercase alphanumeric token such as kde, gnome, or xfce."
@@ -61,16 +61,16 @@ locals {
   # key auth.
   ssh_password = "admin"
 
-  # The source is <distro>-base, the intermediate `make bootstrap` clones from the
+  # The source is <os>-base, the intermediate `make bootstrap` clones from the
   # upstream image — derived, never overridable. An override could name a base from
-  # another distro, and since the output name and the provenance manifest both come
-  # from var.distro, that build would succeed and ship mislabeled.
-  source_image = "${var.distro}-base"
+  # another OS, and since the output name and the provenance manifest both come
+  # from var.os, that build would succeed and ship mislabeled.
+  source_image = "${var.os}-base"
 
   # The -<de> suffix keeps GUI flavors distinguishable (and side-by-side
   # buildable) in `tart list`; the provenance manifest records the same fact
   # as its `gui:` line.
-  vm_name = var.gui ? "${var.distro}-${var.stack}-${var.de}" : "${var.distro}-${var.stack}"
+  vm_name = var.gui ? "${var.os}-${var.stack}-${var.de}" : "${var.os}-${var.stack}"
 }
 
 variable "ssh_pubkey_path" {
@@ -113,8 +113,8 @@ build {
   # Staged for the release upgrade below, which is the only thing that reads it
   # before the reboot. Nothing else may be uploaded ahead of that block.
   provisioner "file" {
-    source      = "shared/scripts/distro-lib.sh"
-    destination = "/tmp/distro-lib.sh"
+    source      = "shared/linux/scripts/family-lib.sh"
+    destination = "/tmp/family-lib.sh"
   }
 
   # Release upgrade — the first thing run in the guest, before anything is
@@ -124,7 +124,7 @@ build {
   #
   # Inline rather than a script file: the body is glue. Every decision it could
   # encode — which release, the two-release ceiling, the apt no-op, the unknown
-  # family — lives in distro-lib.sh's pkg_release_upgrade, where it is tested.
+  # family — lives in family-lib.sh's pkg_release_upgrade, where it is tested.
   #
   # ALONE IN THIS BLOCK, AND NOTHING MAY FOLLOW IT. pkg_release_upgrade reboots
   # the guest and never returns: `dnf offline reboot` only SCHEDULES the reboot,
@@ -141,7 +141,7 @@ build {
     expect_disconnect = true
     inline = [
       "set -euo pipefail",
-      "source /tmp/distro-lib.sh",
+      "source /tmp/family-lib.sh",
       "pkg_release_upgrade",
     ]
   }
@@ -149,36 +149,36 @@ build {
   # ─────────────────────────────────────────────────────────────────────────────
   # EVERY upload below this line must STAY below it. The reboot above empties
   # /tmp, so anything staged earlier is gone before a provisioner can read it —
-  # a build that gets this wrong dies at 00-base.sh with a missing distro-lib.sh.
-  # That is why distro-lib.sh is uploaded twice: the copy above serves the
+  # a build that gets this wrong dies at 00-base.sh with a missing family-lib.sh.
+  # That is why family-lib.sh is uploaded twice: the copy above serves the
   # upgrade, this one serves everything after the reboot.
   # ─────────────────────────────────────────────────────────────────────────────
 
-  # Distro abstraction, sourced by every system provisioner — must land before they run.
+  # Package-family abstraction, sourced by every system provisioner — must land before they run.
   provisioner "file" {
-    source      = "shared/scripts/distro-lib.sh"
-    destination = "/tmp/distro-lib.sh"
+    source      = "shared/linux/scripts/family-lib.sh"
+    destination = "/tmp/family-lib.sh"
   }
 
   # DE × family abstraction for the optional GUI layer, sourced by gui.sh.
   # Uploaded unconditionally (Packer provisioners have no per-block condition);
   # gui.sh no-ops when GUI=false.
   provisioner "file" {
-    source      = "shared/scripts/gui-lib.sh"
+    source      = "shared/linux/scripts/gui-lib.sh"
     destination = "/tmp/gui-lib.sh"
   }
 
   # Per-user desktop scale editor installed by gui.sh with this image's DE
   # and build account baked in. Uploaded unconditionally for gui=false parity.
   provisioner "file" {
-    source      = "shared/scripts/display-scale.sh"
+    source      = "shared/linux/scripts/display-scale.sh"
     destination = "/tmp/display-scale.sh"
   }
 
   # Plasma default-panel launcher pinning, run by gui.sh for the kde DE only.
   # Standalone so its template transform is testable without a desktop.
   provisioner "file" {
-    source      = "shared/scripts/kde-panel.sh"
+    source      = "shared/linux/scripts/kde-panel.sh"
     destination = "/tmp/kde-panel.sh"
   }
 
@@ -198,24 +198,24 @@ build {
   # package-manager transaction sequence unambiguous.
   provisioner "shell" {
     # {{ .Vars }} is required for environment_vars to reach the script at all;
-    # 00-base.sh asserts the guest it landed in is the distro this build claims.
+    # 00-base.sh asserts the guest it landed in is the OS this build claims.
     execute_command  = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
-    environment_vars = ["DISTRO=${var.distro}"]
+    environment_vars = ["OS=${var.os}"]
     scripts = [
-      "shared/scripts/00-base.sh",
+      "shared/linux/scripts/00-base.sh",
       "stacks/${var.stack}/scripts/00-stack.sh",
-      "shared/scripts/mise.sh",
+      "shared/linux/scripts/mise.sh",
     ]
   }
 
   # Optional desktop layer — desktop environment + display manager + a
-  # localhost-only VNC session service (contract: shared/gui/README.md).
+  # localhost-only VNC session service (contract: shared/linux/gui/README.md).
   # Its own root block because it needs GUI/DE as environment_vars, which
   # {{ .Vars }} renders; exits immediately when GUI=false.
   provisioner "shell" {
     execute_command  = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
     environment_vars = ["GUI=${var.gui}", "DE=${var.de}"]
-    scripts          = ["shared/scripts/gui.sh"]
+    scripts          = ["shared/linux/scripts/gui.sh"]
   }
 
   # Drop in config files.
@@ -229,11 +229,19 @@ build {
     destination = "/home/${var.ssh_username}/.config/mise/config.toml"
   }
 
-  # Shared mise helpers, sourced by the stack's mise-install.sh below (uploaded
-  # rather than added to a scripts=[] block, which would run it in its own shell).
+  # Shared mise helpers, sourced by the stack's linux/mise-install.sh below
+  # (uploaded rather than added to a scripts=[] block, which would run it in
+  # its own shell).
   provisioner "file" {
     source      = "shared/scripts/mise-lib.sh"
     destination = "/tmp/mise-lib.sh"
+  }
+
+  # Anti-lockout gate for the SSH key uploaded below, sourced by 99-finalize.sh
+  # before it authorizes that key.
+  provisioner "file" {
+    source      = "shared/scripts/authorized-key-lib.sh"
+    destination = "/tmp/authorized-key-lib.sh"
   }
 
   # Upload the host's public SSH key (consumed by 99-finalize.sh).
@@ -254,9 +262,9 @@ build {
   provisioner "shell" {
     execute_command = "echo '${local.ssh_password}' | sudo -S -E bash '{{ .Path }}'"
     scripts = [
-      "shared/scripts/user-config.sh",
+      "shared/linux/scripts/user-config.sh",
       "shared/scripts/terminfo.sh",
-      "shared/scripts/host-keys.sh",
+      "shared/linux/scripts/host-keys.sh",
     ]
   }
 
@@ -264,7 +272,7 @@ build {
   # Runs before final lockdown because it needs mise.toml uploaded and the
   # build user still SSH-able with the provisioning password.
   provisioner "shell" {
-    scripts = ["stacks/${var.stack}/scripts/mise-install.sh"]
+    scripts = ["stacks/${var.stack}/scripts/linux/mise-install.sh"]
   }
 
   # Final lockdown — runs LAST as a single atomic step. 99-finalize.sh
@@ -278,8 +286,8 @@ build {
     # all. They prefix sudo, and -E carries them into the script.
     execute_command   = "echo '${local.ssh_password}' | {{ .Vars }} sudo -S -E bash '{{ .Path }}'"
     # The provenance manifest names the cell it was built as.
-    environment_vars  = ["STACK=${var.stack}", "DISTRO=${var.distro}", "GUI=${var.gui}", "DE=${var.de}"]
+    environment_vars  = ["STACK=${var.stack}", "OS=${var.os}", "GUI=${var.gui}", "DE=${var.de}"]
     expect_disconnect = true
-    scripts           = ["shared/scripts/99-finalize.sh"]
+    scripts           = ["shared/linux/scripts/99-finalize.sh"]
   }
 }

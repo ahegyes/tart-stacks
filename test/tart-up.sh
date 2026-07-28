@@ -68,6 +68,16 @@ case "$1" in
       exit "${MOCK_TART_LIST_RC}"
     fi
     printf '[{"Name":"%s","Source":"local","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
+  get)
+    # MOCK_TART_GET_RC simulates a failed `tart get` (a nonexistent VM, or
+    # the TOCTOU where it vanished between the earlier `tart list` and this
+    # call) exactly as real tart does: an error to stderr, nothing on
+    # stdout, a nonzero exit — never a JSON body to salvage an answer from.
+    if [ "${MOCK_TART_GET_RC:-0}" -ne 0 ]; then
+      echo "MOCK_TART_GET_STDERR_MARKER" >&2
+      exit "${MOCK_TART_GET_RC}"
+    fi
+    printf '{"OS":"%s"}\n' "${MOCK_PLATFORM:-linux}" ;;   # drives tart_vm_platform
   ip)   printf '%s\n' "${MOCK_IP-10.0.0.9}" ;;   # set MOCK_IP='' to drive the no-lease path
   exec)
     shift 2
@@ -90,20 +100,38 @@ case "$1" in
         fi ;;
     esac
     exit 0 ;;
-  run)  echo "MOCK_TART_RUN_STDERR_MARKER" >&2; exit 0 ;;  # stderr → tart-up's per-VM log
+  run)
+    echo "MOCK_TART_RUN_STDERR_MARKER" >&2  # stderr → tart-up's per-VM log
+    # darwin --vnc-experimental prints its URL to STDOUT (Tart's own Run.swift
+    # only merges it into the per-VM log when tart-up itself redirects stdout
+    # there, which it does only for this exact mode).
+    case "$*" in
+      *--vnc-experimental*)
+        [ "${MOCK_TART_VNC_PRINT:-1}" = "1" ] && printf 'VNC server is running at %s\n' \
+          "${MOCK_VNC_URL:-vnc://:word-word-word-word@127.0.0.1:${MOCK_VNC_PORT:-61234}}" ;;
+    esac
+    exit 0 ;;
   *)    exit 0 ;;
 esac
 TART
 chmod +x "$MOCKBIN/tart"
 
-# Mock `nc` (the :22 probe): records its argv, exits $MOCK_NC_RC. tart-up pins
-# the probe binary to /usr/bin/nc, so tests must hand it in via $TART_NC_BIN —
-# PATH interception never reaches it. The mocked `sleep` below keeps the
-# 30-iteration probe loop instant, so the failure path is drivable.
+# Mock `nc` (the :22 probe, and — on darwin vnc — the host-side listener
+# probe): records its argv, exits $MOCK_NC_RC for the :22 probe or
+# $MOCK_NC_VNC_RC (falling back to $MOCK_NC_RC) for any other port — so a test
+# can fail the vnc-port probe without also timing out the unrelated :22
+# readiness probe that must succeed first for a boot to reach gui activation
+# at all. tart-up pins the probe binary to /usr/bin/nc, so tests must hand it
+# in via $TART_NC_BIN — PATH interception never reaches it. The mocked
+# `sleep` below keeps every 30-iteration probe loop instant, so failure paths
+# are drivable.
 cat > "$MOCKBIN/nc" <<'NC'
 #!/usr/bin/env bash
 echo "nc $*" >> "$CALLS"
-exit "${MOCK_NC_RC:-0}"
+case "$*" in
+  *" 22") exit "${MOCK_NC_RC:-0}" ;;
+  *)      exit "${MOCK_NC_VNC_RC:-${MOCK_NC_RC:-0}}" ;;
+esac
 NC
 chmod +x "$MOCKBIN/nc"
 
@@ -149,8 +177,12 @@ chmod +x "$MOCKBIN/system_profiler"
 # Run tart-up with the mocks prepended (real jq/seq/etc. stay on PATH).
 # Knobs arrive as env on the call: MOCK_LIST_VM (default app-a), MOCK_ALIVE
 # (default 1 — a listed-running VM has a live process), MOCK_TART_LIST_RC,
-# MOCK_NC_RC, MOCK_SS_OUTPUT, MOCK_SS_SEQUENCE_FILE, MOCK_SS_READ_FAIL,
-# MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH, MOCK_SYSTEM_PROFILER_RC,
+# MOCK_PLATFORM (default linux — drives tart_vm_platform via `tart get`),
+# MOCK_TART_GET_RC (default 0 — a nonzero simulates a failed `tart get`, the
+# TOCTOU where the VM vanished between `tart list` and `tart get`),
+# MOCK_NC_RC, MOCK_NC_VNC_RC, MOCK_SS_OUTPUT, MOCK_SS_SEQUENCE_FILE,
+# MOCK_SS_READ_FAIL, MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH,
+# MOCK_TART_VNC_PRINT, MOCK_VNC_URL, MOCK_VNC_PORT, MOCK_SYSTEM_PROFILER_RC,
 # MOCK_SYSTEM_PROFILER_JSON, TART_DISPLAY_SCALE, and RUNUP_LOG_DIR. Exit code
 # lands in $rc, stderr in $ERR, recorded mock calls in $CALLS. The sequenced
 # listener counter is reset for every invocation.
@@ -159,12 +191,15 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
   shift 5
   : > "$CALLS"; : > "$SS_COUNT"; rc=0
   PATH="$MOCKBIN:$PATH" HOME="$SANDBOX_HOME" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP="${MOCK_IP-10.0.0.9}" MOCK_HOSTNAME="$hostname" \
-    MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_NC_RC="${MOCK_NC_RC-0}" \
+    MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_PLATFORM="${MOCK_PLATFORM-linux}" \
+    MOCK_TART_GET_RC="${MOCK_TART_GET_RC-0}" \
+    MOCK_NC_RC="${MOCK_NC_RC-0}" MOCK_NC_VNC_RC="${MOCK_NC_VNC_RC-}" \
     MOCK_SS_OUTPUT="${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_SS_SEQUENCE_FILE="${MOCK_SS_SEQUENCE_FILE-}" MOCK_SS_COUNT_FILE="$SS_COUNT" \
     MOCK_SS_READ_FAIL="${MOCK_SS_READ_FAIL-0}" \
     MOCK_TART_EXEC_FAIL_MATCH="${MOCK_TART_EXEC_FAIL_MATCH-}" \
     MOCK_TART_FAIL_MATCH="${MOCK_TART_FAIL_MATCH-}" \
+    MOCK_TART_VNC_PRINT="${MOCK_TART_VNC_PRINT-1}" MOCK_VNC_URL="${MOCK_VNC_URL-}" MOCK_VNC_PORT="${MOCK_VNC_PORT-61234}" \
     TART_NC_BIN="$MOCKBIN/nc" TART_NETPOLICY="$netpolicy" TART_MOUNTS="$mounts" TART_GUI="$gui" \
     TART_LOG_DIR="${RUNUP_LOG_DIR:-$WORK/logs}" \
     bash "$BIN/tart-up" "$@" >/dev/null 2>"$ERR" || rc=$?
@@ -203,7 +238,7 @@ MOCK_LIST_VM=other runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a
 assert_rc       "unknown prefixed VM → exit 1" 1
 assert_contains "unknown prefixed VM → diagnostic names the stored form" "$(cat "$ERR")" "VM 'app-a' not found."
 assert_absent   "unknown prefixed VM → claims no second form" "$(cat "$ERR")" "also tried"
-assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <distro>"
+assert_contains "unknown prefixed VM → create hint uses bare name" "$(cat "$ERR")" "tart-new app-a <stack> <os>"
 assert_eq       "unknown prefixed VM → one list query" 1 "$(grep -c 'tart list' "$CALLS")"
 
 # a failing `tart list` is a broken tool, not a missing VM: named diagnostic
@@ -558,6 +593,108 @@ runup stopped wrong-name "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_contains "hostname mismatch → set-hostname" "$(cat "$CALLS")" "hostnamectl set-hostname app-a"
 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
 assert_absent "hostname already correct → no set-hostname" "$(cat "$CALLS")" "set-hostname"
+
+# ---- tart_vm_platform: direct unit coverage (bypasses the runup harness) --
+# Branches on `tart get`'s OS field, never the <os>-<stack> naming convention
+# this repo's own images follow — proven here against a VM name that carries
+# no OS hint at all ("app-a"). MUST refuse (nonzero rc, nothing printed)
+# rather than manufacture "linux" on anything short of a confirmed answer: a
+# caller that treated a refusal as "linux" would silently misclassify a real
+# darwin VM behind a transient failure.
+platform_of() { # <MOCK_PLATFORM> <MOCK_TART_GET_RC>
+  PATH="$MOCKBIN:$PATH" MOCK_PLATFORM="$1" MOCK_TART_GET_RC="${2:-0}" \
+    bash -c '. "'"$BIN"'/lib/common.sh"; tart_vm_platform app-a' 2>/dev/null
+}
+prc=0; pout=$(platform_of darwin 0) || prc=$?
+assert_eq "tart_vm_platform darwin → darwin"                   darwin "$pout"
+assert_eq "tart_vm_platform darwin → exit 0"                        0 "$prc"
+prc=0; pout=$(platform_of linux 0) || prc=$?
+assert_eq "tart_vm_platform linux → linux (must-pass control)" linux  "$pout"
+assert_eq "tart_vm_platform linux → exit 0 (must-pass control)"     0 "$prc"
+prc=0; pout=$(platform_of bogus 0) || prc=$?
+assert_eq "tart_vm_platform unrecognized OS token → refuses, prints nothing" "" "$pout"
+assert_eq "tart_vm_platform unrecognized OS token → exit 1"                1 "$prc"
+prc=0; pout=$(platform_of '' 2) || prc=$?
+assert_eq "tart_vm_platform failed 'tart get' → refuses, prints nothing" "" "$pout"
+assert_eq "tart_vm_platform failed 'tart get' → exit 1"                1 "$prc"
+
+# The tart-up call site must propagate that refusal rather than starting the
+# VM under a guessed platform. This is the reviewer's TOCTOU: tart_vm_state
+# (a SEPARATE `tart list` call, at the base-image guard above) already
+# confirmed the VM exists; this simulates it vanishing (or `tart get`
+# otherwise failing) before the platform read that follows.
+MOCK_TART_GET_RC=2 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "tart get fails after list confirmed the VM (TOCTOU) → exit 1" 1
+assert_contains "TOCTOU diagnostic names the refusal" "$(cat "$ERR")" "could not determine whether 'app-a' is a darwin or linux VM"
+assert_absent   "TOCTOU → never starts the VM under a guessed platform" "$(cat "$CALLS")" "tart run"
+
+# ---- darwin hostname: scutil, never hostnamectl ----------------------------
+MOCK_PLATFORM=darwin runup stopped wrong-name "$EMPTY" "$EMPTY" "$EMPTY" app-a
+calls="$(cat "$CALLS")"
+assert_contains "darwin hostname mismatch → sets HostName via scutil"      "$calls" "tart exec app-a sudo scutil --set HostName app-a"
+assert_contains "darwin hostname mismatch → sets LocalHostName via scutil" "$calls" "tart exec app-a sudo scutil --set LocalHostName app-a"
+assert_contains "darwin hostname mismatch → sets ComputerName via scutil"  "$calls" "tart exec app-a sudo scutil --set ComputerName app-a"
+assert_absent   "darwin hostname mismatch → never calls hostnamectl"       "$calls" "hostnamectl"
+# must-pass control: an already-correct hostname sets nothing, on darwin either.
+MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_absent "darwin hostname already correct → no scutil calls" "$(cat "$CALLS")" "scutil"
+
+# ---- darwin --gui=window: the macOS desktop needs no isolate/DM/scale step -
+MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "darwin window → exit 0" 0
+calls="$(cat "$CALLS")"
+assert_absent   "darwin window → run drops --no-graphics" "$calls" "tart run app-a --no-graphics"
+assert_absent   "darwin window → no graphical.target isolate"        "$calls" "graphical.target"
+assert_absent   "darwin window → no display-manager wait"            "$calls" "display-manager.service"
+assert_absent   "darwin window → no host backing-scale detection"    "$calls" "system_profiler"
+assert_absent   "darwin window → no guest display-scale application" "$calls" "tart-stacks-display-scale"
+
+# ---- darwin --gui=vnc: host-side --vnc-experimental, no guest listener -----
+# must-pass control: Tart prints the URL, the host port answers — the same
+# proof-before-trust shape as the linux loopback verify, classifying a HOST
+# port instead of a guest one.
+MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "darwin vnc → exit 0" 0
+calls="$(cat "$CALLS")"
+assert_contains "darwin vnc → tart run carries --vnc-experimental" "$calls" "tart run app-a --no-graphics --vnc-experimental"
+assert_contains "darwin vnc → verifies the HOST listener Tart printed" "$calls" "nc -z -G 3 127.0.0.1 61234"
+assert_contains "darwin vnc → prints the ready message with Tart's own URL" "$(cat "$ERR")" "VNC ready for 'app-a'. Point a VNC client at vnc://:word-word-word-word@127.0.0.1:61234"
+assert_absent   "darwin vnc → never touches the guest-side vnc unit" "$calls" "tart-stacks-vnc.service"
+assert_absent   "darwin vnc → never probes a guest listener table"  "$calls" "ss -tln"
+
+# must-fail: Tart never prints a URL (crashed before the framework's VNC
+# server bound a port) — activation fails closed rather than reporting
+# success on an unverified guess.
+MOCK_PLATFORM=darwin MOCK_TART_VNC_PRINT=0 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "darwin vnc — Tart never prints a URL → exit 1" 1
+assert_contains "darwin vnc — no-URL diagnostic names the failure" "$(cat "$ERR")" "vnc gui activation failed"
+assert_contains "darwin vnc — no-URL diagnostic names the 30 s wait" "$(cat "$ERR")" "within 30 s"
+# "nc -z" alone would also match the unrelated :22 readiness probe that runs
+# earlier in every boot — pin the vnc host specifically.
+assert_absent   "darwin vnc — no-URL path never reaches the listener probe" "$(cat "$CALLS")" "nc -z -G 3 127.0.0.1"
+
+# must-fail: Tart prints an unparseable URL — refuse rather than probe a
+# nonsense host/port pair.
+MOCK_PLATFORM=darwin MOCK_VNC_URL="vnc://onlyhost-no-port" \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "darwin vnc — malformed URL from Tart → exit 1" 1
+assert_contains "darwin vnc — malformed-URL diagnostic names the failure" "$(cat "$ERR")" "could not parse Tart's VNC URL"
+assert_absent   "darwin vnc — malformed URL never reaches the listener probe" "$(cat "$CALLS")" "nc -z -G 3 127.0.0.1"
+
+# must-fail: the URL parses, but the host port never actually accepts a
+# connection — proves the verify is a REAL probe, not a trust of the print.
+MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 MOCK_NC_VNC_RC=1 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "darwin vnc — host port never accepts → exit 1" 1
+assert_contains "darwin vnc — listener-timeout diagnostic names host:port" "$(cat "$ERR")" "127.0.0.1:61234"
+assert_eq       "darwin vnc — listener probe retries its full 30 intervals" 30 "$(grep -c '^nc -z -G 3 127.0.0.1 61234$' "$CALLS")"
+# the unrelated :22 readiness probe must still have succeeded on its own —
+# otherwise this failure would be indistinguishable from the boot never
+# coming up at all.
+assert_contains "darwin vnc — host port never accepts → :22 still probed and passed" "$(cat "$CALLS")" "nc -z -G 3 10.0.0.9 22"
 
 # prefix lookup: stored bare `app-a`, asked as `tart-app-a`
 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a

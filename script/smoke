@@ -4,12 +4,16 @@
 # it. One passing run exercises the whole chain — tart-new's gates, clone, boot,
 # DHCP, sshd, key auth, the tart-guest-agent vsock channel `tart exec` rides on,
 # tart-up's hostname provisioning, the provenance manifest, the guest's own
-# os-release, the stack's toolchain over a NON-interactive ssh (the shape a
-# script or agent uses), and sshd's effective hardening — none of
-# which `packer validate` or the mocked tests can reach. Needs the
-# <distro>-<stack> image already built and the host tools wired (`make setup`);
-# boots a real VM (~1 min). Run via `make smoke STACK=<stack> DISTRO=<distro>` —
-# local-only, never in CI.
+# os-release (sw_vers on darwin), the stack's toolchain over a NON-interactive
+# ssh (the shape a script or agent uses), and sshd's effective hardening — none
+# of which `packer validate` or the mocked tests can reach. The OS token
+# resolves to a platform via tart_os_platform (bin/lib/common.sh) before
+# anything clones, since several stages below key off it: the hostname-failure
+# wording, the guest self-ID command, and the closing surface check (VNC on
+# linux; a runtime listener-surface + Screen Sharing check on darwin, which has
+# no guest-side VNC to probe at all). Needs the <os>-<stack> image already
+# built and the host tools wired (`make setup`); boots a real VM (~1 min). Run
+# via `make smoke STACK=<stack> OS=<os>` — local-only, never in CI.
 #
 # SMOKE_KEEP=1 skips the teardown, leaving the VM up for debugging.
 set -euo pipefail
@@ -17,6 +21,9 @@ set -euo pipefail
 prog="${0##*/}"
 
 REPO=$(cd -P "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)
+
+# shellcheck source=bin/lib/common.sh
+. "$REPO/bin/lib/common.sh"
 
 # Helper-resolution seam: test/smoke.sh points TART_SMOKE_BIN at a directory
 # of mocks; real runs resolve the repo's bin/. `ssh` and `tart` stay plain PATH
@@ -26,16 +33,40 @@ REPO=$(cd -P "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)
 SMOKE_BIN="${TART_SMOKE_BIN:-$REPO/bin}"
 
 usage() {
-  echo "usage: $prog <stack> <distro> [<de>]" >&2
-  echo "  <de>          smoke the GUI flavor <distro>-<stack>-<de> instead" >&2
+  echo "usage: $prog <stack> <os> [<de>]" >&2
+  echo "  <de>          smoke the GUI flavor <os>-<stack>-<de> instead" >&2
   echo "  SMOKE_KEEP=1  keep the VM on exit (debugging — also survives a Ctrl-C)" >&2
 }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 [ $# -eq 2 ] || [ $# -eq 3 ] || { usage; exit 64; }
 STACK="$1"
-DISTRO="$2"
+OS="$2"
 DE="${3:-}"
+
+# Every platform's os file (shared/*/os), the same glob tart-new and tart-up
+# read. tart_os_platform is the token-side peer of tart_vm_platform: this VM
+# doesn't exist yet, so there is nothing in `tart get` to ask — the OS token
+# and shared/*/os alone decide which platform's stages below apply. A
+# nonzero return is refused rather than defaulted to "linux": the same
+# fail-closed contract tart_os_platform's own header documents, so an
+# unsupported or ambiguous token never smoke-tests the wrong platform's
+# assertions.
+OS_FILES="${TART_OS_FILES:-$REPO/shared/*/os}"
+PLATFORM=$(tart_os_platform "$OS" "$OS_FILES") || {
+  echo "$prog: OS '$OS' is not claimed by exactly one platform in shared/*/os (unsupported, or listed by more than one) — refusing to smoke-test without knowing which platform's assertions apply." >&2
+  exit 1
+}
+
+# darwin has no DE axis — the macOS desktop is intrinsic, so a darwin image is
+# always <os>-<stack>, never <os>-<stack>-<de>. tart-new (Task 16) refuses a
+# darwin <de> too; catching it here as well means the failure reads as "smoke
+# does not take this argument" instead of surfacing as tart-new's own
+# downstream refusal a moment later.
+if [ -n "$DE" ] && [ "$PLATFORM" = "darwin" ]; then
+  echo "$prog: <de> is a linux-only argument — the macOS desktop is intrinsic, so darwin images have no DE axis. Smoke '$STACK' '$OS' with no third argument." >&2
+  exit 1
+fi
 
 # Fixed name, short and obviously disposable; the SSH alias is tart-smoke-vm.
 VM="smoke-vm"
@@ -44,7 +75,7 @@ VM="smoke-vm"
 # smoke test asserts the image is ALREADY built — it must never side-effect a
 # 15-20 min `make build`. Runs before the trap below is armed: on a name
 # collision the existing VM is not ours, so teardown must not touch it.
-"$SMOKE_BIN/tart-new" "$VM" "$STACK" "$DISTRO" ${DE:+"$DE"} < /dev/null
+"$SMOKE_BIN/tart-new" "$VM" "$STACK" "$OS" ${DE:+"$DE"} < /dev/null
 
 # From here the VM is ours — tear it down on ANY exit, so a failed boot or
 # assert can't strand it. SMOKE_KEEP=1 keeps it for debugging instead. The
@@ -111,9 +142,13 @@ fi
 # until the ssh assert below reports a bare mismatch — which reads as a
 # provisioning bug in the image. tart-up's own comment names the two causes it
 # swallows: an agent that started too late for its one probe, and a guest where
-# hostnamectl is missing or systemd-hostnamed refuses.
+# the hostname tool itself failed — hostnamectl/systemd-hostnamed on linux,
+# scutil on darwin (tart-up has no hostnamectl branch on that platform, so a
+# darwin failure must not send the reader after a binary that isn't there).
+hostname_tool="hostnamectl/systemd-hostnamed"
+[ "$PLATFORM" = "darwin" ] && hostname_tool="scutil"
 if [ "$agent_reply" != "$VM" ]; then
-  echo "$prog: FAIL — the guest agent in '$VM' answers and can escalate, but the guest calls itself '${agent_reply:-empty}' rather than '$VM'. tart-up sets that over this channel and suppresses any failure, so either it probed before the agent was listening, or hostnamectl/systemd-hostnamed failed in the guest. Re-run; if it repeats, it is the guest side, not timing." >&2
+  echo "$prog: FAIL — the guest agent in '$VM' answers and can escalate, but the guest calls itself '${agent_reply:-empty}' rather than '$VM'. tart-up sets that over this channel and suppresses any failure, so either it probed before the agent was listening, or $hostname_tool failed in the guest. Re-run; if it repeats, it is the guest side, not timing." >&2
   exit 1
 fi
 printf '%s: ok   %-22s %s\n' "$prog" "guest hostname (vsock)" "$agent_reply" >&2
@@ -148,16 +183,52 @@ attest() { # <label> <want> <got>
     exit 1
   fi
 }
-manifest=$(ssh -o BatchMode=yes "tart-$VM" 'cat /etc/tart-stacks-release; . /etc/os-release; echo "os-id: $ID"') || {
-  rc=$?
-  echo "$prog: FAIL — could not read /etc/tart-stacks-release in 'tart-$VM' (rc=$rc); the image carries no provenance to check." >&2
-  exit "$rc"
-}
+# Guest self-ID, appended to the manifest read: the point is to ask the GUEST
+# what it is INDEPENDENTLY of the manifest, so a mislabeled image is caught —
+# reading the manifest's own os:/os-pretty: here would attest the file
+# against itself and prove nothing. macOS has no /etc/os-release; sw_vers is
+# the darwin peer, lower-cased so "macOS" lines up with the lower-case OS
+# tokens this repo uses everywhere else (shared/darwin/os, tart-new, tart-up).
+if [ "$PLATFORM" = "darwin" ]; then
+  manifest=$(ssh -o BatchMode=yes "tart-$VM" 'cat /etc/tart-stacks-release; echo "sw-vers-id: $(sw_vers -productName | tr "[:upper:]" "[:lower:]")"') || {
+    rc=$?
+    echo "$prog: FAIL — could not read /etc/tart-stacks-release in 'tart-$VM' (rc=$rc); the image carries no provenance to check." >&2
+    exit "$rc"
+  }
+else
+  manifest=$(ssh -o BatchMode=yes "tart-$VM" 'cat /etc/tart-stacks-release; . /etc/os-release; echo "os-id: $ID"') || {
+    rc=$?
+    echo "$prog: FAIL — could not read /etc/tart-stacks-release in 'tart-$VM' (rc=$rc); the image carries no provenance to check." >&2
+    exit "$rc"
+  }
+fi
 field() { printf '%s\n' "$manifest" | awk -v k="$1:" '$1==k { print $2; exit }'; }
+
+# field() takes the FIRST match on key and exits, so a duplicate `os:` line
+# would silently orphan the second instead of failing the attest below —
+# the attest would read the build token and call it a day, with no signal
+# that a second, unreachable line exists. Assert the key appears exactly once
+# before trusting field() to read it.
+os_lines=$(printf '%s\n' "$manifest" | awk '$1=="os:" { c++ } END { print c+0 }')
+if [ "$os_lines" -ne 1 ]; then
+  echo "$prog: FAIL — manifest has $os_lines 'os:' line(s), want exactly 1 (field() returns only the first match and exits, so a duplicate key silently orphans the rest — inspect /etc/tart-stacks-release)." >&2
+  exit 1
+fi
+printf '%s: ok   %-22s %s\n' "$prog" "manifest os: key" "unique" >&2
+
 attest "manifest stack"  "$STACK"          "$(field stack)"
-attest "manifest distro" "$DISTRO"         "$(field distro)"
-attest "guest os-release id" "$DISTRO"     "$(field os-id)"
-attest "manifest gui"    "${DE:-none}"     "$(field gui)"
+attest "manifest os" "$OS"                 "$(field os)"
+if [ "$PLATFORM" = "darwin" ]; then
+  attest "guest sw_vers id" "$OS"          "$(field sw-vers-id)"
+else
+  attest "guest os-release id" "$OS"       "$(field os-id)"
+fi
+# darwin's manifest carries no gui: key at all — the macOS desktop is
+# intrinsic, so 99-finalize.sh (darwin) has no GUI axis to record, unlike the
+# linux peer, which always writes gui: <de>|none. Nothing to attest there.
+if [ "$PLATFORM" != "darwin" ]; then
+  attest "manifest gui"    "${DE:-none}"     "$(field gui)"
+fi
 
 # The toolchain has to be reachable the way an agent or a script reaches it: a
 # login shell with no rc file, which is what `ssh <vm> <cmd>` runs.
@@ -186,6 +257,11 @@ for want in "passwordauthentication no" "permitrootlogin no" "kbdinteractiveauth
   fi
 done
 
+# The closing platform-specific surface check. Exactly one arm applies: a
+# linux GUI flavor gets the VNC surface below; every darwin run (which never
+# carries a <de> — refused up front) gets the listener-surface + Screen
+# Sharing check in the elif; a headless linux run gets neither.
+#
 # GUI flavor: the desktop surface IS what a GUI smoke proves — start the baked
 # VNC unit (deliberately not enabled in the image, so this also exercises the
 # activation path a consumer uses) and read the RFB banner off the loopback
@@ -242,6 +318,96 @@ if [ -n "$DE" ]; then
         exit 1 ;;
     esac
   done <<< "$listeners"
+elif [ "$PLATFORM" = "darwin" ]; then
+  # darwin has no guest-side VNC listener at all (tart-up serves it host-side
+  # via Tart's own --vnc-experimental — see bin/tart-up), so there is no
+  # guest surface to probe here the way linux's VNC unit is probed above.
+  # What replaces it: the runtime peer of 99-finalize.sh's build-time
+  # ":22 alone" assertion. That one runs once, on the builder VM, before the
+  # image is ever imaged and cloned; this one runs against a booted CLONE, so
+  # a pass proves the posture survived imaging and cloning, not merely that
+  # it was once true at build time. Same netstat|awk idiom 99-finalize.sh
+  # uses — `ss` does not exist on macOS.
+  if ! listener_table=$(ssh -o BatchMode=yes "tart-$VM" 'sudo netstat -an -p tcp' 2>/dev/null); then
+    echo "$prog: FAIL — could not read the guest TCP listener table in 'tart-$VM' with netstat, so the :22-alone posture and Screen Sharing's absence are both unverified (re-run with SMOKE_KEEP=1 and try 'sudo netstat -an -p tcp' in the VM)." >&2
+    exit 1
+  fi
+  # Parse each LISTEN row into "addr port": netstat renders the Local Address
+  # column address-and-port joined by a dot (`127.0.0.1.4445`, `::1.4445`,
+  # `*.22` — measured directly against the real binary; IPv6 is NOT
+  # bracketed here, unlike ss's `[::1]:5901` the linux VNC stage parses
+  # below) — an IPv4 address embeds three more dots of its own, so only the
+  # LAST dot is the port separator; `sub()`'s greedy `.*\.` match finds it
+  # regardless of how many dots came before.
+  rows=$(printf '%s\n' "$listener_table" | awk '
+    $NF == "LISTEN" {
+      addr = $4; port = $4
+      sub(/\.[^.]*$/, "", addr)
+      sub(/.*\./, "", port)
+      print addr, port
+    }' | sort -u)
+  ports=$(printf '%s\n' "$rows" | awk '{ print $2 }' | sort -u)
+  # must-pass control: :22 has to show up in the parsed set on its own, or an
+  # empty/broken read (netstat itself failing, a parse that matches nothing)
+  # would pass everything below vacuously — "nothing unexpected" and "5900
+  # absent" are both trivially true of a table with nothing in it at all.
+  if ! printf '%s\n' "$ports" | grep -qx 22; then
+    echo "$prog: FAIL — the guest listener table in 'tart-$VM' never showed :22 itself (got: $(printf '%s' "$ports" | tr '\n' ' ')) — this read is not trustworthy evidence for the checks below (re-run with SMOKE_KEEP=1 and try 'sudo netstat -an -p tcp' in the VM)." >&2
+    exit 1
+  fi
+  printf '%s: ok   %-22s %s\n' "$prog" "listener table" "22 present (must-pass control)" >&2
+
+  # This platform's central security claim, read from the SAME already
+  # must-pass-verified table rather than a fresh host-side connect probe: a
+  # bare connect only proves a TCP handshake succeeded or failed, and a
+  # socket bound with nothing behind it still answers a connect — the exact
+  # false positive this repo's probe-quality bar rules out. The kernel
+  # LISTEN-state row read here is unambiguous either way, regardless of
+  # whether anything on the other end would ever speak RFB. Unconditional on
+  # bind address, unlike the general check below: nothing legitimately
+  # forwards a tunnel onto :5900, so any appearance of it — loopback or not —
+  # is the base's disabled service coming back.
+  if printf '%s\n' "$ports" | grep -qx 5900; then
+    echo "$prog: FAIL — port 5900 (Screen Sharing) is listening on 'tart-$VM' — the base ships it reachable with the publicly-known admin/admin password, and 99-finalize.sh is supposed to disable it." >&2
+    exit 1
+  fi
+  printf '%s: ok   %-22s %s\n' "$prog" "screen sharing" "absent (:5900 not listening)" >&2
+
+  # The claim worth asserting AT RUNTIME is "no listener beyond :22 reachable
+  # from outside the guest" — not "no listener beyond :22, full stop". The
+  # two differ deliberately: 99-finalize.sh's build-time assert (the one it
+  # runs) stays absolute, because a Packer build has no ssh sessions open
+  # against it and no RemoteForwards to tolerate. This check runs against a
+  # live clone the OPERATOR is (or was) ssh'd into, and a `Host tart-*
+  # RemoteForward …` in ~/.config/tart-stacks/forwards makes sshd-sess bind
+  # the forwarded port on the GUEST's loopback for the life of that session —
+  # real sockets, not a mocking artifact, and not exposure: nothing outside
+  # the guest can reach 127.0.0.1 or ::1 inside it. Do not tighten this back
+  # to the build-time script's bar; that reintroduces a false FAIL that is
+  # invisible in the mocked suite and CI (no forwards there) and fires only
+  # for the operator this whole check exists to protect. The allowlist below
+  # is NOT the same spelling the linux VNC stage's loopback classifier uses
+  # (`[::1]:5901`, bracketed) — that one parses `ss`, this one parses
+  # macOS's `netstat`, and the two tools render IPv6 loopback differently
+  # for the identical concept; each classifier matches its own tool's real
+  # output, not each other's.
+  non_loopback=$(printf '%s\n' "$rows" | awk '
+    $2 != "22" {
+      addr = $1
+      if (addr != "127.0.0.1" && addr != "::1") print addr":"$2
+    }')
+  if [ -n "$non_loopback" ]; then
+    echo "$prog: FAIL — 'tart-$VM' has a non-loopback listener beyond :22 ($(printf '%s' "$non_loopback" | tr '\n' ' ')) — a loopback bind (127.0.0.1 / ::1) is tolerated as the operator's own RemoteForward tunnel, but this is reachable beyond the guest itself." >&2
+    exit 1
+  fi
+  printf '%s: ok   %-22s %s\n' "$prog" "listener surface" ":22 alone beyond loopback (survived clone)" >&2
 fi
 
-echo "$prog: OK — $DISTRO-$STACK${DE:+-$DE} smoke passed: clone, boot, guest agent, ssh, hostname, manifest, os-release, toolchain, sshd posture${DE:+, vnc}." >&2
+if [ "$PLATFORM" = "darwin" ]; then
+  id_stage="sw_vers"
+  closing_stage=", listener surface, screen sharing"
+else
+  id_stage="os-release"
+  closing_stage="${DE:+, vnc}"
+fi
+echo "$prog: OK — $OS-$STACK${DE:+-$DE} smoke passed: clone, boot, guest agent, ssh, hostname, manifest, $id_stage, toolchain, sshd posture$closing_stage." >&2

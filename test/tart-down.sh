@@ -21,10 +21,10 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 MOCKBIN="$WORK/bin"; mkdir -p "$MOCKBIN"
 CALLS="$WORK/calls"; export CALLS
 
-# Fixtures the base-image guard reads: fedora is a distro, php a stack, kde a
+# Fixtures the base-image guard reads: fedora is an OS, php a stack, kde a
 # desktop — so fedora-php and fedora-php-kde are base images and app-a is not.
 mkdir -p "$WORK/stacks/php"
-printf 'fedora\n' > "$WORK/distros"
+printf 'fedora\n' > "$WORK/os"
 printf 'kde\n'    > "$WORK/desktops"
 
 cat > "$MOCKBIN/tart" <<'M'
@@ -43,7 +43,7 @@ run_down() { # <args...> -> combined output in $OUT, exit code in $rc
   OUT=$(PATH="$MOCKBIN:$PATH" \
     MOCK_TART_LIST_JSON="${MOCK_TART_LIST_JSON:-$LIST}" \
     MOCK_TART_STOP_RC="${MOCK_TART_STOP_RC:-0}" \
-    TART_STACKS_DIR="$WORK/stacks" TART_DISTROS="$WORK/distros" TART_DESKTOPS="$WORK/desktops" \
+    TART_STACKS_DIR="$WORK/stacks" TART_OS_FILES="$WORK/os" TART_DESKTOPS="$WORK/desktops" \
     bash "$BIN/tart-down" "$@" 2>&1) || rc=$?
 }
 

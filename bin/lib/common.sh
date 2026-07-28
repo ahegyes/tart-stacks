@@ -21,6 +21,60 @@ tart_vm_state() {
   tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name and .Source=="local") | .State'
 }
 
+# tart_vm_platform <name> — print the VM's platform as Tart itself reports it
+# ("darwin" or "linux"), never the `<os>-<stack>` naming convention this
+# repo's own images follow: that convention is a naming scheme this repo
+# maintains, while `tart get`'s OS field is a property of the VM Tart
+# actually built (confirmed empirically: `tart get macos-php --format json`
+# answers `"OS":"darwin"`, `tart get fedora-php --format json` answers
+# `"OS":"linux"`). stderr stays attached, same as tart_vm_state, so tart's
+# (or jq's) real error reaches the terminal. Returns 1 on anything short of
+# a confirmed answer — a missing VM, a failed `tart get`, an empty or
+# unrecognized OS field — the same "refuse rather than guess" contract
+# tart_vm_state and tart_is_base_image already hold to for their own reads. A
+# caller MUST NOT treat a nonzero return as "linux": only a printed "darwin"
+# or "linux" is a confirmed answer. This is what keeps a future caller safe
+# by default even before it grows its own tart_need_cmd guards — a missing
+# `tart`/`jq` yields empty stdin into jq's `// empty` and lands in the same
+# refusal, no special-casing required.
+tart_vm_platform() {
+  local os
+  os=$(tart get "$1" --format json | jq -r '.OS // empty') || return 1
+  case "$os" in
+    darwin) printf 'darwin' ;;
+    linux)  printf 'linux'  ;;
+    *)      return 1 ;;
+  esac
+}
+
+# tart_os_platform <os-token> <os-glob> — print the platform (darwin/linux)
+# that owns an OS TOKEN, the token-side peer of tart_vm_platform: that one
+# reads an EXISTING VM's platform via `tart get`, but a caller deciding what
+# to clone has no VM yet to ask — only the token and shared/*/os. Mirrors the
+# Makefile's PLATFORM resolver (Makefile:107-112) and its reasoning: <os-glob>
+# is alphabetical, so darwin sorts before linux, and stopping at the first hit
+# would let one platform's token silently shadow another's — every glob
+# member is scanned and counted rather than short-circuited. Prints the
+# platform and returns 0 only when EXACTLY one platform's file lists the
+# token; zero matches and more than one match are both refusals, printing
+# nothing — neither is a single well-defined platform. Same "refuse rather
+# than guess" contract as tart_vm_platform: a caller MUST NOT treat a nonzero
+# return as either platform.
+tart_os_platform() {
+  local token="$1" glob="$2" f dir platform="" count=0
+  # shellcheck disable=SC2086  # deliberately unquoted: glob is a shell glob
+  # (e.g. shared/*/os) expanding to one file per platform; a literal path
+  # with no glob metacharacters expands to itself, unchanged.
+  for f in $glob; do
+    grep -qxF "$token" <(grep -vE '^[[:space:]]*(#|$)' "$f" 2>/dev/null) || continue
+    dir="${f%/*}"
+    platform="${dir##*/}"
+    count=$((count + 1))
+  done
+  [ "$count" -eq 1 ] || return 1
+  printf '%s' "$platform"
+}
+
 # tart_resolve_vm <name> [not-found-hint] — print the stored VM name for a bare
 # name or a `tart-<name>` SSH alias. The prefix is stripped unconditionally:
 # tart_valid_vm_name refuses it at create time, so no tart-stacks VM can hold a
@@ -68,34 +122,45 @@ tart_ssh_has_sessiontype() {
   printf 'Match sessiontype shell\n' | ssh -G -F /dev/stdin __tart-probe >/dev/null 2>&1
 }
 
-# tart_is_base_image <bare-name> <stacks-dir> <distros-file> <desktops-file> —
-# 0 if the name is a clone-source (the <distro>-base bootstrap intermediate, a
-# <distro>-<stack> built image, or a <distro>-<stack>-<de> GUI flavor), not a
-# dev VM. Anchored on the supported distro set so hyphenated dev-VM names
-# (e.g. web-php, app-base) are NOT misread as base images.
+# tart_is_base_image <bare-name> <stacks-dir> <os-glob> <desktops-file> —
+# 0 if the name is a clone-source (the <os>-base bootstrap intermediate, a
+# <os>-<stack> built image, or a <os>-<stack>-<de> GUI flavor), not a
+# dev VM. Anchored on the supported OS set so hyphenated dev-VM names
+# (e.g. web-php, app-base) are NOT misread as base images. <os-glob> scans
+# every platform's os file (shared/*/os) rather than one hardcoded path: once
+# `make bootstrap OS=macos` can clone a real macos-base (this repo now builds
+# more than the linux platform), a caller that only knew shared/linux/os would
+# wave a "macos-base" dev VM straight through. Desktops stay a single file —
+# GUI flavors are a linux-only concept, so shared/linux/desktops is the only
+# one that exists.
 tart_is_base_image() {
-  local bare="$1" stacks_dir="$2" distros_file="$3" desktops_file="$4" d de rest
+  local bare="$1" stacks_dir="$2" os_glob="$3" desktops_file="$4" d de rest f
   # The classification gates destructive paths (tart-rm's delete) — refusing
   # to answer beats silently failing open when the data is unreadable.
-  [ -r "$distros_file" ]  || { echo "${prog:-${0##*/}}: cannot read distros file '$distros_file' — cannot tell dev VMs from base images." >&2; exit 1; }
-  [ -r "$desktops_file" ] || { echo "${prog:-${0##*/}}: cannot read desktops file '$desktops_file' — cannot tell dev VMs from base images." >&2; exit 1; }
   [ -d "$stacks_dir" ]    || { echo "${prog:-${0##*/}}: stacks dir '$stacks_dir' not found — cannot tell dev VMs from base images." >&2; exit 1; }
-  while IFS= read -r d; do
-    case "$bare" in
-      "$d"-base) return 0 ;;
-      "$d"-*)
-        rest="${bare#"$d"-}"
-        [ -d "$stacks_dir/$rest" ] && return 0
-        # GUI flavor: <stack>-<de>, de anchored on the supported desktop set
-        # so a dev VM named e.g. fedora-php-2 stays a dev VM.
-        while IFS= read -r de; do
-          case "$rest" in
-            *-"$de") [ -d "$stacks_dir/${rest%-"$de"}" ] && return 0 ;;
-          esac
-        done < <(grep -vE '^[[:space:]]*(#|$)' "$desktops_file")
-        ;;
-    esac
-  done < <(grep -vE '^[[:space:]]*(#|$)' "$distros_file")
+  [ -r "$desktops_file" ] || { echo "${prog:-${0##*/}}: cannot read desktops file '$desktops_file' — cannot tell dev VMs from base images." >&2; exit 1; }
+  # shellcheck disable=SC2086  # deliberately unquoted: os_glob is a shell
+  # glob (e.g. shared/*/os) expanding to one file per platform; a literal
+  # path with no glob metacharacters expands to itself, unchanged.
+  for f in $os_glob; do
+    [ -r "$f" ] || { echo "${prog:-${0##*/}}: cannot read OS file '$f' — cannot tell dev VMs from base images." >&2; exit 1; }
+    while IFS= read -r d; do
+      case "$bare" in
+        "$d"-base) return 0 ;;
+        "$d"-*)
+          rest="${bare#"$d"-}"
+          [ -d "$stacks_dir/$rest" ] && return 0
+          # GUI flavor: <stack>-<de>, de anchored on the supported desktop set
+          # so a dev VM named e.g. fedora-php-2 stays a dev VM.
+          while IFS= read -r de; do
+            case "$rest" in
+              *-"$de") [ -d "$stacks_dir/${rest%-"$de"}" ] && return 0 ;;
+            esac
+          done < <(grep -vE '^[[:space:]]*(#|$)' "$desktops_file")
+          ;;
+      esac
+    done < <(grep -vE '^[[:space:]]*(#|$)' "$f")
+  done
   return 1
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Characterization test for distro-lib.sh _detect_family: os-release ID/ID_LIKE →
+# Characterization test for family-lib.sh _detect_family: os-release ID/ID_LIKE →
 # family. Extracts the function from source (tracks it through refactors) and
 # exercises it against synthetic os-release files. No framework.
 set -uo pipefail
@@ -11,10 +11,10 @@ assert_eq(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want » $2 « got 
 assert_contains(){ case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 # Extract _detect_family and source it (same technique parsing.sh uses for tart-up fns).
-awk 'index($0,"_detect_family() {")==1{p=1} p{print} p&&$0=="}"{exit}' "$REPO/shared/scripts/distro-lib.sh" > "$WORK/fn.sh"
+awk 'index($0,"_detect_family() {")==1{p=1} p{print} p&&$0=="}"{exit}' "$REPO/shared/linux/scripts/family-lib.sh" > "$WORK/fn.sh"
 # shellcheck source=/dev/null
 source "$WORK/fn.sh"
-echo "distro-lib — _detect_family:"
+echo "family-lib — _detect_family:"
 printf 'ID=fedora\n'                 > "$WORK/f"; assert_eq "fedora -> dnf"      dnf "$(OS_RELEASE=$WORK/f _detect_family)"
 printf 'ID=ubuntu\nID_LIKE=debian\n' > "$WORK/u"; assert_eq "ubuntu -> apt"      apt "$(OS_RELEASE=$WORK/u _detect_family)"
 printf 'ID=debian\n'                 > "$WORK/d"; assert_eq "debian -> apt"      apt "$(OS_RELEASE=$WORK/d _detect_family)"
@@ -111,12 +111,12 @@ M
 chmod +x "$MOCKBIN/apt-get" "$MOCKBIN/apt-cache" "$MOCKBIN/dnf" "$MOCKBIN/rpm" \
   "$MOCKBIN/getenforce" "$MOCKBIN/aa-status" "$MOCKBIN/sleep"
 
-echo "distro-lib — pkg_install_optional skip recording:"
+echo "family-lib — pkg_install_optional skip recording:"
 SKIP="$WORK/skipped-apt"
 # shellcheck disable=SC2030  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP" MOCK_APT_ABSENT="gone-pkg"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/family-lib.sh"
   pkg_install_optional kept-pkg gone-pkg ) >/dev/null 2>&1
 assert_eq "apt: only the absent package is recorded" "gone-pkg" "$(cat "$SKIP" 2>/dev/null)"
 
@@ -128,7 +128,7 @@ apt_fail_rc=0
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_FAIL" MOCK_APT_FAIL="broken-pkg"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/family-lib.sh"
   pkg_install_optional broken-pkg ) >/dev/null 2>&1 || apt_fail_rc=$?
 assert_eq "apt: a failing install is not recorded as unavailable" "" "$(cat "$SKIP_FAIL" 2>/dev/null)"
 if [ "$apt_fail_rc" -ne 0 ]; then
@@ -146,7 +146,7 @@ qfail_rc=0
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_QFAIL" MOCK_APT_CACHE_RC=100
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/family-lib.sh"
   pkg_install_optional anypkg ) >/dev/null 2>&1 || qfail_rc=$?
 assert_eq "apt: a failing query is not recorded as unavailable" "" "$(cat "$SKIP_QFAIL" 2>/dev/null)"
 if [ "$qfail_rc" -ne 0 ]; then
@@ -165,7 +165,7 @@ APT_LOG="$WORK/apt-calls"; : > "$APT_LOG"
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_VIRT" \
          MOCK_APT_VIRTUAL="virt-pkg" MOCK_APT_LOG="$APT_LOG"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/family-lib.sh"
   pkg_install_optional virt-pkg ) >/dev/null 2>&1
 assert_eq "apt: a virtual package with a provider is not recorded" "" "$(cat "$SKIP_VIRT" 2>/dev/null)"
 assert_contains "apt: a virtual package is still handed to apt-get" "$(cat "$APT_LOG")" "install -y --no-install-recommends virt-pkg"
@@ -178,7 +178,7 @@ sfail_rc=0
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/u" TART_SKIPPED_FILE="$SKIP_SFAIL" \
          MOCK_APT_ABSENT="q-pkg" MOCK_APT_SHOWPKG_RC=100
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/family-lib.sh"
   pkg_install_optional q-pkg ) >/dev/null 2>&1 || sfail_rc=$?
 assert_eq "apt: a failing provider query is not recorded as unavailable" "" "$(cat "$SKIP_SFAIL" 2>/dev/null)"
 if [ "$sfail_rc" -ne 0 ]; then
@@ -191,7 +191,7 @@ SKIP2="$WORK/skipped-dnf"
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" TART_SKIPPED_FILE="$SKIP2" MOCK_RPM_MISSING="ghost-pkg"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/family-lib.sh"
   pkg_install_optional present-pkg ghost-pkg ) >/dev/null 2>&1
 assert_eq "dnf: the rpm-absent package is recorded" "ghost-pkg" "$(cat "$SKIP2" 2>/dev/null)"
 
@@ -204,24 +204,24 @@ SKIP_REN="$WORK/skipped-renamed"
 # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
 ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" TART_SKIPPED_FILE="$SKIP_REN" MOCK_RPM_RENAMED="oldname-devel"
   # shellcheck source=/dev/null
-  source "$REPO/shared/scripts/distro-lib.sh"
+  source "$REPO/shared/linux/scripts/family-lib.sh"
   pkg_install_optional oldname-devel ) >/dev/null 2>&1
 assert_eq "dnf: a package present under a Provides alias is not recorded" "" "$(cat "$SKIP_REN" 2>/dev/null)"
 
-# ── assert_mac_enforcing ─────────────────────────────────────────────────────
+# ── assert_integrity_enforced ────────────────────────────────────────────────
 # Its whole job is to fail a build, so an untested one can only be discovered by
 # shipping an image whose inherited MAC posture had silently regressed.
-echo "distro-lib — assert_mac_enforcing:"
-mac_rc() { # <os-release-fixture> [KEY=VALUE…] — exit status of assert_mac_enforcing
+echo "family-lib — assert_integrity_enforced:"
+mac_rc() { # <os-release-fixture> [KEY=VALUE…] — exit status of assert_integrity_enforced
   local fixture="$1"; shift
   local rc=0
   # env, not export: the mock knobs arrive as KEY=VALUE words, which `export`
   # would have to be handed unquoted. A child bash keeps the family detection
-  # (and distro-lib's own hard exit) out of this shell.
+  # (and family-lib's own hard exit) out of this shell.
   # shellcheck disable=SC2031  # the child process env IS the sandbox
   # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$fixture" "$@" \
-    bash -c '. "$1"; assert_mac_enforcing' _ "$REPO/shared/scripts/distro-lib.sh" \
+    bash -c '. "$1"; assert_integrity_enforced' _ "$REPO/shared/linux/scripts/family-lib.sh" \
     >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
@@ -245,8 +245,8 @@ unknown_family_rc() {
   # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
   # shellcheck disable=SC2031  # PATH is per-child on purpose; the mocks are the sandbox
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
-    bash -c '. "$1"; _DISTRO_FAMILY=zypper; assert_mac_enforcing' _ \
-      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+    bash -c '. "$1"; _TART_FAMILY=zypper; assert_integrity_enforced' _ \
+      "$REPO/shared/linux/scripts/family-lib.sh" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 assert_eq "an unknown family fails rather than passing" 1 "$(unknown_family_rc)"
@@ -258,7 +258,7 @@ assert_eq "an unknown family fails rather than passing" 1 "$(unknown_family_rc)"
 # The target is injected rather than read from the shipped pin, so raising
 # FEDORA_TARGET_RELEASE never rewrites these expectations.
 echo
-echo "distro-lib — pkg_release_upgrade:"
+echo "family-lib — pkg_release_upgrade:"
 UPG_LOG="$WORK/dnf-log"; UPG_ERR=""; UPG_RC=0
 # upgrade_run <os-release-fixture> <guest-release> <target> — leaves the status in
 # $UPG_RC, the issued commands in $UPG_LOG, and combined output in $UPG_ERR.
@@ -272,7 +272,7 @@ upgrade_run() {
   UPG_ERR=$( ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$1" MOCK_FEDORA_VER="$2" \
                  FEDORA_TARGET_RELEASE="$3" MOCK_DNF_LOG="$UPG_LOG"
                # shellcheck source=/dev/null
-               source "$REPO/shared/scripts/distro-lib.sh"
+               source "$REPO/shared/linux/scripts/family-lib.sh"
                pkg_release_upgrade ) 2>&1 ) || UPG_RC=$?
 }
 
@@ -325,8 +325,8 @@ release_unknown_family_rc() {
   # shellcheck disable=SC2016  # $1 is the child shell's argument, not this one's
   # shellcheck disable=SC2031  # PATH is per-child on purpose; the mocks are the sandbox
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
-    bash -c '. "$1"; _DISTRO_FAMILY=zypper; pkg_release_upgrade' _ \
-      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+    bash -c '. "$1"; _TART_FAMILY=zypper; pkg_release_upgrade' _ \
+      "$REPO/shared/linux/scripts/family-lib.sh" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 assert_eq "an unknown family is refused, not skipped" 1 "$(release_unknown_family_rc)"
@@ -334,7 +334,7 @@ assert_eq "an unknown family is refused, not skipped" 1 "$(release_unknown_famil
 # ── assert_release_supported ─────────────────────────────────────────────────
 # The gate that stops a hand-maintained release pin going stale in silence.
 echo
-echo "distro-lib — assert_release_supported:"
+echo "family-lib — assert_release_supported:"
 printf 'ID=fedora\nPRETTY_NAME="Fedora Linux 42 (Cloud Edition)"\nSUPPORT_END=2026-05-13\n' > "$WORK/eol"
 printf 'ID=fedora\nPRETTY_NAME="Fedora Linux 44 (Cloud Edition)"\nSUPPORT_END=2027-05-19\n' > "$WORK/live"
 REL_ERR=""
@@ -343,7 +343,7 @@ rel_rc() {  # <os-release-fixture> <today>
   # shellcheck disable=SC2030,SC2031  # the subshell-scoped env IS the sandbox
   REL_ERR=$( ( export PATH="$MOCKBIN:$PATH" OS_RELEASE="$1" TART_TODAY="$2"
                # shellcheck source=/dev/null
-               source "$REPO/shared/scripts/distro-lib.sh"
+               source "$REPO/shared/linux/scripts/family-lib.sh"
                assert_release_supported ) 2>&1 ) || rc=$?
   printf '%s' "$rc"
 }
@@ -370,7 +370,7 @@ assert_contains "the refusal names the knob to turn" "$REL_ERR" "FEDORA_TARGET_R
 # match, and a package the checksums file does not mention at all. Both have to
 # fail before anything reaches the package manager.
 echo
-echo "distro-lib — install_guest_agent:"
+echo "family-lib — install_guest_agent:"
 cat > "$MOCKBIN/curl" <<'M'
 #!/usr/bin/env bash
 [ "${MOCK_CURL_FAIL:-0}" = "1" ] && exit 22
@@ -418,7 +418,7 @@ agent_run() {
                 TART_GUEST_AGENT_VERSION="$ver" \
                 MOCK_DNF_LOG="$AG_LOG" MOCK_APT_LOG="$AG_LOG" "$@"
               # shellcheck source=/dev/null
-              source "$REPO/shared/scripts/distro-lib.sh"
+              source "$REPO/shared/linux/scripts/family-lib.sh"
               install_guest_agent ) 2>&1 ) || AG_RC=$?
 }
 
@@ -470,8 +470,8 @@ agent_unknown_family_rc() {
   local rc=0
   # shellcheck disable=SC2016,SC2031
   env PATH="$MOCKBIN:$PATH" OS_RELEASE="$WORK/f" \
-    bash -c '. "$1"; _DISTRO_FAMILY=zypper; install_guest_agent' _ \
-      "$REPO/shared/scripts/distro-lib.sh" >/dev/null 2>&1 || rc=$?
+    bash -c '. "$1"; _TART_FAMILY=zypper; install_guest_agent' _ \
+      "$REPO/shared/linux/scripts/family-lib.sh" >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 assert_eq "an unknown family is refused, not skipped" 1 "$(agent_unknown_family_rc)"

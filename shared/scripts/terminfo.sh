@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Lives in shared/scripts/ rather than a platform tree because it runs verbatim
+# on linux and darwin alike. That directory's contract is "both platforms", not
+# "unmarked" — a platform-specific script belongs under shared/<platform>/scripts/.
 # terminfo.sh — compile terminfo entries the packaged ncurses-term lacks. Runs as root
 # via sudo, after the file provisioner uploads the source to /tmp.
 #

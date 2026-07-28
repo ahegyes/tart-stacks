@@ -1,0 +1,11 @@
+# shared/linux/os — operating systems tart-stacks builds on the linux platform.
+# One token per line; '#' comments and blank lines ignored. A supported OS needs
+# a published ghcr.io/cirruslabs/<os> Tart image and a matching family branch
+# (dnf or apt) in shared/linux/scripts/family-lib.sh.
+# The platform that owns this file is its directory: every token here is built
+# by linux.pkr.hcl. shared/darwin/os is its peer.
+# Consumed by: Makefile (check-os), bin/tart-new, bin/tart-up, bin/lib/common.sh,
+# the CI matrix.
+fedora
+ubuntu
+debian

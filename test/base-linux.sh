@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Behavioral tests for 00-base.sh's guest-agent substrate gate — the check that
-# turns an inherited, undeclared dependency into a declared one. The rest of
-# 00-base.sh needs a booted guest (dnf/apt, systemd), so only this gate is
-# driven here; the shipped block is READ OUT of the script rather than restated,
-# so weakening it changes what these cases do. Plain bash, no framework.
+# Behavioral tests for shared/linux/scripts/00-base.sh's guest-agent substrate
+# gate — the check that turns an inherited, undeclared dependency into a
+# declared one. The rest of 00-base.sh needs a booted guest (dnf/apt, systemd),
+# so only this gate is driven here; the shipped block is READ OUT of the script
+# rather than restated, so weakening it changes what these cases do. Plain
+# bash, no framework. test/base-darwin.sh is the darwin peer.
 set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
 REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
-BASE="$REPO/shared/scripts/00-base.sh"
+BASE="$REPO/shared/linux/scripts/00-base.sh"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
@@ -34,7 +35,7 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 GATE="$WORK/gate.sh"
 {
   printf 'set -euo pipefail\n'
-  # The region calls into distro-lib.sh, which the real script sources above the
+  # The region calls into family-lib.sh, which the real script sources above the
   # window and the fixture does not have. Supplied here alongside the shell options
   # for the same reason: to run the block under the shape production gives it.
   # Its status is a knob rather than a fixed 0 so the call itself stays measurable —
@@ -58,7 +59,7 @@ if grep -q 'tart-guest-agent' "$GATE"; then
   ok "lifted the guest-agent gate out of 00-base.sh ($(grep -c . "$GATE") lines)"
 else
   bad "lifted the guest-agent gate out of 00-base.sh" \
-      "extraction produced $(grep -c . "$GATE") line(s) — the gate moved, or the awk anchor at test/base.sh:31 no longer matches it"
+      "extraction produced $(grep -c . "$GATE") line(s) — the gate moved, or the awk anchor at test/base-linux.sh:32 no longer matches it"
   printf '\n  %d passed, %d failed\n' "$pass" "$fail"
   exit 1
 fi

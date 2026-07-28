@@ -24,10 +24,28 @@ ERR="$WORK/err"
 # what makes the blast radius the tmpdir. The copy is made fresh from the real
 # Makefile each run, so a deliberate mutation of it still shows up here.
 SANDBOX="$WORK/repo"
-mkdir -p "$SANDBOX/shared"
+mkdir -p "$SANDBOX/shared/linux" "$SANDBOX/shared/darwin"
 cp "$REPO/Makefile" "$SANDBOX/"
-cp "$REPO/shared/distros" "$REPO/shared/desktops" "$SANDBOX/shared/"
+cp "$REPO/shared/linux/os" "$REPO/shared/linux/desktops" "$SANDBOX/shared/linux/"
+cp "$REPO/shared/darwin/os" "$SANDBOX/shared/darwin/"
 cp -R "$REPO/stacks" "$REPO/templates" "$SANDBOX/"
+
+# A second shared/*/os directory, present only in the sandbox, so the PLATFORM
+# tests below exercise dispatch across more than one candidate instead of just
+# finding shared/linux because it's the only one there. Its comment line
+# doubles as the "would match a comment" fixture: "decoytoken" only ever
+# appears inside a '#' line, so a token equal to it must still resolve to
+# nothing — proving comment-stripping runs before the exact-match check, not
+# after.
+mkdir -p "$SANDBOX/shared/decoy"
+printf '# decoytoken\nrealtoken\n' > "$SANDBOX/shared/decoy/os"
+
+# A THIRD shared/*/os directory sharing one token with the second, so the
+# ambiguity gate below has two real files to catch a collision between,
+# instead of asserting against a fixture built to look like one.
+mkdir -p "$SANDBOX/shared/decoy2"
+printf 'collide\n' > "$SANDBOX/shared/decoy2/os"
+printf 'collide\n' >> "$SANDBOX/shared/decoy/os"
 
 gate() { # <target> <VAR=VALUE…> — rc in $rc, stderr in $ERR
   local target="$1"; shift
@@ -43,6 +61,32 @@ assert_accepts() { # label target VAR=VALUE…
   local label="$1"; shift
   gate "$@"
   if [ "$rc" -eq 0 ]; then ok "$label"; else bad "$label" "want exit 0, got $rc: $(head -1 "$ERR")"; fi
+}
+
+# `-p -q help` prints make's variable database without running any recipe:
+# `help` is a real .PHONY target so make has no rule-less-target error to swallow,
+# and `-q` skips its body regardless. PLATFORM is simply-expanded (`:=`), so the
+# database shows its resolved value rather than the unexpanded `$(shell …)` text.
+platform_of() { # OS=value…
+  make -C "$SANDBOX" -s -p -q help "$@" 2>/dev/null \
+    | sed -n 's/^PLATFORM[[:space:]]*:\{0,1\}=[[:space:]]*//p' | head -1
+}
+assert_platform() { # label want OS=value…
+  local label="$1" want="$2"; shift 2
+  local got; got=$(platform_of "$@")
+  if [ "$got" = "$want" ]; then ok "$label"; else bad "$label" "want PLATFORM='$want', got '$got'"; fi
+}
+
+# Same trick for BASE_IMAGE, which the darwin work adds: `:=`, so `-p` shows
+# the resolved repo string, not the unexpanded $(if $(filter …)).
+base_image_of() { # OS=value… [MACOS_RELEASE=value] [IMAGE_TAG=value]
+  make -C "$SANDBOX" -s -p -q help "$@" 2>/dev/null \
+    | sed -n 's/^BASE_IMAGE[[:space:]]*:\{0,1\}=[[:space:]]*//p' | head -1
+}
+assert_base_image() { # label want OS=value…
+  local label="$1" want="$2"; shift 2
+  local got; got=$(base_image_of "$@")
+  if [ "$got" = "$want" ]; then ok "$label"; else bad "$label" "want BASE_IMAGE='$want', got '$got'"; fi
 }
 
 # The token gate is shared by check-stack and scaffold. `STACK=.` is the case that
@@ -75,16 +119,89 @@ assert_rejects "check-stack still applies the token gate" check-stack STACK=.
 gate check-stack STACK=nosuchstack
 assert_contains "the missing-stack refusal lists what exists" "$(cat "$ERR")" "php"
 
-echo "Makefile — check-distro:"
-assert_rejects "empty DISTRO rejected"       check-distro DISTRO=
-assert_rejects "unsupported DISTRO rejected" check-distro DISTRO=arch
-distro_cases=0
+echo "Makefile — check-os:"
+assert_rejects "empty OS rejected"        check-os OS=
+assert_rejects "unsupported OS rejected"  check-os OS=arch
+assert_rejects "OS=bogus still rejected"  check-os OS=bogus
+os_cases=0
 while IFS= read -r d; do
-  distro_cases=$((distro_cases + 1))
-  assert_accepts "shared/distros token '$d' accepted" check-distro DISTRO="$d"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/distros")
-if [ "$distro_cases" -gt 0 ]; then ok "shared/distros contributed $distro_cases case(s)"
-else bad "shared/distros contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+  os_cases=$((os_cases + 1))
+  assert_accepts "shared/linux/os token '$d' accepted" check-os OS="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
+if [ "$os_cases" -gt 0 ]; then ok "shared/linux/os contributed $os_cases case(s)"
+else bad "shared/linux/os contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# check-os must not be linux-only: it has to scan every shared/*/os, darwin
+# included, or the moment a second platform exists, OS=macos fails the
+# membership test before a darwin build ever starts.
+darwin_cases=0
+while IFS= read -r d; do
+  darwin_cases=$((darwin_cases + 1))
+  assert_accepts "shared/darwin/os token '$d' accepted" check-os OS="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/darwin/os")
+if [ "$darwin_cases" -gt 0 ]; then ok "shared/darwin/os contributed $darwin_cases case(s)"
+else bad "shared/darwin/os contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# A token claimed by two platforms (the decoy/decoy2 fixture's shared
+# "collide") must refuse rather than silently build whichever the alphabetical
+# glob lists first — the resolver picking darwin over linux for a shared
+# fedora token, unnoticed, is the scenario this closes.
+assert_rejects "a token claimed by two platforms is refused" check-os OS=collide
+gate check-os OS=collide
+assert_contains "the ambiguity refusal names the token"          "$(cat "$ERR")" "collide"
+assert_contains "the ambiguity refusal names one claiming file"  "$(cat "$ERR")" "shared/decoy/os"
+assert_contains "the ambiguity refusal names the other claiming file" "$(cat "$ERR")" "shared/decoy2/os"
+
+# PLATFORM must fail EMPTY, never guess: an empty result turns
+# `packer build … $(PLATFORM).pkr.hcl` into `packer build … .pkr.hcl` — a
+# wrong-but-plausible command instead of a refusal. check-os's own validity
+# check above computes a related fact by a different, hardcoded path
+# (shared/linux/os only); these cases exercise the resolver's own shared/*/os
+# scan directly, so they'd catch a divergence between the two that a
+# gate-only test never would.
+echo "Makefile — PLATFORM resolver:"
+unset OS   # so "unset entirely" reflects the Makefile's own `?=` default,
+               # not whatever the invoking shell happened to export
+assert_platform "OS unset entirely resolves to nothing"               ""
+assert_platform "OS as an explicit empty string resolves to nothing"  "" OS=
+assert_platform "an unsupported OS resolves to nothing"               "" OS=bogus
+assert_platform "a token matching only a comment line resolves to nothing" "" OS=decoytoken
+assert_platform "the decoy fixture's real token resolves to its own dir"  "decoy" OS=realtoken
+# A token claimed by two platforms must resolve to nothing, never to
+# whichever file the alphabetical glob happens to list first — a silent
+# misroute is worse than an unbuildable cell.
+assert_platform "a token claimed by two platforms resolves to nothing, not a guess" "" OS=collide
+
+platform_cases=0
+while IFS= read -r d; do
+  platform_cases=$((platform_cases + 1))
+  assert_platform "shared/linux/os token '$d' resolves to linux" "linux" OS="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/os")
+if [ "$platform_cases" -gt 0 ]; then ok "shared/linux/os contributed $platform_cases PLATFORM case(s)"
+else bad "shared/linux/os contributed PLATFORM cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# The glob is alphabetical (darwin sorts before linux) — this is the exact
+# ordering the earlier resolver silently broke on the first match to exploit.
+darwin_platform_cases=0
+while IFS= read -r d; do
+  darwin_platform_cases=$((darwin_platform_cases + 1))
+  assert_platform "shared/darwin/os token '$d' resolves to darwin" "darwin" OS="$d"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/darwin/os")
+if [ "$darwin_platform_cases" -gt 0 ]; then ok "shared/darwin/os contributed $darwin_platform_cases PLATFORM case(s)"
+else bad "shared/darwin/os contributed PLATFORM cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+
+# Cirrus publishes macOS per release rather than under a rolling <os> tag, so
+# darwin's BASE_IMAGE can't be derived from OS the way linux's is — these
+# cases are what actually proves that split, not just PLATFORM's name for it.
+echo "Makefile — BASE_IMAGE:"
+assert_base_image "OS=macos resolves to the macos-<release>-base repo (default MACOS_RELEASE)" \
+  "ghcr.io/cirruslabs/macos-tahoe-base:latest" OS=macos
+assert_base_image "OS=fedora resolves to the plain ghcr.io/cirruslabs/<os> repo" \
+  "ghcr.io/cirruslabs/fedora:latest" OS=fedora
+assert_base_image "MACOS_RELEASE override changes the resolved repo" \
+  "ghcr.io/cirruslabs/macos-sequoia-base:latest" OS=macos MACOS_RELEASE=sequoia
+assert_base_image "IMAGE_TAG override carries into the macos repo's tag too" \
+  "ghcr.io/cirruslabs/macos-tahoe-base:26" OS=macos IMAGE_TAG=26
 
 # GUI is read by `$(if $(GUI),…)`, where make truthiness would treat GUI=0 as ON.
 echo "Makefile — check-gui:"
@@ -94,6 +211,13 @@ assert_rejects "GUI=0 rejected"     check-gui GUI=0
 assert_rejects "GUI=true rejected"  check-gui GUI=true
 assert_rejects "GUI=yes rejected"   check-gui GUI=yes
 
+# The macOS desktop is intrinsic to the base image, so darwin has no DE axis
+# for GUI=1 to bake — it's a linux-platform flag.
+assert_rejects "GUI=1 refused on darwin" check-gui OS=macos GUI=1
+gate check-gui OS=macos GUI=1
+assert_contains "the darwin GUI refusal explains why, not just refuses" "$(cat "$ERR")" "intrinsic"
+assert_accepts "GUI unset is fine on darwin" check-gui OS=macos GUI=
+
 # DE is only meaningful with GUI set, and `DE ?=` picks up the caller's
 # environment — so a stray value must not fail a headless target.
 echo "Makefile — check-de:"
@@ -102,10 +226,10 @@ assert_accepts "an unsupported DE is ignored without GUI" check-de DE=cinnamon
 de_cases=0
 while IFS= read -r de; do
   de_cases=$((de_cases + 1))
-  assert_accepts "shared/desktops token '$de' accepted with GUI=1" check-de GUI=1 DE="$de"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
-if [ "$de_cases" -gt 0 ]; then ok "shared/desktops contributed $de_cases case(s)"
-else bad "shared/desktops contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
+  assert_accepts "shared/linux/desktops token '$de' accepted with GUI=1" check-de GUI=1 DE="$de"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/desktops")
+if [ "$de_cases" -gt 0 ]; then ok "shared/linux/desktops contributed $de_cases case(s)"
+else bad "shared/linux/desktops contributed cases" "the file yielded no tokens, so the loop above asserted nothing"; fi
 
 echo "Makefile — scaffold refuses to overwrite:"
 assert_rejects "scaffold over an existing stack rejected" scaffold STACK=php
@@ -126,7 +250,7 @@ prereqs_of() { sed -n "s/^$1:[[:space:]]*//p" "$REPO/Makefile" | head -n1; }
 for target in build rebuild smoke; do
   line="$(prereqs_of "$target")"
   # A loop variable named `gate` would shadow the helper above for a reader.
-  for g in check-stack check-distro check-gui check-de; do
+  for g in check-stack check-os check-gui check-de; do
     case " $line " in
       *" $g "*) ok "$target requires $g" ;;
       *)         bad "$target requires $g" "prerequisites are: ${line:-<none>}" ;;

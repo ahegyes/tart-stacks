@@ -1,0 +1,118 @@
+# PHP build dependencies (Homebrew formula names), one or more per line; '#'
+# comments and blank lines ignored. Names differ from packages.dnf/packages.apt
+# (Homebrew vs. rpm/deb naming) but the covered capabilities are meant to match,
+# minus two with no macOS equivalent: PHP-FPM's systemd notify (systemd-devel —
+# launchd has no analogue) and gd's XPM support (no Homebrew libXpm/X11
+# formula this build wires up). AVIF is not a third gap: Homebrew's `gd`
+# formula depends on `libavif` unconditionally (confirmed via `brew info
+# --json gd`; its shipped gdlib.pc links `-lavif`), so AVIF support rides in
+# for free once `gd` is installed below. Installs go through
+# pkg_install_optional, which warns on a missing formula instead of failing;
+# the smoke gate in scripts/darwin/mise-install.sh is what catches a dropped
+# capability — pair list changes with gate changes.
+#
+# Cross-checked against the actual build logic of the pinned vfox-php plugin
+# (mise.toml's [tool_alias]: vfox:jdx/vfox-php, a fork of mise-plugins/vfox-php
+# confirmed byte-identical as of 2026-07) — its hooks/post_install.lua wires
+# PKG_CONFIG_PATH from a hardcoded "required" list on darwin, and separately
+# appends a --with-X flag for each "optional" formula it finds installed. See
+# scripts/darwin/mise-install.sh's header for what that means for this list and
+# what is still unverified.
+
+# Build toolchain (buildconf + configure need these). bison is keg-only and
+# needs its own PATH entry beyond what pkg_install_optional's install alone
+# provides — see scripts/darwin/mise-install.sh's PATH export for why: the
+# plugin's own PATH-only-wiring for it covers only the ./configure
+# subprocess, not the separate `make` that follows, and macOS's own
+# /usr/bin/bison is Apple's last-GPLv2 2.3, too old for generated grammars
+# that need modern options (measured on macos-probe: `make` invoking bare
+# `bison` against 2.3 fails regenerating ext/json/json_parser.tab.c with
+# "invalid option -- W"). re2c has no such gap — Homebrew's re2c isn't
+# keg-only, so it symlinks straight into /opt/homebrew/bin
+autoconf automake libtool pkg-config bison re2c
+# Core compile deps the plugin wires into PKG_CONFIG_PATH unconditionally
+# (macOS ships none of these as a linkable, pkg-config-discoverable dev tree)
+libxml2 openssl@3 zlib krb5 libedit curl
+# iconv — the ext/iconv extension is on by default (opt-out, not opt-in) and
+# not in the plugin's own required/optional formula lists at all; macOS ships
+# no /usr/include/iconv.h (that header is part of the optional "macOS SDK
+# headers for system frameworks" package this repo doesn't install), and
+# php-src's PHP_SETUP_ICONV macro already probes $(brew --prefix)/opt/libiconv
+# on its own (a check php-src added specifically for this — see
+# github.com/php/php-src/pull/19475, named in the macro's own source comment)
+# — so installing this formula is the entire fix; no configure flag needed.
+# Measured on macos-probe: absent, configure fails outright ("Please specify
+# the install prefix of iconv with --with-iconv=<DIR>"); present, no flag
+# required at all.
+libiconv
+# pdo_sqlite, sqlite3 — PHP 8.4+ dropped its bundled SQLite copy, so a linkable
+# sqlite3 is mandatory on every platform now, not just this one; also one of
+# the plugin's PKG_CONFIG_PATH-wired formulas
+sqlite
+# mbstring
+oniguruma
+# intl (ICU)
+icu4c
+# zip — the plugin does NOT auto-add --with-zip the way it does --with-sodium/
+# --with-bz2/--with-pdo-pgsql/--with-external-gd (see those entries below), so
+# scripts/darwin/mise-install.sh states the flag explicitly; libzip only needs
+# to be findable via pkg-config for that to work
+libzip
+# gd itself — REQUIRED, and easy to miss: --with-external-gd (forced,
+# unconditionally, in scripts/darwin/mise-install.sh) makes php-src's
+# configure run PKG_CHECK_MODULES([GDLIB], [gdlib >= 2.1.0]), and that .pc
+# file ships with the `gd` formula, not with any of its dependencies below —
+# installing only those leaves gdlib.pc absent and configure fails outright.
+# Confirmed via `brew info --json gd`: it is its own formula (dependencies
+# fontconfig, freetype, jpeg-turbo, libavif, libpng, libtiff, webp), not a
+# meta-package for them.
+gd
+# freetype/libpng/webp — `gd`'s own dependencies (Homebrew installs them
+# automatically once gd, above, is installed); listed here too for
+# visibility, though --with-freetype/--with-png/--with-webp (which the
+# plugin's own build logic would auto-add for these) apply only to PHP's
+# BUNDLED gd build — php-src's ext/gd/config.m4 documents them "only for
+# bundled libgd", and this build forces --with-external-gd, so those three
+# flags are inert here. What actually matters is that `gd`'s own compiled
+# library already links freetype/libpng/webp (and libavif — see the header
+# above), which --with-external-gd picks up as-is
+freetype libpng webp
+# jpeg — NOT an alias for jpeg-turbo, which `gd` depends on above (Homebrew
+# ships them as two separate, independently-versioned formulas; `jpeg`'s own
+# aliases are libjpeg/libjpg). The plugin's build logic would auto-add
+# --with-jpeg for this formula, but — same as freetype/libpng/webp above —
+# that flag is inert under the forced --with-external-gd; jpeg-turbo (gd's
+# actual, load-bearing JPEG dependency) installs regardless, pulled in
+# transitively by gd. Kept here mainly so a future reader isn't left
+# wondering why two differently-named jpeg formulas exist side by side
+jpeg
+# sodium — the plugin's own optional_packages logic auto-adds --with-sodium
+# when this resolves; harmless either way, since ext/sodium's config.m4 is
+# PKG_CHECK_MODULES-only (no directory argument) and libsodium isn't
+# keg-only, so the default pkg-config search finds it regardless
+libsodium
+# readline — the plugin's own optional_packages logic auto-adds a
+# path-qualified --with-readline=$(brew --prefix readline), and that path IS
+# needed: readline is keg-only and ext/readline's config.m4 does a raw
+# header-path search with no pkg-config fallback (--with-libedit, the
+# alternative that path exists for, is never selected here)
+readline
+# bz2 — scripts/darwin/mise-install.sh states --with-bz2=$(brew --prefix
+# bzip2) explicitly rather than relying on the plugin's own auto-add: bzip2
+# is keg-only, ext/bz2's config.m4 has no pkg-config fallback at all, and
+# PHP_EXTRA_CONFIGURE_OPTIONS is appended after the plugin's own configure
+# string — restating the flag WITHOUT a path there would silently override
+# the plugin's already-correct one back to a bare "yes", the exact failure a
+# real build caught ("bzlib.h not found")
+bzip2
+# pdo_pgsql — same reasoning and same fix as bz2 above: libpq is keg-only,
+# ext/pdo_pgsql's config.m4 falls back to a raw pg_config/header search with
+# no usable pkg-config path (libpq isn't in the plugin's PKG_CONFIG_PATH-wired
+# formula list, only its path-qualified-flag one), and
+# scripts/darwin/mise-install.sh states --with-pdo-pgsql=$(brew --prefix
+# libpq) explicitly for the same override-safety reason
+libpq
+# PECL imagick (runtime + headers)
+imagemagick
+# PECL memcached
+libmemcached

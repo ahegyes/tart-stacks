@@ -426,4 +426,4 @@ else
   warn "Install Tart (brew install openai/tools/tart), then run:  tart-ssh-sync"
 fi
 
-echo "setup: done. Build a stack with:  make build STACK=php DISTRO=fedora"
+echo "setup: done. Build a stack with:  make build STACK=php OS=fedora"

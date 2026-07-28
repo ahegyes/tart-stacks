@@ -4,13 +4,13 @@
 # when the build runs with -var gui=true (GUI/DE arrive as environment_vars);
 # a gui=false build exits at the gate below, so every stack shares one
 # pipeline. What this bakes and how a graphics boot activates it is the
-# engine-facing contract in shared/gui/README.md — change them together.
+# engine-facing contract in shared/linux/gui/README.md — change them together.
 #
 # The image stays headless by default (multi-user.target): the desktop costs
 # RAM only on boots that opt in. Runs as root via sudo from Packer.
 set -euo pipefail
 # shellcheck source=/dev/null
-source /tmp/distro-lib.sh
+source /tmp/family-lib.sh
 # shellcheck source=/dev/null
 source /tmp/gui-lib.sh
 
@@ -63,7 +63,7 @@ done
   echo "       The GUI layer serves the desktop over Xvnc, so it needs an X11 session file to" >&2
   echo "       start. If this DE ships only Wayland on this release, the cell cannot be baked as" >&2
   echo "       it stands: build a DE that still has an X11 session here, or leave the cell out" >&2
-  echo "       until the layer grows a Wayland path. Contract: shared/gui/README.md." >&2
+  echo "       until the layer grows a Wayland path. Contract: shared/linux/gui/README.md." >&2
   exit 1
 }
 echo "==> X session: ${SESSION}"
@@ -93,7 +93,7 @@ cat > /etc/tigervnc/vncserver.users <<EOF
 EOF
 
 install -d -m 700 -o "${TARGET_USER}" -g "${TARGET_USER}" "${TARGET_HOME}/.vnc"
-case "$_DISTRO_FAMILY" in
+case "$_TART_FAMILY" in
   dnf)
     # vncsession(8) grammar: one Xvnc option per line, no leading dash.
     cat > "${TARGET_HOME}/.vnc/config" <<EOF
@@ -124,7 +124,7 @@ esac
   cat <<EOF
 # tart-stacks GUI layer — VNC desktop session, loopback-only on :5901.
 # Deliberately NOT enabled: a boot that wants the desktop starts this unit
-# (see shared/gui/README.md); headless boots pay nothing.
+# (see shared/linux/gui/README.md); headless boots pay nothing.
 [Unit]
 Description=tart-stacks VNC desktop session (display :1, 127.0.0.1:5901)
 After=network.target systemd-user-sessions.service
@@ -134,7 +134,7 @@ Type=forking
 ExecStart=$(gui_vncsession_start) :1
 PIDFile=$(gui_vncsession_pidfile)
 EOF
-  if [ "$_DISTRO_FAMILY" = "dnf" ]; then
+  if [ "$_TART_FAMILY" = "dnf" ]; then
     echo "ExecStartPre=+/usr/libexec/vncsession-restore :1"
     echo "SELinuxContext=system_u:system_r:vnc_session_t:s0"
   fi
@@ -270,7 +270,7 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 # base image's renderer (systemd-networkd / ifupdown) already owns the
 # primary interface; unmanaged ethernet prevents a second DHCP client from
 # fighting it. On dnf NetworkManager IS the base's manager — leave it alone.
-if [ "$_DISTRO_FAMILY" = "apt" ] && [ -d /etc/NetworkManager ]; then
+if [ "$_TART_FAMILY" = "apt" ] && [ -d /etc/NetworkManager ]; then
   install -d -m 755 /etc/NetworkManager/conf.d
   cat > /etc/NetworkManager/conf.d/tart-stacks-unmanaged.conf <<'EOF'
 # tart-stacks GUI layer — the base image's network renderer keeps sole

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# mise-install.sh (__STACK__, darwin) — install the runtimes declared in
+# files/mise.toml as the unprivileged build user, then HARD-GATE the build on
+# a smoke test, exactly like the linux peer at ../linux/mise-install.sh. Add
+# the __STACK__ payload here; if a runtime compiles from source, its native
+# build deps come from packages.brew (Homebrew formula names) via
+# 00-stack.sh, and Homebrew keeps some formulas "keg-only" — their .pc files
+# live under their own opt/ prefix instead of the shared one pkg-config
+# searches by default — so a from-source build may need PKG_CONFIG_PATH
+# pointed at $(brew --prefix <formula>)/lib/pkgconfig explicitly. The shared
+# mechanism (install/activate, smoke loop) is in /tmp/mise-lib.sh, uploaded by
+# the Packer template.
+
+set -euo pipefail
+# /tmp/mise-lib.sh is staged on the guest by the Packer template (absent at lint time).
+# shellcheck source=/dev/null
+source /tmp/mise-lib.sh
+
+# Homebrew's bin dir isn't guaranteed on PATH for a script Packer invokes
+# directly rather than through a login shell.
+export PATH="/opt/homebrew/bin:$PATH"
+
+mise_runtime_setup
+
+# Smoke test (hard gate): one `--`-delimited command per tool declared in
+# files/mise.toml — argv tokens, not a quoted string.
+smoke_gate "__STACK__ runtimes" \
+  -- node --version
+
+echo "==> mise-install.sh (__STACK__) complete."

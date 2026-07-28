@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # gui-lib.sh — desktop-environment × package-family primitives for the optional
-# GUI layer, mirroring distro-lib.sh: per-distro and per-DE variance lives here
+# GUI layer, mirroring family-lib.sh: per-OS and per-DE variance lives here
 # so gui.sh stays generic. SOURCED, not run — uploaded to /tmp and sourced
-# AFTER distro-lib.sh (it branches on $_DISTRO_FAMILY). An unrecognized DE is a
-# hard error, like an unrecognized distro in distro-lib.
+# AFTER family-lib.sh (it branches on $_TART_FAMILY). An unrecognized DE is a
+# hard error, like an unrecognized OS in family-lib.
 
 # gui_require_de <de> — hard-fail unless this lib has branches for <de>.
-# Keep the set in lockstep with shared/desktops (the Makefile validates
+# Keep the set in lockstep with shared/linux/desktops (the Makefile validates
 # against the file; this is the in-VM backstop for direct packer invocations).
 gui_require_de() {
   case "$1" in
@@ -20,7 +20,7 @@ gui_require_de() {
 # serve, ahead of any package work. Separate from gui_require_de: the DE itself is
 # supported, the pairing is not.
 gui_require_cell() {
-  case "$_DISTRO_FAMILY/$1" in
+  case "$_TART_FAMILY/$1" in
     dnf/gnome)
       echo "gui-lib: the fedora x gnome cell is not supported. Fedora ships no GNOME X11 session from F43 on (FESCo WaylandOnlyGNOME), and this layer is Xvnc-based, so there is no session to bake. Use kde or xfce on fedora, or gnome on ubuntu/debian." >&2
       exit 1 ;;
@@ -33,7 +33,7 @@ gui_require_cell() {
 # desktop that boots to a broken shell. Fail-loud on purpose — a missing DE
 # package is a broken image contract, not a droppable capability.
 gui_pkg_install() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) dnf install -y "$@" ;;
     apt) DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
   esac
@@ -46,7 +46,7 @@ gui_pkg_install() {
 gui_purge_if_present() {
   local p
   for p in "$@"; do
-    case "$_DISTRO_FAMILY" in
+    case "$_TART_FAMILY" in
       dnf) rpm -q "$p" >/dev/null 2>&1 && dnf remove -y "$p" ;;
       apt) dpkg -s "$p" >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get purge -y "$p" ;;
     esac
@@ -55,13 +55,13 @@ gui_purge_if_present() {
 }
 
 # gui_packages <de> — the DE shell + display-manager package set for this family.
-# Deliberately narrower than the distros' full desktop groups/tasks: the images
+# Deliberately narrower than the OSes' full desktop groups/tasks: the images
 # are dev substrates, so this set stops at the shell, its display manager, and a
 # terminal. The handful of applications a substrate still needs to be usable is
 # gui_app_packages' concern, kept separate so the session machinery below stays
 # readable next to it.
 gui_packages() {
-  case "$_DISTRO_FAMILY/$1" in
+  case "$_TART_FAMILY/$1" in
     dnf/kde)   echo "plasma-desktop plasma-workspace-x11 sddm konsole" ;;
     dnf/gnome) echo "gnome-shell gnome-session-xsession gdm gnome-terminal" ;;
     dnf/xfce)  echo "xfce4-session xfwm4 xfdesktop xfce4-panel xfce4-settings xfce4-terminal lightdm lightdm-gtk" ;;
@@ -80,7 +80,7 @@ gui_packages() {
 # family namespaces Spectacle as kde-spectacle. GNOME captures screenshots from
 # the Shell itself, so its row deliberately names no screenshot tool.
 gui_app_packages() {
-  case "$_DISTRO_FAMILY/$1" in
+  case "$_TART_FAMILY/$1" in
     dnf/kde)   echo "dolphin kate ark gwenview spectacle" ;;
     dnf/gnome) echo "nautilus gnome-text-editor file-roller loupe" ;;
     dnf/xfce)  echo "Thunar mousepad xarchiver ristretto xfce4-screenshooter" ;;
@@ -96,7 +96,7 @@ gui_app_packages() {
 # channel device, so a headless or VNC-only boot pays nothing for it; VNC carries
 # its own clipboard over RFB and does not use this at all.
 gui_agent_packages() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf|apt) echo "spice-vdagent" ;;
   esac
 }
@@ -106,7 +106,7 @@ gui_agent_packages() {
 # Ubuntu's firefox deb is a snap transition stub and firefox-esr is absent;
 # gui.sh therefore sends this row through the optional package path.
 gui_browser_packages() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) echo "firefox" ;;
     apt) echo "firefox-esr" ;;
   esac
@@ -118,7 +118,7 @@ gui_browser_packages() {
 # leaves kde-panel.sh pinning a launcher for a file the image does not have, which
 # it refuses to do — and gui.sh downgrades that refusal to the stock Plasma panel.
 gui_browser_desktop_id() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) echo "org.mozilla.firefox.desktop" ;;
     apt) echo "firefox-esr.desktop" ;;
   esac
@@ -138,7 +138,7 @@ gui_scale_packages() {
 # starter (vncsession on dnf, tigervncsession on apt). dbus-x11 provides
 # dbus-launch, which the X session bootstrap needs on both families.
 gui_vnc_packages() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) echo "tigervnc-server dbus-x11" ;;
     apt) echo "tigervnc-standalone-server tigervnc-tools dbus-x11" ;;
   esac
@@ -146,9 +146,9 @@ gui_vnc_packages() {
 
 # gui_dm_unit <de> — the display-manager unit for this DE on this family.
 # Enabling it also installs the display-manager.service alias, which is the
-# stable name a graphics boot targets (see shared/gui/README.md).
+# stable name a graphics boot targets (see shared/linux/gui/README.md).
 gui_dm_unit() {
-  case "$_DISTRO_FAMILY/$1" in
+  case "$_TART_FAMILY/$1" in
     dnf/kde|apt/kde)   echo "sddm.service" ;;
     dnf/gnome)         echo "gdm.service" ;;
     apt/gnome)         echo "gdm3.service" ;;
@@ -174,17 +174,17 @@ gui_session_candidates() {
 # gui_vncsession_start / gui_vncsession_pidfile — the packaged TigerVNC session
 # starter and the pidfile it writes for display :1. tart-stacks-vnc.service
 # wraps these so the unit NAME stays uniform across families while the
-# battle-tested per-distro machinery (PAM/logind session, SELinux labels on
+# battle-tested per-OS machinery (PAM/logind session, SELinux labels on
 # dnf) does the work.
 gui_vncsession_start() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) echo "/usr/libexec/vncsession-start" ;;
     apt) echo "/usr/libexec/tigervncsession-start" ;;
   esac
 }
 
 gui_vncsession_pidfile() {
-  case "$_DISTRO_FAMILY" in
+  case "$_TART_FAMILY" in
     dnf) echo "/run/vncsession-:1.pid" ;;
     apt) echo "/run/tigervncsession-:1.pid" ;;
   esac

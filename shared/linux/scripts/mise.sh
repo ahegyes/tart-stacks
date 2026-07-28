@@ -3,12 +3,12 @@
 # install later via mise-install.sh, after mise.toml is uploaded. Runs as root.
 set -euo pipefail
 # shellcheck source=/dev/null
-source /tmp/distro-lib.sh
+source /tmp/family-lib.sh
 
 echo "==> Installing mise..."
 repo_add_mise
 # Verify with HOME=/root so root's mise can't seed the build user's ~/.cache: sudo's
-# HOME handling varies by distro (apt preserves /home/<user>, dnf resets to /root), and a
+# HOME handling varies by OS (apt preserves /home/<user>, dnf resets to /root), and a
 # root-owned ~/.cache would block the later unprivileged `mise install`.
 HOME=/root mise --version
 

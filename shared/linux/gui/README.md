@@ -1,17 +1,27 @@
-# GUI layer — image contract
+# GUI layer — image contract (linux only)
 
-The optional desktop layer (`make build STACK=<stack> DISTRO=<distro> GUI=1 DE=<de>`)
-bakes a desktop environment into any stack image at build time. This file is the
+This contract is **linux-platform-specific**: it describes the optional desktop
+layer that `linux.pkr.hcl` can bake into a linux image
+(`make build STACK=<stack> OS=<os> GUI=1 DE=<de>`, `OS=` one of `shared/linux/os`).
+`darwin.pkr.hcl` has no GUI-layer equivalent and nothing here applies to a
+`macos-<stack>` image — the macOS desktop is intrinsic to every darwin build
+already, so there is no DE axis to bake and `make` refuses `GUI=1` on that
+platform outright. A darwin VM's boot-time GUI activation (`tart-up
+--gui=vnc|window`) is a different, host-side mechanism documented in the
+top-level [README.md](../../../README.md#macos-gui-activation), not this file.
+
+The optional desktop layer (`make build STACK=<stack> OS=<os> GUI=1 DE=<de>`)
+bakes a desktop environment into any linux stack image at build time. This file is the
 **contract between the image and whatever boots it** (a human, or an engine that
 drives VMs): everything a consumer may rely on is listed here, and nothing else
 about the desktop install is stable API. Provisioning lives in
-`shared/scripts/gui.sh` + `shared/scripts/gui-lib.sh` — change them and this
+`shared/linux/scripts/gui.sh` + `shared/linux/scripts/gui-lib.sh` — change them and this
 file together.
 
 ## Identity
 
-- **Image name:** `<distro>-<stack>-<de>` (e.g. `fedora-php-kde`). Non-GUI
-  images keep `<distro>-<stack>`; flavors build side by side.
+- **Image name:** `<os>-<stack>-<de>` (e.g. `fedora-php-kde`). Non-GUI
+  images keep `<os>-<stack>`; flavors build side by side.
 - **Manifest:** `/etc/tart-stacks-release` carries `gui: <de>` (`gui: none` on
   non-GUI images) — the machine-readable probe for "is a desktop baked, and
   which".
@@ -36,7 +46,7 @@ typos but are not: Fedora keeps Thunar's upstream capitalization (`Thunar`), and
 the apt family namespaces Spectacle as `kde-spectacle`.
 
 A conventional browser is a DE-independent, optional capability: Firefox on the
-dnf family and Firefox ESR on the apt family where the distro publishes it.
+dnf family and Firefox ESR on the apt family where the OS publishes it.
 Ubuntu's `firefox` deb is a snap transition stub and `firefox-esr` is absent, so
 Ubuntu GUI images record `firefox-esr` under `skipped-optional-packages` in the
 manifest instead of pulling snapd or failing the build. On dnf/GNOME the browser
@@ -68,7 +78,7 @@ desktop RAM. A consumer activates graphics per boot, in one of two ways:
 
 Every `tart-up`-driven activation in that table travels `tart-guest-agent`'s
 vsock channel (`tart exec`), not ssh. That agent ships inside the base image and
-is asserted at build time by `shared/scripts/00-base.sh`; an image without a
+is asserted at build time by `shared/linux/scripts/00-base.sh`; an image without a
 working one is still reachable over ssh but has no boot mode beyond headless.
 
 Both activations are per-boot (neither the unit nor default target is changed);
@@ -96,8 +106,8 @@ dependency and stays behind the loopback-only SSH tunnel.
 
 ## The VNC surface
 
-- **Unit:** `tart-stacks-vnc.service` — one stable name on every distro × DE;
-  the body wraps the distro's packaged TigerVNC session starter
+- **Unit:** `tart-stacks-vnc.service` — one stable name on every OS × DE;
+  the body wraps the OS's packaged TigerVNC session starter
   (`vncsession` on dnf-family, `tigervncsession` on apt-family), which opens a
   real PAM/logind session for the dev user.
 - **Display/port:** `:1` / TCP `5901`, bound to **loopback only**.
@@ -183,26 +193,26 @@ fights or bypasses it:
 The DE token is the axis this layer varies on, so a new one touches every
 selector rather than a config file:
 
-1. Add the token to `shared/desktops` (that is what `tart-new`, the Makefile's
+1. Add the token to `shared/linux/desktops` (that is what `tart-new`, the Makefile's
    `check-de`, and the base-image guard read).
-2. Check `gui_require_cell` in `shared/scripts/gui-lib.sh`: if the DE cannot ship
+2. Check `gui_require_cell` in `shared/linux/scripts/gui-lib.sh`: if the DE cannot ship
    an X11 session on some family, refuse that cell there rather than letting the
    package install discover it. Then add a row to the DE selectors. `gui_packages`,
    `gui_app_packages` and `gui_dm_unit` branch on family × DE, so each needs a
    dnf row and an apt row; `gui_scale_packages` and `gui_session_candidates`
    branch on the DE alone, so each needs one.
-3. Add a `apply_<de>` branch to `shared/scripts/display-scale.sh`, using the
+3. Add a `apply_<de>` branch to `shared/linux/scripts/display-scale.sh`, using the
    desktop's own config tool. Scale is per-DE; there is no generic path.
 4. If the desktop needs anything baked beyond packages (a panel layout, an
-   autologin stanza), add it to the `case "$DE"` in `shared/scripts/gui.sh`.
+   autologin stanza), add it to the `case "$DE"` in `shared/linux/scripts/gui.sh`.
 5. Extend `test/gui-lib.sh` (the selectors are asserted in lockstep with
-   `shared/desktops`, so an unlisted token fails there) and
+   `shared/linux/desktops`, so an unlisted token fails there) and
    `test/display-scale.sh`.
 6. Build the cell and add it to the matrix below with an honest status.
 
 ## Support matrix
 
-`DE` must be a line in `shared/desktops`; the layer is Xvnc-based, so a cell
+`DE` must be a line in `shared/linux/desktops`; the layer is Xvnc-based, so a cell
 needs its DE to ship an X11 session — a cell that doesn't **fails loud at
 build time** (preflight or the post-install session assert), it never bakes a
 desktop that can't start.
@@ -242,7 +252,7 @@ the manifest's baked `gui:` line, the browser — or, on ubuntu, the recorded
 above were re-earned on this revision: `WaylandEnable=false` present in the gdm
 `[daemon]` block, the autologin session reporting `Type=x11` on a real Xorg, and
 `Xft.dpi: 192` after the applier ran in `tart-up`'s order. ⚠️ = package sets and
-session names were checked against the live distro repos, but no end-to-end boot
+session names were checked against the live OS repos, but no end-to-end boot
 has been run — the build's own asserts are the gate.
 Re-verify a cell after building it the first time, and after a change to the
 contract it vouches for — a status earned before a new code path does not cover
@@ -252,11 +262,11 @@ The ✅ deliberately does not span the network posture above. That is not a
 per-cell property: the VNC bind is loopback-only by the session config this
 layer installs, and `tart-up` fails closed on a non-loopback listener before
 reporting the desktop ready — both covered by the test suite, on every cell at
-once, rather than re-observed per distro.
+once, rather than re-observed per OS.
 
 A reset lands as either `Xft.dpi: 96` or no `Xft.dpi` resource at all, and both
 are correct: resetting removes the override rather than writing a 1x value.
-Which one a cell shows is a property of the distro's xfce packaging — debian
+Which one a cell shows is a property of the OS's xfce packaging — debian
 ships a populated `xsettings` channel whose packaged default republishes 96,
 while on ubuntu that file does not exist until the applier creates it, so there
 is nothing left to republish. Assert "unscaled", never the literal 96.
@@ -270,16 +280,16 @@ treats an empty file as an absent one, so scaling still works and the file is
 rebuilt on the next run; only settings made through the desktop's own tools are
 lost. Waiting ~20 s between stopping the desktop and stopping the VM avoids it.
 
-Every distro × DE cell is supported; there is no refused combination. The X
+Every OS × DE cell is supported; there is no refused combination. The X
 session assert above is the only gate, and it reads `/usr/share/xsessions/`
 rather than package names — which is what a cell actually needs. Debian's
 `plasma-workspace` ships no `plasma-x11-session` package but does ship
 `plasmax11.desktop`, so a package-name probe refused a cell that builds and
-boots. Add a distro or a DE and the assert covers it without a new special case.
+boots. Add an OS or a DE and the assert covers it without a new special case.
 
 ## Sizing
 
 A DE adds roughly 1.8–2.8 GB to the image (the browser alone is ~320 MB) and
 ~1 GB RAM to a boot that
-activates it. Give GUI clones headroom: `tart-new <name> <stack> <distro>`
+activates it. Give GUI clones headroom: `tart-new <name> <stack> <os>`
 resources or `tart set` (`--memory 8192` is comfortable for KDE).

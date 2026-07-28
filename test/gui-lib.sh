@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Characterization test for gui-lib.sh: the DE × family selectors gui.sh keys
-# off. Sources distro-lib with a synthetic os-release (family seam), then
-# gui-lib on top — same technique as test/distro-lib.sh. No framework.
+# off. Sources family-lib with a synthetic os-release (family seam), then
+# gui-lib on top — same technique as test/family-lib-linux.sh. No framework.
 set -uo pipefail
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd); REPO=$(cd -P "$TEST_DIR/.." >/dev/null 2>&1 && pwd)
 pass=0 fail=0
@@ -13,17 +13,17 @@ printf 'ID=fedora\n' > "$WORK/os-dnf"
 printf 'ID=debian\n' > "$WORK/os-apt"
 
 # with_family <dnf|apt> <cmd…> — run a selector under that family's libs.
-# Subshell per call: distro-lib exits the sourcing shell on a bad os-release,
-# and _DISTRO_FAMILY must not leak between cases.
+# Subshell per call: family-lib exits the sourcing shell on a bad os-release,
+# and _TART_FAMILY must not leak between cases.
 with_family() {
   local fam="$1"; shift
-  ( OS_RELEASE="$WORK/os-$fam" source "$REPO/shared/scripts/distro-lib.sh"
+  ( OS_RELEASE="$WORK/os-$fam" source "$REPO/shared/linux/scripts/family-lib.sh"
     # shellcheck source=/dev/null
-    source "$REPO/shared/scripts/gui-lib.sh"
+    source "$REPO/shared/linux/scripts/gui-lib.sh"
     "$@" ) 2>/dev/null
 }
 
-echo "gui-lib — every shared/desktops DE resolves on both families:"
+echo "gui-lib — every shared/linux/desktops DE resolves on both families:"
 while IFS= read -r de; do
   for fam in dnf apt; do
     pkgs="$(with_family "$fam" gui_packages "$de")"
@@ -38,7 +38,7 @@ while IFS= read -r de; do
   done
   sess="$(with_family dnf gui_session_candidates "$de")"
   if [ -n "$sess" ]; then ok "$de session candidates non-empty"; else bad "$de session candidates non-empty" "want » candidates « got » (empty) «"; fi
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/desktops")
 
 echo "gui-lib — family-keyed VNC machinery:"
 assert_eq "dnf session starter" "/usr/libexec/vncsession-start"      "$(with_family dnf gui_vncsession_start)"
@@ -96,12 +96,12 @@ for cell in dnf/kde dnf/xfce apt/kde apt/gnome apt/xfce; do
   assert_eq "$cell accepted" 0 "$rc"
 done
 
-# The lib's supported set and shared/desktops must not drift apart: the
+# The lib's supported set and shared/linux/desktops must not drift apart: the
 # Makefile validates against the file, the lib is the in-VM backstop.
-echo "gui-lib — shared/desktops ↔ gui_require_de lockstep:"
+echo "gui-lib — shared/linux/desktops ↔ gui_require_de lockstep:"
 while IFS= read -r de; do
   with_family dnf gui_require_de "$de"; rc=$?
   assert_eq "desktops-file token '$de' accepted by lib" 0 "$rc"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/desktops")
+done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/shared/linux/desktops")
 
 echo; echo "  $pass passed, $fail failed"; [ "$fail" -eq 0 ]

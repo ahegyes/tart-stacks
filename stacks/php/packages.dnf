@@ -1,7 +1,7 @@
 # PHP build dependencies (Fedora/dnf names), one or more per line; '#' comments and
 # blank lines ignored. Each provides headers for a --with-X configure flag or a PECL
 # extension. Installs go through pkg_install_optional, which warns on a missing
-# package instead of failing; the smoke gate in mise-install.sh is what catches a
+# package instead of failing; the smoke gate in scripts/linux/mise-install.sh is what catches a
 # dropped capability — pair list changes with gate changes. Equivalent capabilities
 # to packages.apt (names differ); keep both and PHP_CONFIGURE_OPTIONS aligned.
 

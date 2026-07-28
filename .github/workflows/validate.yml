@@ -14,22 +14,67 @@ jobs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: build the stack × distro matrix
+      - name: build the stack × os × platform matrix
         id: set
         shell: bash
         run: |
           shopt -s nullglob
           stacks=(); for d in stacks/*/; do stacks+=("$(basename "$d")"); done
-          distros=(); while IFS= read -r line; do distros+=("$line"); done \
-            < <(grep -vE '^[[:space:]]*(#|$)' shared/distros)
+          # platform is the directory holding the os token's file — same
+          # derivation as Makefile's PLATFORM (Makefile:107-112) and
+          # tart_os_platform (bin/lib/common.sh). Refuses on the same
+          # invariant both enforce: a token claimed by more than one
+          # platform's os file is not a single platform.
+          os_tokens=(); platforms=()
+          for f in shared/*/os; do
+            platform="$(basename "$(dirname "$f")")"
+            while IFS= read -r line; do
+              os_tokens+=("$line")
+              platforms+=("$platform")
+            done < <(grep -vE '^[[:space:]]*(#|$)' "$f")
+          done
+          # An empty walk means every platform's os file is empty or missing
+          # — that state already breaks Makefile's PLATFORM/check-os and
+          # tart_os_platform, so refuse here too rather than let jq turn a
+          # zero-element array into one blank-field cell (printf still runs
+          # its format once with no arguments).
+          if [ "${#os_tokens[@]}" -eq 0 ]; then
+            echo "::error::no os tokens found under shared/*/os" >&2
+            exit 1
+          fi
+          declare -A tok_count=() tok_files=()
+          for i in "${!os_tokens[@]}"; do
+            tok="${os_tokens[$i]}"
+            tok_count[$tok]=$(( ${tok_count[$tok]:-0} + 1 ))
+            tok_files[$tok]+="shared/${platforms[$i]}/os "
+          done
+          refused=0
+          for tok in "${!tok_count[@]}"; do
+            if [ "${tok_count[$tok]}" -gt 1 ]; then
+              echo "::error::os token '$tok' is claimed by more than one platform — ${tok_files[$tok]}— remove it from all but one" >&2
+              refused=1
+            fi
+          done
+          [ "$refused" -eq 0 ] || exit 1
+          # An empty stacks/ is a legitimate "nothing to validate" state, not
+          # a broken tree — unlike the os-token walk above, it must reach the
+          # packer job's `!= '[]'` skip gate as a genuine []. printf on a
+          # zero-element array still emits one blank line (its format runs
+          # once even with no arguments), so build the JSON directly instead.
+          if [ "${#stacks[@]}" -eq 0 ]; then
+            s_json='[]'
+          else
+            s_json="$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)"
+          fi
           jq -nc \
-            --argjson s "$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)" \
-            --argjson d "$(printf '%s\n' "${distros[@]}" | jq -R . | jq -sc .)" \
-            '[$s[] as $stack | $d[] as $distro | {stack:$stack, distro:$distro}]' \
+            --argjson s "$s_json" \
+            --argjson o "$(printf '%s\n' "${os_tokens[@]}" | jq -R . | jq -sc .)" \
+            --argjson p "$(printf '%s\n' "${platforms[@]}" | jq -R . | jq -sc .)" \
+            '[$s[] as $stack | range(0; ($o|length)) as $i | {stack:$stack, os:$o[$i], platform:$p[$i]}]' \
             | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
 
   packer:
-    name: packer validate (${{ matrix.distro }}-${{ matrix.stack }})
+    name: packer validate (${{ matrix.platform }}/${{ matrix.os }}-${{ matrix.stack }})
     needs: discover
     if: needs.discover.outputs.matrix != '[]'
     # macOS runner: cirruslabs/tart Packer plugin ships macOS-only binaries.
@@ -42,15 +87,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # macos-latest preinstalls packer; no setup-packer action needed.
       # Token avoids the 60 req/hr unauthenticated GH API limit packer hits fetching plugin tags.
+      # Per-template, not `packer init .`: both root templates declare the same
+      # top-level stack/os/ssh_username variables (each template inits clean
+      # alone), and a directory-wide init parses every *.pkr.hcl together and
+      # refuses on the duplicate variable/local definitions that produces.
+      # matrix.platform already names the one template this job cell validates.
       - name: packer init
         env:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: packer init .
+        run: packer init "${{ matrix.platform }}.pkr.hcl"
       # packer validate stat()s file provisioner source paths; stub the pubkey so validate passes.
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub
+      # gui/de are linux-only vars (darwin.pkr.hcl declares neither, and
+      # Packer hard-errors on an undeclared -var), so only stack/os cross
+      # both platform templates here.
       - name: packer validate
-        run: packer validate -var stack="${{ matrix.stack }}" -var distro="${{ matrix.distro }}" stack.pkr.hcl
+        run: packer validate -var stack="${{ matrix.stack }}" -var os="${{ matrix.os }}" "${{ matrix.platform }}.pkr.hcl"
 
   shellcheck:
     name: shellcheck
@@ -62,11 +115,14 @@ jobs:
         with:
           ignore_names: zshrc
       # The .tmpl suffix hides scaffold templates from the action above, so lint what scaffold ships: the token substituted.
+      # globstar (not a flat glob): scripts/{linux,darwin}/mise-install.sh.tmpl
+      # sit one level deeper than scripts/00-stack.sh.tmpl, and a flat glob
+      # would silently stop checking the per-platform scripts scaffold stamps.
       - name: shellcheck scaffold templates
         shell: bash
         run: |
-          shopt -s nullglob
-          ts=(templates/stack/scripts/*.sh.tmpl)
+          shopt -s nullglob globstar
+          ts=(templates/stack/scripts/**/*.sh.tmpl)
           [ ${#ts[@]} -gt 0 ] || { echo "no scaffold templates found" >&2; exit 1; }
           for t in "${ts[@]}"; do
             echo "== $t"
@@ -74,14 +130,16 @@ jobs:
           done
 
   tests:
-    name: tests (${{ matrix.os }})
+    name: tests (${{ matrix.runner }})
     # macOS too: everything under bin/ and script/ runs on the developer's Mac,
     # against bash 3.2 and the BSD userland that only this runner provides.
+    # Named `runner`, not `os`: this is the GitHub Actions runner image, not
+    # this repo's `os` token (fedora/ubuntu/debian/macos) the other jobs key on.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        runner: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: run test suite
