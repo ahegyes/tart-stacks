@@ -66,7 +66,7 @@ test:
 # lint — the ONE definition of what shellcheck covers, so the docs and CI
 # cannot describe different sets. A `*.sh` glob is not that set: every host
 # command (bin/tart-*, script/*) is extensionless, so a glob-based command
-# silently skips the largest and most security-relevant files in the repo while
+# silently skips the most security-relevant files in the repo while
 # a whole-repo scan lints them. Discovery here matches what such a scan finds —
 # tracked *.sh, plus tracked executables with no extension whose first line is
 # a shell shebang. Scaffold templates are linted with __STACK__ substituted,

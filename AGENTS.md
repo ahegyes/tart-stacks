@@ -58,7 +58,7 @@ Multi-OS, multi-stack collection of Packer templates that build Tart base VM ima
 │   │   ├── os                          # Supported operating systems, one per line; consumed by the Makefile (check-os, PLATFORM, bootstrap's BASE_IMAGE), bin/lib/common.sh's tart_is_base_image and tart_os_platform (the latter is how tart-new resolves a darwin OS token and clones on it). Deliberately no desktops file: the macOS desktop is intrinsic, so the platform has no DE axis
 │   │   └── scripts/
 │   │       ├── 00-base.sh              # First provisioner. Asserts the guest is the OS this build claims, that its release is current enough, and that the guest agent is whole — then brew update + core and quality-of-life packages
-│   │       ├── 99-finalize.sh          # LAST. Closes the base's remote-access surface (Screen Sharing, Kerberos KDC), removes CI runner artifacts, asserts NOPASSWD sudo and a :22-alone listener surface, writes the provenance manifest, authorizes the SSH key behind authorized-key-lib.sh's gate, and hardens sshd. Deliberately never locks the account password — see the exec table and "What NOT to do". Every path is TART_ROOT-prefixed so the script is testable against a synthetic tree
+│   │       ├── 99-finalize.sh          # LAST. Closes the base's remote-access surface (Screen Sharing, Kerberos KDC), removes CI runner artifacts, asserts NOPASSWD sudo and a :22-alone listener surface, writes the provenance manifest, authorizes the SSH key behind authorized-key-lib.sh's gate, and hardens sshd. Deliberately never locks the account password — see the exec table and "What NOT to do". Every mutable system-tree path is TART_ROOT-prefixed so the script is testable against a synthetic tree (the /tmp staging paths Packer uploads to stay literal)
 │   │       ├── family-lib.sh           # The brew family's half of the package-manager contract, same function names as the linux peer. Drops root to TART_BUILD_USER before every brew call (brew refuses to run as root). install_guest_agent and assert_nopasswd_sudo are assert-only here: Cirrus's base already ships both, so there is nothing to install
 │   │       └── user-config.sh          # PATH activation, the /mnt/shared parity link for Tart shares, the /run synthetic.conf entry macOS otherwise lacks, and the runtime-dir LaunchDaemon for forwarded agent sockets. TART_ROOT-prefixed, same seam as its 99-finalize peer
 │   └── files/
@@ -151,7 +151,7 @@ bash -n shared/scripts/*.sh shared/linux/scripts/*.sh shared/darwin/scripts/*.sh
 # `make lint` is what CI runs, so local and CI coverage cannot differ. It owns
 # discovery deliberately: every host command (bin/tart-*, script/*) is
 # EXTENSIONLESS, so a `git ls-files '*.sh'` form silently skips all eight —
-# including bin/tart-up, the largest file here — while a whole-repo scan lints
+# including bin/tart-up, the largest of the eight — while a whole-repo scan lints
 # them. It also covers the scaffold templates, with __STACK__ substituted.
 make lint
 make test                               # plain-bash test suite (test/*.sh) — mocked, no VM, what CI runs
@@ -180,7 +180,7 @@ The smoke test inside `stacks/php/scripts/{linux,darwin}/mise-install.sh` is a h
 - Don't add stack-specific or OS-specific logic to `shared/` scripts. OS variance belongs in `family-lib.sh`; stack variance belongs in the stack's own `scripts/` and `packages.<family>` files (see the `00-base.sh` / `00-stack.sh` / `packages.{dnf,apt}` pattern). DE × OS variance for the GUI layer belongs in `gui-lib.sh`, same rule.
 - Don't let the GUI layer touch network posture: no new non-loopback listeners, no firewall, no second interface manager, no broadcast daemons. Egress confinement is applied by the host at VM start (`tart-up` netpolicy); the image must stay neutral to it — shared/linux/gui/README.md § "Network posture" is the contract.
 - Don't add a `passwd -l` call to `shared/darwin/scripts/99-finalize.sh`. Unlike the linux peer, darwin deliberately never locks the account password: GUI autologin depends on an already-unlocked console session, and locking it would make a greeter a dead end while leaving no recoverable path back in (a randomized password can't be reset without the old one — see the `password:` manifest line's reasoning in that script). Re-read that coupling before reintroducing the call.
-- Don't write `/etc/synthetic.conf` a second time anywhere in the darwin pipeline. It's a write-once mechanism enforced by macOS itself, not by this repo: the value present at the next boot sticks, and a later overwrite never takes effect — a wrong entry needs a rebuild, not a rewrite. `shared/darwin/scripts/user-config.sh` is the only writer today; keep it that way.
+- Don't write `/etc/synthetic.conf` a second time anywhere in the darwin pipeline. apfs.util(8) reads it during early boot and at no other time, and a second write replaces the first rather than merging — so a later writer silently clobbers the `/mnt/shared` and `/run` entries, and the loss surfaces only on a clone's first boot. Entries cannot change on a running system either: a wrong value needs a rebuild (or, for a VM already up, a reboot), not an in-place rewrite. `shared/darwin/scripts/user-config.sh` is the only writer and writes every entry the image needs in one pass; keep it that way.
 
 ## Upstream sources (trust boundary)
 
