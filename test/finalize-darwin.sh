@@ -131,6 +131,8 @@ echo
 echo "99-finalize (darwin) — the /tmp staging-file paths are TART_ROOT-prefixed everywhere they appear:"
 for base in tart-stacks-tools tart-stacks-skipped; do
   total=$(grep -c "/tmp/${base}" "$FINALIZE")
+  # shellcheck disable=SC2016  # the literal `${TART_ROOT}` is grep's pattern for
+  # the shipped script's own source text, not a variable this shell should expand
   prefixed=$(grep -c '\${TART_ROOT}/tmp/'"${base}" "$FINALIZE")
   assert_eq "every /tmp/${base} reference (${total} found) is \${TART_ROOT}-prefixed" "$total" "$prefixed"
 done
