@@ -20,10 +20,11 @@ jobs:
         run: |
           shopt -s nullglob
           stacks=(); for d in stacks/*/; do stacks+=("$(basename "$d")"); done
-          # platform is the directory holding the os token's file — the same
+          # platform is the directory holding the os token's file — same
           # derivation as Makefile's PLATFORM (Makefile:107-112) and
-          # tart_os_platform (bin/lib/common.sh), so there's no second list
-          # to keep in sync as platforms are added.
+          # tart_os_platform (bin/lib/common.sh). Refuses on the same
+          # invariant both enforce: a token claimed by more than one
+          # platform's os file is not a single platform.
           os_tokens=(); platforms=()
           for f in shared/*/os; do
             platform="$(basename "$(dirname "$f")")"
@@ -32,6 +33,29 @@ jobs:
               platforms+=("$platform")
             done < <(grep -vE '^[[:space:]]*(#|$)' "$f")
           done
+          # An empty walk means every platform's os file is empty or missing
+          # — that state already breaks Makefile's PLATFORM/check-os and
+          # tart_os_platform, so refuse here too rather than let jq turn a
+          # zero-element array into one blank-field cell (printf still runs
+          # its format once with no arguments).
+          if [ "${#os_tokens[@]}" -eq 0 ]; then
+            echo "::error::no os tokens found under shared/*/os" >&2
+            exit 1
+          fi
+          declare -A tok_count=() tok_files=()
+          for i in "${!os_tokens[@]}"; do
+            tok="${os_tokens[$i]}"
+            tok_count[$tok]=$(( ${tok_count[$tok]:-0} + 1 ))
+            tok_files[$tok]+="shared/${platforms[$i]}/os "
+          done
+          refused=0
+          for tok in "${!tok_count[@]}"; do
+            if [ "${tok_count[$tok]}" -gt 1 ]; then
+              echo "::error::os token '$tok' is claimed by more than one platform — ${tok_files[$tok]}— remove it from all but one" >&2
+              refused=1
+            fi
+          done
+          [ "$refused" -eq 0 ] || exit 1
           jq -nc \
             --argjson s "$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)" \
             --argjson o "$(printf '%s\n' "${os_tokens[@]}" | jq -R . | jq -sc .)" \
