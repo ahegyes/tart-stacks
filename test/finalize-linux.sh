@@ -68,5 +68,34 @@ check_order() { # <earlier-label> <earlier-line> <later-label> <later-line>
 check_order "the authorized-key gate"     "$gate_line"    "the authorized_keys install" "$install_line"
 check_order "the authorized_keys install" "$install_line" "passwd -l"                   "$lock_line"
 
+# ── the drop-in's CONTENT, not just its path ───────────────────────────────
+# The ordering checks above use the drop-in as a landmark, which says nothing
+# about what it contains — every directive could be deleted and they would all
+# still pass. These are what make the hardening itself load-bearing in the
+# suite. Checked statically because writing the file and reading sshd's
+# effective config both need root and a real sshd.
+echo
+echo "99-finalize (linux) — the sshd drop-in actually carries the hardening:"
+for directive in \
+  'PasswordAuthentication no' \
+  'KbdInteractiveAuthentication no' \
+  'PubkeyAuthentication yes' \
+  'PermitRootLogin no' \
+  'StreamLocalBindUnlink yes'
+do
+  if grep -qxF -- "$directive" "$FINALIZE"; then
+    ok "drop-in sets '$directive'"
+  else
+    bad "drop-in sets '$directive'" "not found in $FINALIZE"
+  fi
+done
+# And that the build refuses to ship on the EFFECTIVE config, not just syntax:
+# `sshd -t` would pass a drop-in that some other Include outranks.
+if grep -q 'sshd -T' "$FINALIZE"; then
+  ok "verifies sshd's effective config (sshd -T), not only syntax (sshd -t)"
+else
+  bad "verifies sshd's effective config (sshd -T)" "no sshd -T found in $FINALIZE"
+fi
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

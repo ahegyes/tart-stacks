@@ -163,7 +163,11 @@ cat > "$MOCKBIN/netstat" <<'M'
 [ -n "${MOCK_LOG:-}" ] && printf 'netstat %s\n' "$*" >> "$MOCK_LOG"
 echo "Active Internet connections (including servers)"
 echo "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)"
-for p in ${MOCK_LISTEN_PORTS:-22}; do
+# `-` not `:-`: an explicitly EMPTY MOCK_LISTEN_PORTS must produce a table with
+# no LISTEN rows at all, which is the case the must-pass control exists to
+# refuse. A `:-` default would silently substitute 22 and make that case
+# untestable.
+for p in ${MOCK_LISTEN_PORTS-22}; do
   printf 'tcp4       0      0  *.%s                   *.*                    LISTEN\n' "$p"
 done
 M
@@ -362,6 +366,50 @@ LOG6="$WORK6/log"
 rc=0
 invoke_gate "$WORK6" "$LOG6" MOCK_LISTEN_PORTS=22 MOCK_SUDOERS_RC=1 || rc=$?
 assert_eq "a missing/invalid NOPASSWD drop-in refuses the build" "1" "$rc"
+
+# ── the listener assert's must-pass control ────────────────────────────────
+# "nothing unexpected is listening" is vacuously true of a table with nothing
+# in it, so an empty or unparseable read must refuse rather than certify. The
+# :22-only control above is the other half: without it, an assert that refused
+# unconditionally would pass this case for the wrong reason.
+echo
+echo "99-finalize (darwin) — an unreadable listener table is refused, not read as clean:"
+WORK7="$WORK/w7"; install -d "$WORK7"; setup_root "$WORK7" dir
+LOG7="$WORK7/log"
+rc=0
+invoke_gate "$WORK7" "$LOG7" MOCK_LISTEN_PORTS= || rc=$?
+assert_eq "a listener table with no LISTEN rows refuses the build" "1" "$rc"
+assert_contains "the refusal says the read is untrustworthy, not that the surface is clean" \
+  "$(cat "$WORK7/stderr")" "not trustworthy evidence"
+
+# ── the drop-in's CONTENT, not just its path ───────────────────────────────
+# Part 1's ordering checks use the drop-in as a landmark, which says nothing
+# about what it contains — every directive could be deleted and they would all
+# still pass. This platform deliberately never locks the account password, so
+# `PasswordAuthentication no` is the only barrier between a clone and the
+# publicly-known admin password; it has to be asserted somewhere. Static,
+# because writing the file and reading sshd's effective config both need root
+# and a real sshd.
+echo
+echo "99-finalize (darwin) — the sshd drop-in actually carries the hardening:"
+for directive in \
+  'PasswordAuthentication no' \
+  'KbdInteractiveAuthentication no' \
+  'PubkeyAuthentication yes' \
+  'PermitRootLogin no' \
+  'StreamLocalBindUnlink yes'
+do
+  if grep -qxF -- "$directive" "$FINALIZE"; then
+    ok "drop-in sets '$directive'"
+  else
+    bad "drop-in sets '$directive'" "not found in $FINALIZE"
+  fi
+done
+if grep -q 'sshd -T' "$FINALIZE"; then
+  ok "verifies sshd's effective config (sshd -T), not only syntax (sshd -t)"
+else
+  bad "verifies sshd's effective config (sshd -T)" "no sshd -T found in $FINALIZE"
+fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

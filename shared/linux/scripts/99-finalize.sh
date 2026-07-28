@@ -133,6 +133,25 @@ EOF
 # so it's absent mid-build on apt-family images (present on dnf). Create it idempotently.
 mkdir -p /run/sshd
 sshd -t
+# `sshd -t` checks syntax only — it says nothing about which value WINS. The
+# drop-in's whole premise is that `00-` outranks cloud-init's
+# `50-cloud-init.conf` (which re-enables password auth) under
+# first-occurrence-wins, so read the EFFECTIVE config and assert the
+# directives actually took, rather than trusting the ordering rule.
+echo "==> Verifying sshd's effective config carries the hardening..."
+sshd_effective="$(sshd -T)"
+for want in \
+  "passwordauthentication no" \
+  "kbdinteractiveauthentication no" \
+  "permitrootlogin no" \
+  "pubkeyauthentication yes" \
+  "streamlocalbindunlink yes"
+do
+  printf '%s\n' "$sshd_effective" | grep -qix "$want" || {
+    echo "ERROR: sshd's effective configuration does not carry '${want}' — the drop-in was written but something outranks it. This image would ship with the posture it claims to close." >&2
+    exit 1
+  }
+done
 
 # Lock admin's password. After this, SSH key auth is the only way in.
 # Packer disconnects immediately after this script returns.
