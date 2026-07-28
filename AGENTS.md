@@ -97,7 +97,7 @@ Multi-OS, multi-stack collection of Packer templates that build Tart base VM ima
 └── .github/
     ├── dependabot.yml                  # Weekly grouped github-actions bumps only (no Packer-plugin ecosystem — that pin is bounded in linux.pkr.hcl, bumped by hand)
     └── workflows/
-        └── validate.yml                # packer validate + shellcheck (scripts AND scaffold templates) + the test suite, on push/PR to trunk; the packer matrix covers every stacks/* × shared/linux/os cell
+        └── validate.yml                # packer validate + shellcheck (scripts AND scaffold templates) + the test suite, on push/PR to trunk; the packer matrix covers every stacks/* × shared/*/os cell, validated against the platform (linux.pkr.hcl/darwin.pkr.hcl) that os token's directory names
 ```
 
 ## Conventions

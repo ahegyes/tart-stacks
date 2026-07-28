@@ -14,22 +14,33 @@ jobs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: build the stack × OS matrix
+      - name: build the stack × os × platform matrix
         id: set
         shell: bash
         run: |
           shopt -s nullglob
           stacks=(); for d in stacks/*/; do stacks+=("$(basename "$d")"); done
-          os_tokens=(); while IFS= read -r line; do os_tokens+=("$line"); done \
-            < <(grep -vE '^[[:space:]]*(#|$)' shared/linux/os)
+          # platform is the directory holding the os token's file — the same
+          # derivation as Makefile's PLATFORM (Makefile:107-112) and
+          # tart_os_platform (bin/lib/common.sh), so there's no second list
+          # to keep in sync as platforms are added.
+          os_tokens=(); platforms=()
+          for f in shared/*/os; do
+            platform="$(basename "$(dirname "$f")")"
+            while IFS= read -r line; do
+              os_tokens+=("$line")
+              platforms+=("$platform")
+            done < <(grep -vE '^[[:space:]]*(#|$)' "$f")
+          done
           jq -nc \
             --argjson s "$(printf '%s\n' "${stacks[@]}" | jq -R . | jq -sc .)" \
-            --argjson d "$(printf '%s\n' "${os_tokens[@]}" | jq -R . | jq -sc .)" \
-            '[$s[] as $stack | $d[] as $os | {stack:$stack, os:$os}]' \
+            --argjson o "$(printf '%s\n' "${os_tokens[@]}" | jq -R . | jq -sc .)" \
+            --argjson p "$(printf '%s\n' "${platforms[@]}" | jq -R . | jq -sc .)" \
+            '[$s[] as $stack | range(0; ($o|length)) as $i | {stack:$stack, os:$o[$i], platform:$p[$i]}]' \
             | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
 
   packer:
-    name: packer validate (${{ matrix.os }}-${{ matrix.stack }})
+    name: packer validate (${{ matrix.platform }}/${{ matrix.os }}-${{ matrix.stack }})
     needs: discover
     if: needs.discover.outputs.matrix != '[]'
     # macOS runner: cirruslabs/tart Packer plugin ships macOS-only binaries.
@@ -49,8 +60,11 @@ jobs:
       # packer validate stat()s file provisioner source paths; stub the pubkey so validate passes.
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub
+      # gui/de are linux-only vars (darwin.pkr.hcl declares neither, and
+      # Packer hard-errors on an undeclared -var), so only stack/os cross
+      # both platform templates here.
       - name: packer validate
-        run: packer validate -var stack="${{ matrix.stack }}" -var os="${{ matrix.os }}" linux.pkr.hcl
+        run: packer validate -var stack="${{ matrix.stack }}" -var os="${{ matrix.os }}" "${{ matrix.platform }}.pkr.hcl"
 
   shellcheck:
     name: shellcheck
