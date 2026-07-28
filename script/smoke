@@ -332,7 +332,20 @@ elif [ "$PLATFORM" = "darwin" ]; then
     echo "$prog: FAIL — could not read the guest TCP listener table in 'tart-$VM' with netstat, so the :22-alone posture and Screen Sharing's absence are both unverified (re-run with SMOKE_KEEP=1 and try 'sudo netstat -an -p tcp' in the VM)." >&2
     exit 1
   fi
-  ports=$(printf '%s\n' "$listener_table" | awk '$NF == "LISTEN" { n = split($4, a, "."); print a[n] }' | sort -u)
+  # Parse each LISTEN row into "addr port": netstat renders the Local Address
+  # column address-and-port joined by a dot (`127.0.0.1.4445`, `[::1].4445`,
+  # `*.22`) — an IPv4 address embeds three more dots of its own, and a
+  # bracketed IPv6 address embeds none, so only the LAST dot is the port
+  # separator; `sub()`'s greedy `.*\.` match finds it regardless of how many
+  # dots came before.
+  rows=$(printf '%s\n' "$listener_table" | awk '
+    $NF == "LISTEN" {
+      addr = $4; port = $4
+      sub(/\.[^.]*$/, "", addr)
+      sub(/.*\./, "", port)
+      print addr, port
+    }' | sort -u)
+  ports=$(printf '%s\n' "$rows" | awk '{ print $2 }' | sort -u)
   # must-pass control: :22 has to show up in the parsed set on its own, or an
   # empty/broken read (netstat itself failing, a parse that matches nothing)
   # would pass everything below vacuously — "nothing unexpected" and "5900
@@ -349,19 +362,40 @@ elif [ "$PLATFORM" = "darwin" ]; then
   # socket bound with nothing behind it still answers a connect — the exact
   # false positive this repo's probe-quality bar rules out. The kernel
   # LISTEN-state row read here is unambiguous either way, regardless of
-  # whether anything on the other end would ever speak RFB.
+  # whether anything on the other end would ever speak RFB. Unconditional on
+  # bind address, unlike the general check below: nothing legitimately
+  # forwards a tunnel onto :5900, so any appearance of it — loopback or not —
+  # is the base's disabled service coming back.
   if printf '%s\n' "$ports" | grep -qx 5900; then
     echo "$prog: FAIL — port 5900 (Screen Sharing) is listening on 'tart-$VM' — the base ships it reachable with the publicly-known admin/admin password, and 99-finalize.sh is supposed to disable it." >&2
     exit 1
   fi
   printf '%s: ok   %-22s %s\n' "$prog" "screen sharing" "absent (:5900 not listening)" >&2
 
-  unexpected=$(printf '%s\n' "$ports" | grep -vx 22 || true)
-  if [ -n "$unexpected" ]; then
-    echo "$prog: FAIL — 'tart-$VM' is listening beyond :22 ($(printf '%s' "$unexpected" | tr '\n' ' ')) — this image is supposed to expose ssh and nothing else, and this check proves that posture survived imaging and cloning, not just the builder VM at build time." >&2
+  # The claim worth asserting AT RUNTIME is "no listener beyond :22 reachable
+  # from outside the guest" — not "no listener beyond :22, full stop". The
+  # two differ deliberately: 99-finalize.sh's build-time assert (the one it
+  # runs) stays absolute, because a Packer build has no ssh sessions open
+  # against it and no RemoteForwards to tolerate. This check runs against a
+  # live clone the OPERATOR is (or was) ssh'd into, and a `Host tart-*
+  # RemoteForward …` in ~/.config/tart-stacks/forwards makes sshd-sess bind
+  # the forwarded port on the GUEST's loopback for the life of that session —
+  # real sockets, not a mocking artifact, and not exposure: nothing outside
+  # the guest can reach 127.0.0.1 or [::1] inside it. Do not tighten this
+  # back to the build-time script's bar; that reintroduces a false FAIL that
+  # is invisible in the mocked suite and CI (no forwards there) and fires
+  # only for the operator this whole check exists to protect. Same allowlist
+  # vocabulary as the linux VNC stage's loopback-bind classifier above.
+  non_loopback=$(printf '%s\n' "$rows" | awk '
+    $2 != "22" {
+      addr = $1
+      if (addr != "127.0.0.1" && addr != "[::1]") print addr":"$2
+    }')
+  if [ -n "$non_loopback" ]; then
+    echo "$prog: FAIL — 'tart-$VM' has a non-loopback listener beyond :22 ($(printf '%s' "$non_loopback" | tr '\n' ' ')) — a loopback bind (127.0.0.1 / [::1]) is tolerated as the operator's own RemoteForward tunnel, but this is reachable beyond the guest itself." >&2
     exit 1
   fi
-  printf '%s: ok   %-22s %s\n' "$prog" "listener surface" ":22 alone (survived clone)" >&2
+  printf '%s: ok   %-22s %s\n' "$prog" "listener surface" ":22 alone beyond loopback (survived clone)" >&2
 fi
 
 if [ "$PLATFORM" = "darwin" ]; then

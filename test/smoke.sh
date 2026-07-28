@@ -474,7 +474,7 @@ assert_contains "darwin verdict names the sw_vers attest"  "$(cat "$ERR")" "gues
 assert_absent   "darwin verdict never names os-release id" "$(cat "$ERR")" "guest os-release id"
 assert_contains "darwin listener-table must-pass control"  "$(cat "$ERR")" "22 present (must-pass control)"
 assert_contains "darwin screen-sharing ok line"             "$(cat "$ERR")" "screen sharing"
-assert_contains "darwin listener-surface ok line"           "$(cat "$ERR")" ":22 alone (survived clone)"
+assert_contains "darwin listener-surface ok line"           "$(cat "$ERR")" ":22 alone beyond loopback (survived clone)"
 assert_contains "darwin verdict names sw_vers, not os-release" "$(cat "$ERR")" "manifest, sw_vers, toolchain"
 assert_absent   "darwin verdict never says os-release"      "$(cat "$ERR")" "os-release"
 assert_contains "darwin verdict names the closing stages"   "$(cat "$ERR")" "sshd posture, listener surface, screen sharing"
@@ -521,8 +521,29 @@ MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
   MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 *.88 *.* LISTEN')" \
   run_smoke php macos
 assert_rc       "darwin unexpected non-5900 port → FAIL" 1
-assert_contains "unexpected-port failure names :22-alone" "$(cat "$ERR")" "listening beyond :22"
+assert_contains "unexpected-port failure names :22-alone" "$(cat "$ERR")" "non-loopback listener beyond :22"
 assert_contains "unexpected-port failure names the port"  "$(cat "$ERR")" "88"
+
+# The real-gate regression: a `Host tart-* RemoteForward …` block in
+# ~/.config/tart-stacks/forwards makes sshd-sess bind the forwarded port on
+# the GUEST's loopback for the life of the operator's ssh session — real
+# sockets on 127.0.0.1/[::1], not exposure. Both families (v4 loopback, v6
+# loopback), both operator ports (4445, 8080) from the real failure, MUST
+# still pass.
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 127.0.0.1.4445 *.* LISTEN\ntcp6 0 0 [::1].4445 *.* LISTEN\ntcp4 0 0 127.0.0.1.8080 *.* LISTEN\ntcp6 0 0 [::1].8080 *.* LISTEN')" \
+  run_smoke php macos
+assert_rc       "darwin loopback-bound RemoteForward ports → smoke PASSES" 0
+assert_contains "loopback-forward run still reports the listener-surface ok line" "$(cat "$ERR")" ":22 alone beyond loopback"
+
+# The same ports on a NON-loopback bind (e.g. GatewayPorts, or a forward gone
+# wrong) must still fail — the classifier reads the actual bind address off
+# each row, not "is this port one of the known forward numbers".
+MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 *.4445 *.* LISTEN')" \
+  run_smoke php macos
+assert_rc       "darwin non-loopback bind on a forward's OWN port → FAIL" 1
+assert_contains "non-loopback forward-port failure names the address" "$(cat "$ERR")" "*:4445"
 
 # must-pass control: an empty/broken listener-table read that still exits 0
 # must not pass either claim vacuously — :22 has to show up in the parsed set
