@@ -474,9 +474,13 @@ darwin_vnc_parse_url() {
 
 # darwin_vnc_wait_for_listener — verify the HOST port Tart printed actually
 # accepts a connection before reporting success: the same fail-closed shape
-# the linux vnc path applies via vnc_wait_for_loopback, classifying a HOST
-# port here instead of a guest one — Tart's own print can race ahead of the
-# framework's server actually being ready to accept a connection.
+# the linux vnc path applies via vnc_wait_for_loopback (probe rather than
+# trust the advertised state), but on a HOST port instead of a guest one, and
+# reachability only — unlike vnc_listener_state, this never inspects the bind
+# address, so it trusts DARWIN_VNC_HOST rather than classifying it. Safe today
+# because Tart hardcodes the VNC listener to 127.0.0.1. Tart's own print can
+# race ahead of the framework's server actually being ready to accept a
+# connection.
 darwin_vnc_wait_for_listener() {
   local attempt
   for ((attempt = 1; attempt <= 30; attempt++)); do

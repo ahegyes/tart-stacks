@@ -20,7 +20,7 @@ Every stack builds on every supported OS, on whichever platform owns that OS tok
 
 `<os>` is the OS token (e.g. `fedora`, `macos`). The supported set is the union of `shared/linux/os` and `shared/darwin/os`; `make` derives which template a given `OS=` targets by asking which file lists it.
 
-All stacks share a common base: mise + zellij + standard dev utilities, wired through a package-family abstraction layer (`shared/linux/scripts/family-lib.sh`) that handles dnf (Fedora) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
+All stacks share a common base: mise + zellij + standard dev utilities, wired through a package-family abstraction layer — one implementation per platform holding the same function contract: `shared/linux/scripts/family-lib.sh` for dnf (Fedora) and apt (Debian/Ubuntu), `shared/darwin/scripts/family-lib.sh` for brew (macOS). Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
 ## Repo layout
 
@@ -206,7 +206,7 @@ make build STACK=php OS=macos         # darwin: same, from the darwin.pkr.hcl pi
 tart list                             # confirm fedora-php (or macos-php) is present
 ```
 
-`make build` chains `make bootstrap` first (pulls `ghcr.io/cirruslabs/<os>:latest`, refreshes the local `<os>-base` image), then runs Packer through the stack's provisioner chain.
+`make build` chains `make bootstrap` first (pulls the platform's Cirrus base image — `ghcr.io/cirruslabs/<os>:latest` for linux, `ghcr.io/cirruslabs/macos-<release>-base:latest` for darwin — refreshes the local `<os>-base` image), then runs Packer through the stack's provisioner chain.
 
 **The Fedora images are not built on the release the base is published at.** Upstream pins its Fedora image to a release that is already past end of life and advances it by hand, so re-pulling the base never moves it. The first provisioner in `linux.pkr.hcl` therefore calls `pkg_release_upgrade` (from `shared/linux/scripts/family-lib.sh`), lifting the guest to `FEDORA_TARGET_RELEASE` and rebooting before anything is installed — about two extra minutes on a Fedora build, and nothing at all on Debian or Ubuntu, whose bases their publisher keeps current. `00-base.sh` then refuses any release past its own `SUPPORT_END`, so letting that pin go stale fails the build instead of quietly shipping an unpatched image. Raising it is a one-line edit, capped by dnf's two-release upgrade limit; `pkg_release_upgrade` refuses a wider jump and names the highest target you can reach in one hop.
 

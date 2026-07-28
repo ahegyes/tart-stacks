@@ -118,8 +118,13 @@ export PATH="${BISON_PREFIX}/bin:$PATH"
 # php-src's ext/gd/config.m4 directly: the external-gd branch is exactly
 # `PKG_CHECK_MODULES([GDLIB], [gdlib >= 2.1.0])`, nothing else.
 #
-# Declared then exported separately (not `export X=$(...)`) so a failing
-# `brew --prefix` isn't masked by the assignment's own exit status — SC2155.
+# Declared then exported separately (not `export X=$(...)`) so the exit status
+# set -e actually checks is the plain assignment's own, not `export`'s — SC2155.
+# That only rescues the LAST command substitution here: bash reports a plain
+# assignment's exit status as the last substitution's alone, so a failing
+# $(brew --prefix bzip2) is still masked by the $(brew --prefix libpq) after
+# it. membership_gate's `bz2` token below is the backstop that catches a
+# missing bz2 extension regardless of which brew --prefix call failed.
 PHP_EXTRA_CONFIGURE_OPTIONS="--with-openssl --with-sodium --with-bz2=$(brew --prefix bzip2) \
 --with-external-gd --with-pdo-pgsql=$(brew --prefix libpq) --with-zip"
 export PHP_EXTRA_CONFIGURE_OPTIONS

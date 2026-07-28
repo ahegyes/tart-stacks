@@ -36,7 +36,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 
 - **One logical change per PR.** Renaming + a bug fix in the same PR is two PRs.
 - **`shared/` changes affect every stack.** Bear that in mind — a tweak that helps one stack may regress another.
-- **If you add a new script** to an existing stack, reference it from the relevant platform template's provisioner block — `linux.pkr.hcl`, `darwin.pkr.hcl`, or both, depending on where the script lives (each parameterized by `var.stack`). To add a new stack, run `make scaffold STACK=<name>` and add a row to the stack table in the top-level `README.md` — CI runs `packer validate` for every `stacks/*/` × `shared/linux/os` cell automatically, no workflow edit needed for new stacks or new linux OSes (darwin is not yet in the CI matrix).
+- **If you add a new script** to an existing stack, reference it from the relevant platform template's provisioner block — `linux.pkr.hcl`, `darwin.pkr.hcl`, or both, depending on where the script lives (each parameterized by `var.stack`). To add a new stack, run `make scaffold STACK=<name>` and add a row to the stack table in the top-level `README.md` — CI runs `packer validate` for every `stacks/*/` × `shared/*/os` cell on both platforms automatically, no workflow edit needed for new stacks or new OSes on either platform.
 - **Comments explain WHY, not WHAT** — see [`AGENTS.md`](./AGENTS.md) for the full convention list.
 
 ## Reporting bugs

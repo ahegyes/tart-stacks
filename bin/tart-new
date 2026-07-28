@@ -246,7 +246,7 @@ set_args=()
 # 1024x768, which nothing inside the guest can change — the resolution is a
 # property of the virtual display, not of the desktop session — so a clone
 # left at the default is stuck there for its whole life (measured: a real
-# macos-php clone's config.json ships 1024x768 with no displayRefit key). Any
+# macos-php image's config.json ships 1024x768 with no displayRefit key). Any
 # clone given a geometry gets --display-refit with it: on linux the guest
 # follows the host window as it's resized, inert on a headless clone with no
 # desktop to reflow. On darwin, `tart set --display <geom> --display-refit`

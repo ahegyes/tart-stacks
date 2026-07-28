@@ -492,9 +492,9 @@ assert_rc       "darwin guest sw_vers disagrees with manifest → FAIL" 1
 assert_contains "sw_vers mismatch names both values" "$(cat "$ERR")" "expected 'macos', guest reports 'ubuntu'"
 
 # darwin's manifest carries no gui: key — the attest must not even run there.
-# A value that would fail the attest instantly on linux (must-pass control:
-# the SAME value on linux DOES fail, per the existing "GUI image smoked as
-# headless" test above) must pass clean through a darwin run.
+# A bogus gui: value would fail the attest instantly on linux (must-pass
+# control: a mismatched value on linux DOES fail, per the existing "GUI image
+# smoked as headless" test above) but must pass clean through a darwin run.
 MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos MOCK_MANIFEST_GUI=bogus-gui-value run_smoke php macos
 assert_rc       "darwin never attests manifest gui: (no axis to check)" 0
 
