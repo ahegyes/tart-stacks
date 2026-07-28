@@ -262,7 +262,7 @@ scaffold: check-stack-token
 	done
 	@chmod +x "$(STACK_DIR)"/scripts/*.sh "$(STACK_DIR)"/scripts/*/*.sh
 	@echo "scaffolded $(STACK_DIR)/ — next:"
-	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions)"
+	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions) and $(STACK_DIR)/smoke-probe"
 	@echo "  2. in scripts/linux/mise-install.sh AND scripts/darwin/mise-install.sh, add"
 	@echo "     ONE smoke_gate check per tool — a missing check ships an unverified"
 	@echo "     runtime (the gate only tests what you list); the two files start"

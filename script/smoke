@@ -232,14 +232,33 @@ fi
 
 # The toolchain has to be reachable the way an agent or a script reaches it: a
 # login shell with no rc file, which is what `ssh <vm> <cmd>` runs.
-for probe in "node --version" "$( [ "$STACK" = php ] && echo 'php --version' || echo 'java -version' )"; do
-  if ssh -o BatchMode=yes "tart-$VM" "$probe" >/dev/null 2>&1; then
+#
+# The probe list is DATA, per stack, for the same reason packages.<family> is:
+# a two-way `php or else java` fork silently probes a third stack for the wrong
+# runtime, and it can only ever cover the one command it hardcodes — so
+# everything else a stack's README advertises goes unproven while the closing
+# line still reports "toolchain".
+PROBE_FILE="$REPO/stacks/$STACK/smoke-probe"
+if [ ! -f "$PROBE_FILE" ]; then
+  echo "$prog: FAIL — no probe list at stacks/$STACK/smoke-probe, so there is nothing to prove about this stack's toolchain (make scaffold stamps one; add a line per tool)." >&2
+  exit 1
+fi
+probes=$(grep -vE '^[[:space:]]*(#|$)' "$PROBE_FILE" || true)
+if [ -z "$probes" ]; then
+  echo "$prog: FAIL — stacks/$STACK/smoke-probe lists no commands, so 'toolchain' below would pass without probing anything." >&2
+  exit 1
+fi
+while IFS= read -r probe; do
+  # -n: ssh reads stdin by default, which here is the probe list feeding this
+  # very loop — without it the first probe consumes the rest and only one tool
+  # is ever checked.
+  if ssh -n -o BatchMode=yes "tart-$VM" "$probe" >/dev/null 2>&1; then
     printf '%s: ok   %-22s %s\n' "$prog" "non-interactive" "$probe" >&2
   else
     echo "$prog: FAIL — '$probe' does not work over a non-interactive ssh, so the image's PATH wiring is broken for scripts and agents." >&2
     exit 1
   fi
-done
+done <<< "$probes"
 
 # The hardening posture 99-finalize establishes, read from sshd's own effective
 # config rather than from the drop-in file it was written into.

@@ -168,5 +168,45 @@ assert_contains "the warning is not read as the extension" "$OUT" "imagick      
 # to be line-anchored rather than a containment test.
 assert_contains "the warning really does carry the name" "$(php_m_warning_polluted)" "imagick.so"
 
+# ── the gates are WIRED, not merely correct ────────────────────────────────
+# Everything above proves the gates behave. Nothing above proves anything ever
+# CALLS them: both gate calls could be deleted from every provisioner and this
+# file would stay green, shipping an image with no extension check at all —
+# the opposite of the hard-gate contract AGENTS.md states. These assertions are
+# static because the gates only ever run inside a real build, and they walk the
+# tree rather than a hand-listed set so a stack added later is covered by
+# construction. Same technique test/finalize-linux.sh uses for its own wiring.
+echo
+echo "mise-lib — every stack's provisioner actually calls the gates:"
+shopt -s nullglob
+installers=(stacks/*/scripts/*/mise-install.sh templates/stack/scripts/*/mise-install.sh.tmpl)
+if [ "${#installers[@]}" -eq 0 ]; then
+  bad "found provisioners to check" "no mise-install.sh under stacks/*/scripts/*/"
+else
+  ok "found ${#installers[@]} provisioners to check"
+fi
+for inst in "${installers[@]}"; do
+  label="${inst#stacks/}"; label="${label#templates/stack/}"
+  if grep -q 'mise-lib\.sh' "$inst"; then
+    ok "$label sources mise-lib.sh"
+  else
+    bad "$label sources mise-lib.sh" "no reference found"
+  fi
+  if grep -qE '^smoke_gate ' "$inst"; then
+    ok "$label calls smoke_gate"
+  else
+    bad "$label calls smoke_gate" "no call found — the runtime check would not run"
+  fi
+done
+# php is the stack whose README advertises a fixed extension set, so its
+# membership_gate call is part of that promise rather than optional.
+for inst in stacks/php/scripts/*/mise-install.sh; do
+  if grep -qE '^membership_gate ' "$inst"; then
+    ok "${inst#stacks/} calls membership_gate"
+  else
+    bad "${inst#stacks/} calls membership_gate" "no call found — PHP extensions would go unchecked"
+  fi
+done
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
