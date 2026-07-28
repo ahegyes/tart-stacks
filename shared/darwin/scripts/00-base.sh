@@ -69,13 +69,21 @@ echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."
 # not under /opt/homebrew; installing a formula for any of them would
 # re-assert what the platform already owns. jq is already installed above.
 #
-# mysql-client, not mariadb: linux ships the CLIENT only (dnf's mariadb is
-# Fedora's client package; apt's mariadb-client is explicit), but brew's
-# mariadb formula is the full server, and mariadb-client is not a Homebrew
-# formula at all. mysql-client is the intent-preserving match — the CLI tools
-# without a server. It is keg-only (brew will not symlink it into
-# /opt/homebrew because it conflicts with mysql's client libraries), so its
-# bin/ is not on PATH by default the way the rest of this list is.
-pkg_install_optional htop mysql-client shellcheck ripgrep fd fzf bat git-delta
+# mariadb, not mysql-client: brew's mariadb formula is not keg-only, so its
+# client binaries land on /opt/homebrew/bin with no PATH change to this
+# platform's user-config.sh — mysql-client IS keg-only (confirmed via `brew
+# info mysql-client`: not symlinked into /opt/homebrew, since it conflicts
+# with mysql's client libraries), so it would install without ever putting a
+# `mysql` command on anyone's PATH, which is not the parity this list exists
+# for. Unlike dnf's mariadb (Fedora's client-only package) and apt's
+# mariadb-client, brew's mariadb formula ships the full distribution
+# (server binaries included, not just the CLI), but nothing here starts one:
+# `brew install` never launches a service on its own, and this image's whole
+# access posture is already gated on the listener surface staying :22 alone —
+# asserted at build time in 99-finalize.sh and again at runtime, on a fresh
+# clone, in script/smoke — so a mariadb server ever ending up live here is
+# exactly the failure those two checks exist to catch, not a risk this list
+# is trusting silently.
+pkg_install_optional htop mariadb shellcheck ripgrep fd fzf bat git-delta
 
 echo "==> 00-base.sh complete."
