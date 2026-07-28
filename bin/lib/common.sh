@@ -47,6 +47,34 @@ tart_vm_platform() {
   esac
 }
 
+# tart_os_platform <os-token> <os-glob> — print the platform (darwin/linux)
+# that owns an OS TOKEN, the token-side peer of tart_vm_platform: that one
+# reads an EXISTING VM's platform via `tart get`, but a caller deciding what
+# to clone has no VM yet to ask — only the token and shared/*/os. Mirrors the
+# Makefile's PLATFORM resolver (Makefile:107-112) and its reasoning: <os-glob>
+# is alphabetical, so darwin sorts before linux, and stopping at the first hit
+# would let one platform's token silently shadow another's — every glob
+# member is scanned and counted rather than short-circuited. Prints the
+# platform and returns 0 only when EXACTLY one platform's file lists the
+# token; zero matches and more than one match are both refusals, printing
+# nothing — neither is a single well-defined platform. Same "refuse rather
+# than guess" contract as tart_vm_platform: a caller MUST NOT treat a nonzero
+# return as either platform.
+tart_os_platform() {
+  local token="$1" glob="$2" f dir platform="" count=0
+  # shellcheck disable=SC2086  # deliberately unquoted: glob is a shell glob
+  # (e.g. shared/*/os) expanding to one file per platform; a literal path
+  # with no glob metacharacters expands to itself, unchanged.
+  for f in $glob; do
+    grep -qxF "$token" <(grep -vE '^[[:space:]]*(#|$)' "$f" 2>/dev/null) || continue
+    dir="${f%/*}"
+    platform="${dir##*/}"
+    count=$((count + 1))
+  done
+  [ "$count" -eq 1 ] || return 1
+  printf '%s' "$platform"
+}
+
 # tart_resolve_vm <name> [not-found-hint] — print the stored VM name for a bare
 # name or a `tart-<name>` SSH alias. The prefix is stripped unconditionally:
 # tart_valid_vm_name refuses it at create time, so no tart-stacks VM can hold a
