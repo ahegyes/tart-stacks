@@ -87,10 +87,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # macos-latest preinstalls packer; no setup-packer action needed.
       # Token avoids the 60 req/hr unauthenticated GH API limit packer hits fetching plugin tags.
+      # Per-template, not `packer init .`: both root templates declare the same
+      # top-level stack/os/ssh_username variables (each template inits clean
+      # alone), and a directory-wide init parses every *.pkr.hcl together and
+      # refuses on the duplicate variable/local definitions that produces.
+      # matrix.platform already names the one template this job cell validates.
       - name: packer init
         env:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: packer init .
+        run: packer init "${{ matrix.platform }}.pkr.hcl"
       # packer validate stat()s file provisioner source paths; stub the pubkey so validate passes.
       - name: stub SSH pubkey for validate
         run: mkdir -p ~/.ssh && touch ~/.ssh/tart-vm.pub

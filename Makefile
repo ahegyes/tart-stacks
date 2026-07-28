@@ -176,11 +176,22 @@ check-de:
 		exit 1; \
 	fi
 
-# Install the Packer plugin for the single parameterized root template (run once,
-# stack-agnostic).
+# Install the Packer plugin for every platform's root template (run once,
+# stack-agnostic). One `packer init` per *.pkr.hcl, not a single directory-wide
+# `packer init .`: every root template declares the same top-level stack/os/
+# ssh_username variables (each inits clean alone), and a directory-wide init
+# parses every *.pkr.hcl together and refuses on the resulting duplicate
+# variable/local definitions. The glob, not a hand-maintained platform list,
+# is what this loop iterates — linux.pkr.hcl and darwin.pkr.hcl are co-equal
+# root templates (see the tree layout above), so a third platform's template
+# is picked up here the same way it already is by PLATFORM (:107) and CI's
+# discover job, with no second list to drift out of sync.
 init:
 	@command -v packer >/dev/null 2>&1 || { echo "packer not installed. Run: brew install hashicorp/tap/packer"; exit 1; }
-	packer init .
+	@for f in *.pkr.hcl; do \
+		echo "==> packer init $$f"; \
+		packer init "$$f" || exit 1; \
+	done
 
 # Upstream base image for the selected OS. The linux images are published as
 # ghcr.io/cirruslabs/<os>, keyed directly off the OS token, but Cirrus
