@@ -162,11 +162,12 @@ If you add a new script to an existing stack, drop it in `stacks/<name>/scripts/
 packer validate -var stack=php -var os=fedora linux.pkr.hcl    # ~1s; catches HCL syntax errors (run from repo root)
 packer validate -var stack=php -var os=macos darwin.pkr.hcl    # same check, darwin platform
 bash -n shared/scripts/*.sh shared/linux/scripts/*.sh shared/darwin/scripts/*.sh stacks/php/scripts/*.sh stacks/php/scripts/*/*.sh
-# `git ls-files` (not a hand-maintained path list) so this always matches what
-# CI's ludeeus/action-shellcheck actually lints: every tracked script,
-# test/*.sh included — a narrower, hand-listed set of directories silently
-# drifts from CI's whole-repo scan the moment a new path is added anywhere.
-shellcheck -f gcc $(git ls-files '*.sh')
+# `make lint` is what CI runs, so local and CI coverage cannot differ. It owns
+# discovery deliberately: every host command (bin/tart-*, script/*) is
+# EXTENSIONLESS, so a `git ls-files '*.sh'` form silently skips all eight —
+# including bin/tart-up, the largest file here — while a whole-repo scan lints
+# them. It also covers the scaffold templates, with __STACK__ substituted.
+make lint
 make test                               # plain-bash test suite (test/*.sh) — mocked, no VM, what CI runs
 
 # Full rebuild (~15-20 min for PHP)

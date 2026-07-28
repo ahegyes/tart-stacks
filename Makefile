@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help setup uninstall test smoke init bootstrap build rebuild scaffold clean check-stack check-stack-token list-stacks check-os check-gui check-de
+.PHONY: help setup uninstall test lint smoke init bootstrap build rebuild scaffold clean check-stack check-stack-token list-stacks check-os check-gui check-de
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php OS=fedora`.
 STACK ?=
@@ -62,6 +62,31 @@ uninstall:
 # Run the plain-bash test suite (test/*.sh). No framework; needs only bash + jq.
 test:
 	@"$(CURDIR)/script/test"
+
+# lint — the ONE definition of what shellcheck covers, so the docs and CI
+# cannot describe different sets. A `*.sh` glob is not that set: every host
+# command (bin/tart-*, script/*) is extensionless, so a glob-based command
+# silently skips the largest and most security-relevant files in the repo while
+# a whole-repo scan lints them. Discovery here matches what such a scan finds —
+# tracked *.sh, plus tracked executables with no extension whose first line is
+# a shell shebang. Scaffold templates are linted with __STACK__ substituted,
+# since their .tmpl suffix hides them from any name-based match.
+lint:
+	@files=$$(git ls-files '*.sh'); \
+	for f in $$(git ls-files); do \
+	  case "$$f" in *.*) continue ;; esac; \
+	  [ -f "$$f" ] && [ -x "$$f" ] || continue; \
+	  if head -n1 "$$f" | grep -qE '^#! */[^ ]*/(env +)?[abk]*sh'; then files="$$files $$f"; fi; \
+	done; \
+	n=$$(printf '%s\n' $$files | grep -c .); \
+	echo "==> shellcheck: $$n tracked scripts"; \
+	shellcheck -f gcc $$files || exit 1; \
+	for t in templates/stack/scripts/*.sh.tmpl templates/stack/scripts/*/*.sh.tmpl; do \
+	  [ -e "$$t" ] || continue; \
+	  echo "==> shellcheck: $$t (__STACK__ substituted)"; \
+	  sed 's/__STACK__/x/g' "$$t" | shellcheck -f gcc - || exit 1; \
+	done; \
+	echo "lint: clean"
 
 # STACK is set and is a bare lowercase-alphanumeric token — the shared gate
 # behind check-stack (an existing stack) and scaffold (a new one). The token
