@@ -7,27 +7,34 @@
 # Two techniques keep it that way, matching precedent already on this branch:
 #
 #   1. The runtime-observable region (integrity re-check, package cache
-#      clean, the two service disables, host-key deletion, CI-artifact
-#      removal, the NOPASSWD sudo assert, the listener assert, and the
-#      manifest write) is lifted out of the SHIPPED script with awk — same
-#      technique test/base-darwin.sh uses — and run for real against a
-#      synthetic root via TART_ROOT, with every privileged/system command
-#      (launchctl, netstat, csrutil, sw_vers) PATH-mocked and its argv
-#      logged, same technique test/user-config-darwin.sh uses.
-#      assert_integrity_enforced, pkg_clean, and assert_nopasswd_sudo are
-#      stubbed exactly as test/base-darwin.sh stubs assert_release_supported
-#      / install_guest_agent, so the calls stay measurable rather than
+#      clean, the two service disables, CI-artifact removal, the NOPASSWD
+#      sudo assert, the listener assert, and the manifest write) is lifted
+#      out of the SHIPPED script with awk — same technique test/base-
+#      darwin.sh uses — and run for real against a synthetic root via
+#      TART_ROOT, with every privileged/system command (launchctl, netstat,
+#      csrutil, sw_vers) PATH-mocked and its argv logged, same technique
+#      test/user-config-darwin.sh uses. assert_integrity_enforced,
+#      pkg_clean, and assert_nopasswd_sudo are stubbed exactly as
+#      test/base-darwin.sh stubs assert_release_supported /
+#      install_guest_agent, so the calls stay measurable rather than
 #      merely present — assert_nopasswd_sudo's own accept/refuse behavior is
 #      covered directly against family-lib.sh in test/family-lib-darwin.sh,
 #      not re-tested here.
 #   2. The SSH-key-gate wiring (source the shared lib, call it with the
-#      pinned literal path, ordering relative to the key install) is NEVER
-#      executed — it is checked statically against the shipped script's text,
-#      exactly as test/finalize-linux.sh does for the linux peer. That region
-#      also writes a root-owned file and calls `install -o root`, neither of
-#      which a non-root test process can do; nothing here re-tests the
-#      gate's own accept/refuse behavior, which test/authorized-key-lib.sh
-#      already owns.
+#      pinned literal path, ordering relative to the key install) AND the
+#      host-key deletion are NEVER executed — both are checked statically
+#      against the shipped script's text, exactly as test/finalize-linux.sh
+#      does for the linux peer. That region writes a root-owned file, calls
+#      `install -o root`, and runs `sshd -t`, none of which a non-root test
+#      process can do (`sshd -t` needs to read real, root-owned host keys —
+#      confirmed empirically: as a normal user it exits "no hostkeys
+#      available" regardless of what this script did). Host-key deletion
+#      lives here, AFTER `sshd -t`, specifically because `sshd -t` loads the
+#      host keys to validate the sshd config — deleting them earlier made a
+#      real build fail at this exact step ("no hostkeys available -- exiting"),
+#      which is what the ordering check below exists to catch. Nothing here
+#      re-tests the key gate's own accept/refuse behavior, which
+#      test/authorized-key-lib.sh already owns.
 #
 # Plain bash, no framework.
 set -uo pipefail
@@ -95,6 +102,20 @@ check_order() { # <earlier-label> <earlier-line> <later-label> <later-line>
 }
 check_order "the authorized-key gate"     "$gate_line"    "the authorized_keys install" "$install_line"
 check_order "the authorized_keys install" "$install_line" "the sshd drop-in write"      "$sshd_dropin_line"
+
+# Ordering guard (fix round 3): a real build reached this script and failed
+# at the very last step — `sshd -t` exited "no hostkeys available" because
+# host-key deletion ran BEFORE it, not after. `sshd -t` loads the host keys
+# to validate the config, so it must precede their removal; this is a
+# property of the script's TEXT (the same class of check as the gate/install/
+# sshd-drop-in chain above), not something the runtime region in Part 2 can
+# catch — that region stops before this code even runs, by design (see the
+# header comment).
+echo
+echo "99-finalize (darwin) — sshd -t precedes the host-key removal it depends on:"
+sshd_t_line=$(line_re '^sshd -t$')
+host_key_rm_line=$(line_of 'ssh_host_*_key')
+check_order "sshd -t" "$sshd_t_line" "the host-key removal" "$host_key_rm_line"
 
 # Host-safety regression guard (fix round 2, item 2): the coordinator caught
 # these two staging paths unprefixed and empirically confirmed a planted
@@ -209,18 +230,17 @@ else
 fi
 
 # setup_root <dir> — the tree a real macOS guest already has before this,
-# the LAST provisioner, ever runs: host keys from first boot, the build
-# user's home (with a CI runner checkout inside it, directory-shaped), and a
-# top-level /Users/runner. Two DIFFERENT shapes for the latter across the
-# suite (directory here, a plain file in the dedicated case below) is what
-# proves the removal survives either — `rm -f` on a directory aborts under
-# set -e, which the brief's literal form would have hit on one of the two.
+# the LAST provisioner, ever runs: /etc (the manifest write's parent dir),
+# the build user's home (with a CI runner checkout inside it, directory-
+# shaped), and a top-level /Users/runner. No ssh_host_* fixtures — host-key
+# removal now lives in the never-executed region (see the header comment and
+# the ordering guard in Part 1), so nothing in Part 2 reads or removes them.
+# Two DIFFERENT shapes for /Users/runner across the suite (directory here, a
+# plain file in the dedicated case below) is what proves the removal
+# survives either — `rm -f` on a directory aborts under set -e, which the
+# brief's literal form would have hit on one of the two.
 setup_root() { # <dir> [runner-shape: dir|file]
-  install -d -m 755 "$1/etc/ssh/sshd_config.d" "$1/Users/admin/actions-runner"
-  : > "$1/etc/ssh/ssh_host_ed25519_key"
-  : > "$1/etc/ssh/ssh_host_ed25519_key.pub"
-  : > "$1/etc/ssh/ssh_host_rsa_key"
-  : > "$1/etc/ssh/ssh_host_rsa_key.pub"
+  install -d -m 755 "$1/etc" "$1/Users/admin/actions-runner"
   : > "$1/Users/admin/actions-runner/run.sh"
   if [ "${2:-dir}" = "file" ]; then
     : > "$1/Users/runner"
@@ -261,15 +281,6 @@ assert_contains "disables Screen Sharing"        "$LOGGED1" "launchctl disable s
 assert_contains "boots out Screen Sharing"        "$LOGGED1" "launchctl bootout system/com.apple.screensharing"
 assert_contains "disables the Kerberos KDC"       "$LOGGED1" "launchctl disable system/com.apple.Kerberos.kdc"
 assert_contains "boots out the Kerberos KDC"      "$LOGGED1" "launchctl bootout system/com.apple.Kerberos.kdc"
-
-echo "99-finalize (darwin) — host keys:"
-for f in ssh_host_ed25519_key ssh_host_ed25519_key.pub ssh_host_rsa_key ssh_host_rsa_key.pub; do
-  if [ ! -e "$WORK1/etc/ssh/$f" ]; then
-    ok "$f removed"
-  else
-    bad "$f removed" "still present at $WORK1/etc/ssh/$f"
-  fi
-done
 
 echo "99-finalize (darwin) — CI runner artifacts (directory shape):"
 if [ ! -e "$WORK1/Users/admin/actions-runner" ]; then ok "actions-runner directory removed"; else bad "actions-runner directory removed" "still present"; fi

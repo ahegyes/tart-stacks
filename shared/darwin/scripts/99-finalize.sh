@@ -62,15 +62,6 @@ for svc in com.apple.screensharing com.apple.Kerberos.kdc; do
   launchctl bootout  "system/${svc}" 2>/dev/null || true
 done
 
-# macOS regenerates host keys itself: sshd runs via
-# Program=/usr/libexec/sshd-keygen-wrapper under inetdCompatibility, which
-# generates a missing set on the next connection and leaves it alone
-# thereafter. So a clone mints its own keys with no unit, no marker file, and
-# no ordering race against a socket-activated sshd — which could not express
-# "before sshd" anyway, since launchd has no Before=.
-echo "==> Removing host keys so each clone generates its own on first connect..."
-rm -f "${TART_ROOT}"/etc/ssh/ssh_host_*_key "${TART_ROOT}"/etc/ssh/ssh_host_*_key.pub
-
 # The base is a CI image; a dev VM inherits Actions-runner install artifacts
 # it will never use: ~/actions-runner (the build user's own runner checkout,
 # a directory) and /Users/runner — measured: a SYMLINK to /Users/admin, not a
@@ -177,6 +168,25 @@ PermitRootLogin no
 # socket on each session instead of failing if a stale one exists.
 StreamLocalBindUnlink yes
 EOF
+# sshd -t LOADS the host keys to validate the config — measured on a real
+# build: with them already gone it exits "no hostkeys available" and fails
+# the build at this, the last, step. That is why host-key removal below is
+# positioned AFTER this line, not simplified back above it alongside the
+# other service teardown near the top of this script.
 sshd -t
+
+# macOS regenerates host keys itself: sshd runs via
+# Program=/usr/libexec/sshd-keygen-wrapper under inetdCompatibility, which
+# generates a missing set on the next connection and leaves it alone
+# thereafter. So a clone mints its own keys with no unit, no marker file, and
+# no ordering race against a socket-activated sshd — which could not express
+# "before sshd" anyway, since launchd has no Before=.
+#
+# Positioned LAST, after sshd -t above (see the comment there): removing the
+# keys any earlier makes that validation fail. Packer disconnects immediately
+# after this script returns, so nothing downstream of this point depends on
+# the keys being gone yet.
+echo "==> Removing host keys so each clone generates its own on first connect..."
+rm -f "${TART_ROOT}"/etc/ssh/ssh_host_*_key "${TART_ROOT}"/etc/ssh/ssh_host_*_key.pub
 
 echo "==> 99-finalize.sh complete. Key authorized, remote-access services disabled, password auth disabled via sshd, host keys cleared, NOPASSWD sudo verified, listener surface verified."
