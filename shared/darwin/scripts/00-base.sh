@@ -54,6 +54,28 @@ echo "==> Pre-creating ~/.config/mise/ for the mise.toml upload..."
 install -d -o "$TART_BUILD_USER" -g staff "/Users/${TART_BUILD_USER}/.config/mise"
 
 echo "==> Installing core tooling..."
-pkg_install zellij jq
+# zellij has no macOS package peer (installed here since darwin skips
+# shared/linux/scripts/mise.sh, the linux platform's zellij owner). wget and gh
+# are both in the linux platform's core set (shared/linux/scripts/00-base.sh's
+# `core=`) but absent from a base macOS install — curl, git, nano, unzip, tar,
+# and a C toolchain all ship with the Cirrus base already; wget and gh do not.
+pkg_install zellij jq wget gh
+
+echo "==> Installing diagnostics + quality-of-life tools (tolerate missing)..."
+# Mirrors the linux platform's qol set (shared/linux/scripts/00-base.sh) minus
+# what macOS already ships as part of the base system rather than a package:
+# lsof (/usr/sbin/lsof), nc (/usr/bin/nc — linux's nmap-ncat/netcat-openbsd),
+# and dig (/usr/bin/dig — linux's bind-utils/bind9-dnsutils) are all OS-shipped,
+# not under /opt/homebrew; installing a formula for any of them would
+# re-assert what the platform already owns. jq is already installed above.
+#
+# mysql-client, not mariadb: linux ships the CLIENT only (dnf's mariadb is
+# Fedora's client package; apt's mariadb-client is explicit), but brew's
+# mariadb formula is the full server, and mariadb-client is not a Homebrew
+# formula at all. mysql-client is the intent-preserving match — the CLI tools
+# without a server. It is keg-only (brew will not symlink it into
+# /opt/homebrew because it conflicts with mysql's client libraries), so its
+# bin/ is not on PATH by default the way the rest of this list is.
+pkg_install_optional htop mysql-client shellcheck ripgrep fd fzf bat git-delta
 
 echo "==> 00-base.sh complete."
