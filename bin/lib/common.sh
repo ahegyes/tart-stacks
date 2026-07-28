@@ -21,6 +21,22 @@ tart_vm_state() {
   tart list --format json | jq -r --arg name "$1" '.[] | select(.Name==$name and .Source=="local") | .State'
 }
 
+# tart_vm_platform <name> — print the VM's platform as Tart itself reports it
+# ("darwin" or "linux"), never the `<os>-<stack>` naming convention this
+# repo's own images follow: that convention is a naming scheme this repo
+# maintains, while `tart get`'s OS field is a property of the VM Tart
+# actually built (confirmed empirically: `tart get macos-php --format json`
+# answers `"OS":"darwin"`, `tart get fedora-php --format json` answers
+# `"OS":"linux"`). Anything other than the literal "darwin" — a missing
+# field, an unrecognized value, a failed `tart get` — falls safe onto linux,
+# the platform every dev VM in this repo was until darwin existed.
+tart_vm_platform() {
+  case "$(tart get "$1" --format json 2>/dev/null | jq -r '.OS // empty' 2>/dev/null)" in
+    darwin) printf 'darwin' ;;
+    *)      printf 'linux'  ;;
+  esac
+}
+
 # tart_resolve_vm <name> [not-found-hint] — print the stored VM name for a bare
 # name or a `tart-<name>` SSH alias. The prefix is stripped unconditionally:
 # tart_valid_vm_name refuses it at create time, so no tart-stacks VM can hold a
