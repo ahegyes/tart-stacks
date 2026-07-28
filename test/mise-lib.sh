@@ -179,18 +179,21 @@ assert_contains "the warning really does carry the name" "$(php_m_warning_pollut
 echo
 echo "mise-lib — every stack's provisioner actually calls the gates:"
 shopt -s nullglob
-installers=(stacks/*/scripts/*/mise-install.sh templates/stack/scripts/*/mise-install.sh.tmpl)
+installers=("$REPO"/stacks/*/scripts/*/mise-install.sh "$REPO"/templates/stack/scripts/*/mise-install.sh.tmpl)
 if [ "${#installers[@]}" -eq 0 ]; then
   bad "found provisioners to check" "no mise-install.sh under stacks/*/scripts/*/"
 else
   ok "found ${#installers[@]} provisioners to check"
 fi
 for inst in "${installers[@]}"; do
-  label="${inst#stacks/}"; label="${label#templates/stack/}"
-  if grep -q 'mise-lib\.sh' "$inst"; then
+  label="${inst#"$REPO"/}"; label="${label#stacks/}"; label="${label#templates/stack/}"
+  # Anchored to the executable line: every installer also NAMES /tmp/mise-lib.sh
+  # in comments, so an unanchored match would stay green with the `source`
+  # deleted — the exact wiring this check exists to pin.
+  if grep -qE '^source /tmp/mise-lib\.sh' "$inst"; then
     ok "$label sources mise-lib.sh"
   else
-    bad "$label sources mise-lib.sh" "no reference found"
+    bad "$label sources mise-lib.sh" "no executable 'source /tmp/mise-lib.sh' line found"
   fi
   if grep -qE '^smoke_gate ' "$inst"; then
     ok "$label calls smoke_gate"
@@ -200,11 +203,11 @@ for inst in "${installers[@]}"; do
 done
 # php is the stack whose README advertises a fixed extension set, so its
 # membership_gate call is part of that promise rather than optional.
-for inst in stacks/php/scripts/*/mise-install.sh; do
+for inst in "$REPO"/stacks/php/scripts/*/mise-install.sh; do
   if grep -qE '^membership_gate ' "$inst"; then
-    ok "${inst#stacks/} calls membership_gate"
+    ok "${inst#"$REPO"/stacks/} calls membership_gate"
   else
-    bad "${inst#stacks/} calls membership_gate" "no call found — PHP extensions would go unchecked"
+    bad "${inst#"$REPO"/stacks/} calls membership_gate" "no call found — PHP extensions would go unchecked"
   fi
 done
 
