@@ -568,7 +568,7 @@ darwin_vnc_fail_closed() {
   if tart stop "$VM" >/dev/null 2>&1; then
     echo "$prog: '$VM' stopped — its VNC listener is closed." >&2
   else
-    echo "$prog: FAILED to stop VM '$VM' — its VNC listener may still be reachable at $(darwin_vnc_nonloopback | tr '\n' ' ')port $DARWIN_VNC_PORT." >&2
+    echo "$prog: FAILED to stop VM '$VM' — its VNC listener may still be reachable at $(darwin_vnc_nonloopback | tr '\n' ' ')port ${DARWIN_VNC_PORT:-<unknown>}." >&2
   fi
 }
 
@@ -672,9 +672,10 @@ elif [ "$STATE" = "stopped" ]; then
   if [ "$PLATFORM" = "darwin" ] && [ "$GUI_MODE" = "vnc" ]; then
     case " ${NETPOLICY_ARGS[*]-} " in
       *" --net-softnet"*)
-        case "$(tart --version 2>/dev/null)" in
+        tart_version="$(tart --version 2>/dev/null)"
+        case "$tart_version" in
           2.34.*)
-            echo "$prog: refusing '--gui=vnc' for '$VM': tart $(tart --version) discards its own VNC URL when run under a softnet net-policy (cirruslabs/tart#1287 closes tart's stdout), so the listener could never be located or verified. Boot headless, temporarily empty $NETPOLICY_CONFIG, or use a tart release without the regression." >&2
+            echo "$prog: refusing '--gui=vnc' for '$VM': tart $tart_version discards its own VNC URL when run under a softnet net-policy (cirruslabs/tart#1287 closes tart's stdout), so the listener could never be located or verified. Boot headless, temporarily empty $NETPOLICY_CONFIG, or use a tart release without the regression." >&2
             exit 1 ;;
         esac ;;
     esac
@@ -816,12 +817,14 @@ for _ in $(seq 1 30); do
         fi ;;
       vnc)
         if [ "$PLATFORM" = "darwin" ]; then
-          # Both failures below stop the VM rather than leaving it up. `tart run`
-          # was already given --vnc-experimental, so the listener binds whether
-          # or not this process ever saw the URL — and without the URL there is
-          # no port to classify, so an unread listener is exactly the state
-          # the bind check exists to refuse. Leaving the VM running here would
-          # strand a wildcard-bound VNC console that nothing had checked.
+          # EVERY failure on this path stops the VM rather than leaving it up.
+          # `tart run` was already given --vnc-experimental, so the listener
+          # binds whether or not this process ever saw the URL — and a
+          # listener nothing classified is exactly the state the bind check
+          # exists to refuse. That includes the probe timeout below: a
+          # wildcard bind accepts loopback connects too, so the only way the
+          # probe times out is a socket not bound YET — the late bind would
+          # arrive right after this process stopped watching.
           if ! darwin_vnc_wait_for_url; then
             echo "$prog: '$VM' vnc gui activation failed: Tart never printed a VNC URL to this boot's log within 90 s, so its VNC listener could not be located or checked." >&2
             darwin_vnc_fail_closed
@@ -833,7 +836,8 @@ for _ in $(seq 1 30); do
             exit 1
           fi
           if ! darwin_vnc_wait_for_listener; then
-            echo "$prog: '$VM' vnc gui activation failed: no listener came up on $DARWIN_VNC_HOST:$DARWIN_VNC_PORT within 30 s; the VM remains running and reachable over ssh." >&2
+            echo "$prog: '$VM' vnc gui activation failed: no listener came up on $DARWIN_VNC_HOST:$DARWIN_VNC_PORT within 30 s — Tart already printed the URL, so its listener could still bind after this wait, unclassified." >&2
+            darwin_vnc_fail_closed
             exit 1
           fi
           if ! darwin_vnc_listener_state; then
@@ -844,9 +848,9 @@ for _ in $(seq 1 30); do
           vnc_exposed=$(darwin_vnc_nonloopback)
           if [ -n "$vnc_exposed" ]; then
             if [ "${TART_VNC_ALLOW_NONLOOPBACK:-}" = 1 ]; then
-              echo "$prog: warning: '$VM' VNC is bound to $(printf '%s' "$vnc_exposed" | tr '\n' ' ')— reachable from outside this host, not just loopback. Continuing because TART_VNC_ALLOW_NONLOOPBACK=1. The session is protected only by the password in Tart's URL." >&2
+              echo "$prog: warning: '$VM' VNC is bound to $(printf '%s' "$vnc_exposed" | tr '\n' ' ') — reachable from outside this host, not just loopback. Continuing because TART_VNC_ALLOW_NONLOOPBACK=1. The session is protected only by the password in Tart's URL." >&2
             else
-              echo "$prog: '$VM' vnc gui activation failed: Tart advertised $DARWIN_VNC_HOST but bound the listener to $(printf '%s' "$vnc_exposed" | tr '\n' ' ')— the VNC console is reachable from outside this host, protected only by the password in Tart's URL. Set TART_VNC_ALLOW_NONLOOPBACK=1 to accept that on a trusted network." >&2
+              echo "$prog: '$VM' vnc gui activation failed: Tart advertised $DARWIN_VNC_HOST but bound the listener to $(printf '%s' "$vnc_exposed" | tr '\n' ' ') — the VNC console is reachable from outside this host, protected only by the password in Tart's URL. Set TART_VNC_ALLOW_NONLOOPBACK=1 to accept that on a trusted network." >&2
               darwin_vnc_fail_closed
               exit 1
             fi

@@ -820,6 +820,7 @@ MOCK_PLATFORM=darwin MOCK_VNC_URL="vnc://onlyhost-no-port" MOCK_SLEEP_DELAY=0.01
 assert_rc       "darwin vnc — malformed URL from Tart → exit 1" 1
 assert_contains "darwin vnc — malformed-URL diagnostic names the failure" "$(cat "$ERR")" "could not parse Tart's VNC URL"
 assert_absent   "darwin vnc — malformed URL never reaches the listener probe" "$(cat "$CALLS")" "nc -z -G 3 127.0.0.1"
+assert_contains "darwin vnc — malformed URL stops the VM rather than leaving it up" "$(cat "$CALLS")" "tart stop app-a"
 
 # must-fail: the URL parses, but the host port never actually accepts a
 # connection — proves the verify is a REAL probe, not a trust of the print.
@@ -828,6 +829,10 @@ MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 MOCK_NC_VNC_RC=1 MOCK_SLEEP_DELAY=0.01 
 assert_rc       "darwin vnc — host port never accepts → exit 1" 1
 assert_contains "darwin vnc — listener-timeout diagnostic names host:port" "$(cat "$ERR")" "127.0.0.1:61234"
 assert_eq       "darwin vnc — listener probe retries its full 30 intervals" 30 "$(grep -c '^nc -z -G 3 127.0.0.1 61234$' "$CALLS")"
+# Fail CLOSED here too: the URL was printed, so the listener can still bind
+# right after the 30 s probe window closes — a wildcard bind answers loopback
+# connects, so a timed-out probe means "not bound YET", never "bound safely".
+assert_contains "darwin vnc — listener timeout stops the VM rather than leaving it up" "$(cat "$CALLS")" "tart stop app-a"
 # the unrelated :22 readiness probe must still have succeeded on its own —
 # otherwise this failure would be indistinguishable from the boot never
 # coming up at all.
