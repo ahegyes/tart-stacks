@@ -155,6 +155,30 @@ esac
 NC
 chmod +x "$MOCKBIN/nc"
 
+# netstat — the HOST listener table darwin_vnc_listener_state classifies. Rows
+# are emitted in real `netstat -an -p tcp` column shape (captured from macOS 26:
+# address and port joined by a dot, IPv6 unbracketed) because the parser keys
+# off $4 and $NF. MOCK_NETSTAT_VNC_BIND lists the bind addresses to report for
+# the VNC port; the :22 row is always present so the table is never empty for
+# the wrong reason.
+cat > "$MOCKBIN/netstat" <<'NS'
+#!/usr/bin/env bash
+echo "netstat $*" >> "$CALLS"
+[ "${MOCK_NETSTAT_RC:-0}" -eq 0 ] || exit "${MOCK_NETSTAT_RC}"
+# The bind list is split on whitespace deliberately (several addresses per
+# case), which leaves it subject to globbing — and `*` is one of the exact
+# values under test, so without this it would expand to the working directory.
+set -f
+echo "Active Internet connections (including servers)"
+echo "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)"
+printf 'tcp4       0      0  *.22                   *.*                    LISTEN\n'
+for a in ${MOCK_NETSTAT_VNC_BIND-127.0.0.1}; do
+  printf 'tcp4       0      0  %s.%s                 *.*                    LISTEN\n' \
+    "$a" "${MOCK_VNC_PORT:-61234}"
+done
+NS
+chmod +x "$MOCKBIN/netstat"
+
 # VNC listener polling waits one second in production. Keep the characterization
 # suite instant by default while recording each requested wait so
 # immediate-failure and timeout behavior can be distinguished without
@@ -238,7 +262,10 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
     MOCK_TART_FAIL_MATCH="${MOCK_TART_FAIL_MATCH-}" \
     MOCK_TART_VNC_PRINT="${MOCK_TART_VNC_PRINT-1}" MOCK_VNC_URL="${MOCK_VNC_URL-}" MOCK_VNC_PORT="${MOCK_VNC_PORT-61234}" \
     MOCK_SLEEP_DELAY="${MOCK_SLEEP_DELAY-0}" \
-    TART_NC_BIN="$MOCKBIN/nc" TART_NETPOLICY="$netpolicy" TART_MOUNTS="$mounts" TART_GUI="$gui" \
+    MOCK_NETSTAT_VNC_BIND="${MOCK_NETSTAT_VNC_BIND-127.0.0.1}" MOCK_NETSTAT_RC="${MOCK_NETSTAT_RC-0}" \
+    TART_VNC_ALLOW_NONLOOPBACK="${TART_VNC_ALLOW_NONLOOPBACK-}" \
+    TART_NC_BIN="$MOCKBIN/nc" TART_NETSTAT_BIN="$MOCKBIN/netstat" \
+    TART_NETPOLICY="$netpolicy" TART_MOUNTS="$mounts" TART_GUI="$gui" \
     TART_LOG_DIR="${RUNUP_LOG_DIR:-$WORK/logs}" \
     bash "$BIN/tart-up" "$@" >/dev/null 2>"$ERR" || rc=$?
   # The stopped-VM `tart run` is backgrounded (& disown), so wait for the mock to
@@ -719,6 +746,42 @@ assert_contains "darwin vnc → verifies the HOST listener Tart printed" "$calls
 assert_contains "darwin vnc → prints the ready message with Tart's own URL" "$(cat "$ERR")" "VNC ready for 'app-a'. Point a VNC client at vnc://:word-word-word-word@127.0.0.1:61234"
 assert_absent   "darwin vnc → never touches the guest-side vnc unit" "$calls" "tart-stacks-vnc.service"
 assert_absent   "darwin vnc → never probes a guest listener table"  "$calls" "ss -tln"
+assert_contains "darwin vnc → classifies the HOST bind, not Tart's advertised URL" "$calls" "netstat -an -p tcp"
+
+# The bind address is the whole point of the classifier: Tart advertises
+# 127.0.0.1 in every one of these cases, so a check that trusted the URL would
+# pass all of them. Each row below keeps MOCK_VNC_URL at its 127.0.0.1 default
+# and varies only what the host listener table actually reports.
+for bind in "*" "0.0.0.0" "192.168.1.9" "fe80::1"; do
+  MOCK_PLATFORM=darwin MOCK_NETSTAT_VNC_BIND="$bind" MOCK_SLEEP_DELAY=0.01 \
+    runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+  assert_rc       "darwin vnc bound to '$bind' → activation fails" 1
+  assert_contains "darwin vnc bound to '$bind' → names the real bind" "$(cat "$ERR")" "$bind"
+  assert_contains "darwin vnc bound to '$bind' → stops the VM (fail closed)" "$(cat "$CALLS")" "tart stop app-a"
+done
+# IPv6 loopback is loopback: it must NOT be refused, or the classifier is just
+# an allowlist of one spelling.
+MOCK_PLATFORM=darwin MOCK_NETSTAT_VNC_BIND="::1" MOCK_SLEEP_DELAY=0.01 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc "darwin vnc bound to '::1' → accepted, loopback either family" 0
+
+# A loopback row alongside an exposed one is still exposed.
+MOCK_PLATFORM=darwin MOCK_NETSTAT_VNC_BIND="127.0.0.1 192.168.1.9" MOCK_SLEEP_DELAY=0.01 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc "darwin vnc loopback PLUS an exposed bind → still refused" 1
+
+# An unreadable listener table is not evidence of safety.
+MOCK_PLATFORM=darwin MOCK_NETSTAT_RC=1 MOCK_SLEEP_DELAY=0.01 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "darwin vnc unreadable listener table → fails closed" 1
+assert_contains "darwin vnc unreadable listener table → says the bind is unverified" "$(cat "$ERR")" "unverified"
+
+# The documented escape hatch: exposure is accepted, but never silently.
+TART_VNC_ALLOW_NONLOOPBACK=1 MOCK_PLATFORM=darwin MOCK_NETSTAT_VNC_BIND="*" MOCK_SLEEP_DELAY=0.01 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "darwin vnc override → proceeds" 0
+assert_contains "darwin vnc override → still warns it is reachable off-host" "$(cat "$ERR")" "reachable from outside this host"
+assert_absent   "darwin vnc override → does not stop the VM" "$(cat "$CALLS")" "tart stop"
 
 # must-fail: Tart never prints a URL (crashed before the framework's VNC
 # server bound a port) — activation fails closed rather than reporting

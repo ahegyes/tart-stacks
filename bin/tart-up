@@ -77,6 +77,11 @@ systemd unit on 127.0.0.1:5901 (tunnel with ssh -L). A darwin guest has no
 guest-side VNC listener at all — Tart's own --vnc-experimental serves it from
 the HOST, on an ephemeral per-boot port; point a VNC client straight at the
 vnc:// URL tart-up prints once it has verified that port is live.
+On darwin the bind address is verified against the host listener table, not
+taken from Tart's URL: current Tart advertises 127.0.0.1 while binding the
+wildcard, which is reachable from the whole network. A non-loopback bind stops
+the VM rather than reporting success. Set TART_VNC_ALLOW_NONLOOPBACK=1 to
+accept it (a warning still prints) when the network is trusted.
 EOF
 }
 
@@ -493,15 +498,11 @@ darwin_vnc_parse_url() {
   [ -n "$DARWIN_VNC_HOST" ]
 }
 
-# darwin_vnc_wait_for_listener — verify the HOST port Tart printed actually
-# accepts a connection before reporting success: the same fail-closed shape
-# the linux vnc path applies via vnc_wait_for_loopback (probe rather than
-# trust the advertised state), but on a HOST port instead of a guest one, and
-# reachability only — unlike vnc_listener_state, this never inspects the bind
-# address, so it trusts DARWIN_VNC_HOST rather than classifying it. Safe today
-# because Tart hardcodes the VNC listener to 127.0.0.1. Tart's own print can
-# race ahead of the framework's server actually being ready to accept a
-# connection.
+# darwin_vnc_wait_for_listener — wait until the HOST port Tart printed accepts
+# a connection: Tart's own print can race ahead of Virtualization.Framework's
+# server actually being ready. Readiness ONLY — it dials the address Tart
+# advertised, so it can say the server is up but nothing about where the socket
+# is bound. darwin_vnc_listener_state below is what answers that.
 darwin_vnc_wait_for_listener() {
   local attempt
   for ((attempt = 1; attempt <= 30; attempt++)); do
@@ -509,6 +510,56 @@ darwin_vnc_wait_for_listener() {
     sleep 1
   done
   return 1
+}
+
+# darwin_vnc_listener_state — classify the HOST bind address of the port Tart
+# advertised. The peer of vnc_listener_state's guest-side check, and required
+# for the same reason: an advertised address is not evidence of a bind. Tart
+# prints `vnc://…@127.0.0.1:<port>` but binds the wildcard — measured on tart
+# 2.34.0, the socket is `tcp46 *.<port>` and answers RFB on the host's LAN
+# address — so a probe of the advertised host (above) succeeds either way and
+# cannot distinguish loopback from world-reachable. Only the kernel's own
+# table can.
+#
+# Sets DARWIN_VNC_BINDS to the distinct bind addresses found for that port.
+# Reads the same `netstat -an -p tcp` shape 99-finalize.sh parses, in macOS's
+# unbracketed spelling (`127.0.0.1`, `::1`, `*`) — not ss's `[::1]` form the
+# linux classifier matches; each parses its own tool's real output.
+NETSTAT_BIN="${TART_NETSTAT_BIN:-/usr/sbin/netstat}"
+DARWIN_VNC_BINDS=""
+darwin_vnc_listener_state() {
+  local table
+  DARWIN_VNC_BINDS=""
+  table=$("$NETSTAT_BIN" -an -p tcp 2>/dev/null) || return 1
+  # Only the LAST dot separates the port: an IPv4 address carries three of its
+  # own, and an IPv6 one carries none but may embed colons.
+  DARWIN_VNC_BINDS=$(printf '%s\n' "$table" | awk -v port="$DARWIN_VNC_PORT" '
+    $NF == "LISTEN" {
+      addr = $4; p = $4
+      sub(/.*\./, "", p)
+      if (p != port) next
+      sub(/\.[^.]*$/, "", addr)
+      print addr
+    }' | sort -u)
+  [ -n "$DARWIN_VNC_BINDS" ]
+}
+
+# darwin_vnc_nonloopback — the subset of DARWIN_VNC_BINDS reachable from off
+# this host. An allowlist, deliberately: anything not recognised as loopback
+# counts as exposed, so a spelling this has never seen fails closed.
+darwin_vnc_nonloopback() {
+  printf '%s\n' "$DARWIN_VNC_BINDS" | awk '$0 != "" && $0 != "127.0.0.1" && $0 != "::1"'
+}
+
+# darwin_vnc_fail_closed — the VNC server is the host `tart run` process, so
+# unlike the linux path (which stops a guest-side unit) there is nothing to
+# switch off short of stopping the VM.
+darwin_vnc_fail_closed() {
+  if tart stop "$VM" >/dev/null 2>&1; then
+    echo "$prog: '$VM' stopped — its VNC listener is closed." >&2
+  else
+    echo "$prog: FAILED to stop VM '$VM' — its VNC listener may still be reachable at $(darwin_vnc_nonloopback | tr '\n' ' ')port $DARWIN_VNC_PORT." >&2
+  fi
 }
 
 # Resolve this VM's net-policy + mounts + gui once (bare name for the per-VM
@@ -743,6 +794,21 @@ for _ in $(seq 1 30); do
           if ! darwin_vnc_wait_for_listener; then
             echo "$prog: '$VM' vnc gui activation failed: no listener came up on $DARWIN_VNC_HOST:$DARWIN_VNC_PORT within 30 s; the VM remains running and reachable over ssh." >&2
             exit 1
+          fi
+          if ! darwin_vnc_listener_state; then
+            echo "$prog: '$VM' vnc gui activation failed: could not read the host TCP listener table for port $DARWIN_VNC_PORT, so the VNC socket's bind address is unverified." >&2
+            darwin_vnc_fail_closed
+            exit 1
+          fi
+          vnc_exposed=$(darwin_vnc_nonloopback)
+          if [ -n "$vnc_exposed" ]; then
+            if [ "${TART_VNC_ALLOW_NONLOOPBACK:-}" = 1 ]; then
+              echo "$prog: warning: '$VM' VNC is bound to $(printf '%s' "$vnc_exposed" | tr '\n' ' ')— reachable from outside this host, not just loopback. Continuing because TART_VNC_ALLOW_NONLOOPBACK=1. The session is protected only by the password in Tart's URL." >&2
+            else
+              echo "$prog: '$VM' vnc gui activation failed: Tart advertised $DARWIN_VNC_HOST but bound the listener to $(printf '%s' "$vnc_exposed" | tr '\n' ' ')— the VNC console is reachable from outside this host, protected only by the password in Tart's URL. Set TART_VNC_ALLOW_NONLOOPBACK=1 to accept that on a trusted network." >&2
+              darwin_vnc_fail_closed
+              exit 1
+            fi
           fi
           echo "$prog: VNC ready for '$VM'. Point a VNC client at $DARWIN_VNC_URL" >&2
         else
