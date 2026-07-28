@@ -1,7 +1,17 @@
-# GUI layer — image contract
+# GUI layer — image contract (linux only)
+
+This contract is **linux-platform-specific**: it describes the optional desktop
+layer that `linux.pkr.hcl` can bake into a linux image
+(`make build STACK=<stack> OS=<os> GUI=1 DE=<de>`, `OS=` one of `shared/linux/os`).
+`darwin.pkr.hcl` has no GUI-layer equivalent and nothing here applies to a
+`macos-<stack>` image — the macOS desktop is intrinsic to every darwin build
+already, so there is no DE axis to bake and `make` refuses `GUI=1` on that
+platform outright. A darwin VM's boot-time GUI activation (`tart-up
+--gui=vnc|window`) is a different, host-side mechanism documented in the
+top-level [README.md](../../../README.md#macos-gui-activation), not this file.
 
 The optional desktop layer (`make build STACK=<stack> OS=<os> GUI=1 DE=<de>`)
-bakes a desktop environment into any stack image at build time. This file is the
+bakes a desktop environment into any linux stack image at build time. This file is the
 **contract between the image and whatever boots it** (a human, or an engine that
 drives VMs): everything a consumer may rely on is listed here, and nothing else
 about the desktop install is stable API. Provisioning lives in

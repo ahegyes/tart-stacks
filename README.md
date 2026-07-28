@@ -2,7 +2,7 @@
 
 [![validate](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml/badge.svg)](https://github.com/ahegyes/tart-stacks/actions/workflows/validate.yml)
 
-Multi-OS, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. A single parameterized Packer template builds any stack on any supported operating system (Fedora, Ubuntu, Debian — see `shared/linux/os`), producing a `<os>-<stack>` image. Any stack can additionally be built as a **GUI flavor** (`GUI=1 DE=kde|gnome|xfce`) — a desktop environment + loopback-only VNC layer baked on top, producing `<os>-<stack>-<de>`; the boot contract lives in [shared/linux/gui/README.md](./shared/linux/gui/README.md). Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
+Multi-OS, multi-stack collection of [Tart](https://tart.run/) base images for development VMs on Apple Silicon. Two platform-specific, parameterized Packer templates — `linux.pkr.hcl` and `darwin.pkr.hcl` — build any stack on any supported operating system, producing a `<os>-<stack>` image. On linux, any stack can additionally be built as a **GUI flavor** (`GUI=1 DE=kde|gnome|xfce`) — a desktop environment + loopback-only VNC layer baked on top, producing `<os>-<stack>-<de>`; the boot contract lives in [shared/linux/gui/README.md](./shared/linux/gui/README.md). Darwin has no GUI-flavor axis — the macOS desktop is intrinsic to every darwin image already, so `tart-up --gui=window|vnc` works there directly (see [macOS GUI activation](#macos-gui-activation) below). Designed as per-project clone sources — each project gets its own VM cloned from the relevant base; rebuild and destroy at will.
 
 ## Stacks
 
@@ -11,7 +11,14 @@ Multi-OS, multi-stack collection of [Tart](https://tart.run/) base images for de
 | `php` | `<os>-php` | PHP development (PHP 8.5, Composer, PECL, Node LTS) | [stacks/php/](./stacks/php/README.md) |
 | `jvm` | `<os>-jvm` | JVM development (Temurin 25 LTS, Maven, Gradle, sbt, Scala CLI, Kotlin, uv, Node LTS) | [stacks/jvm/](./stacks/jvm/README.md) |
 
-`<os>` is the OS token (e.g. `fedora`). `shared/linux/os` lists the supported values.
+Every stack builds on every supported OS, on whichever platform owns that OS token:
+
+| Platform | Template | OS tokens (`shared/<platform>/os`) | GUI flavor |
+|---|---|---|---|
+| linux | `linux.pkr.hcl` | `fedora`, `ubuntu`, `debian` | yes — `GUI=1 DE=kde\|gnome\|xfce` |
+| darwin | `darwin.pkr.hcl` | `macos` | no — the desktop is intrinsic; see [macOS GUI activation](#macos-gui-activation) |
+
+`<os>` is the OS token (e.g. `fedora`, `macos`). The supported set is the union of `shared/linux/os` and `shared/darwin/os`; `make` derives which template a given `OS=` targets by asking which file lists it.
 
 All stacks share a common base: mise + zellij + standard dev utilities, wired through a package-family abstraction layer (`shared/linux/scripts/family-lib.sh`) that handles dnf (Fedora) and apt (Debian/Ubuntu) package families. Stack-specific additions (language runtimes, build deps, runtime extensions) live under each stack's directory. The base stays a clean runtime substrate — layer project- or org-specific tooling onto clones rather than baking it into the image.
 
@@ -194,8 +201,9 @@ See Tart's `--net-*` documentation for the flag vocabulary.
 
 ```bash
 make init                             # one-time: installs the Tart Packer plugin
-make build STACK=php OS=fedora        # bootstrap + build (~15-20 min for PHP — compiles from source)
-tart list                             # confirm fedora-php is present
+make build STACK=php OS=fedora        # linux: bootstrap + build (~15-20 min for PHP — compiles from source)
+make build STACK=php OS=macos         # darwin: same, from the darwin.pkr.hcl pipeline
+tart list                             # confirm fedora-php (or macos-php) is present
 ```
 
 `make build` chains `make bootstrap` first (pulls `ghcr.io/cirruslabs/<os>:latest`, refreshes the local `<os>-base` image), then runs Packer through the stack's provisioner chain.
@@ -206,13 +214,25 @@ tart list                             # confirm fedora-php is present
 
 **Pin a base image tag:** `IMAGE_TAG=42 make bootstrap OS=fedora`. Cirrus publishes `latest` and version-pinned tags per OS.
 
-**GUI flavor.** Add `GUI=1` (and optionally `DE=kde|gnome|xfce`, default `kde` — see `shared/linux/desktops`) to bake a desktop environment, display manager, and a loopback-only VNC server on top of the same stack:
+**GUI flavor (linux only).** Add `GUI=1` (and optionally `DE=kde|gnome|xfce`, default `kde` — see `shared/linux/desktops`) to bake a desktop environment, display manager, and a loopback-only VNC server on top of the same stack:
 
 ```bash
 make build STACK=php OS=fedora GUI=1 DE=kde    # builds fedora-php-kde (~+10 min, ~+2 GB)
 ```
 
-The image still boots headless by default; a boot opts into the desktop by starting `tart-stacks-vnc.service` (VNC on `127.0.0.1:5901`, reach it through `ssh -L 5901:127.0.0.1:5901 tart-<vm>`) or isolating `graphical.target` — the latter shows a window only when the VM was launched with one (plain `tart run <vm>`, or `tart-up` and the `ssh` auto-start when the VM's entry in the gui config selects `window` — they boot `--no-graphics` otherwise, and VNC works either way). Autologin is baked (the image locks the account password, so a greeter would be a dead end), and the desktop deliberately changes nothing about the network posture. The full contract — boot modes, VNC surface, support matrix (every cell but fedora × gnome, which Fedora's Wayland-only GNOME rules out) — is [shared/linux/gui/README.md](./shared/linux/gui/README.md).
+`make` refuses `GUI=1` on a darwin `OS=` outright — the macOS desktop is intrinsic, so there is no DE axis to bake there; see [macOS GUI activation](#macos-gui-activation) below for the darwin equivalent.
+
+The image still boots headless by default; a boot opts into the desktop by starting `tart-stacks-vnc.service` (VNC on `127.0.0.1:5901`, reach it through `ssh -L 5901:127.0.0.1:5901 tart-<vm>`) or isolating `graphical.target` — the latter shows a window only when the VM was launched with one (plain `tart run <vm>`, or `tart-up` and the `ssh` auto-start when the VM's entry in the gui config selects `window` — they boot `--no-graphics` otherwise, and VNC works either way). Autologin is baked (**on linux** the image locks the account password, so a greeter would be a dead end — darwin never locks it; see [macOS GUI activation](#macos-gui-activation)), and the desktop deliberately changes nothing about the network posture. The full contract — boot modes, VNC surface, support matrix (every cell but fedora × gnome, which Fedora's Wayland-only GNOME rules out) — is [shared/linux/gui/README.md](./shared/linux/gui/README.md).
+
+#### macOS GUI activation
+
+Darwin has no baked GUI flavor and no guest-side VNC listener — every `macos-<stack>` image already has the macOS desktop, so `bin/tart-up` activates it directly against Tart itself, by a genuinely different mechanism than the linux path above:
+
+- **`tart-up --gui=window <vm>`** — omits `--no-graphics` from `tart run`; the VM's own window is up as soon as the VM is (macOS renders it natively, with no display-manager isolation step and no host backing-scale correction to apply, unlike the linux window path).
+- **`tart-up --gui=vnc <vm>`** — adds `--vnc-experimental` to `tart run`. There is no guest-side unit to start: Tart's own Virtualization.Framework VNC server binds an ephemeral **host** port each boot and prints a `vnc://:<password>@<host>:<port>` line; `tart-up` parses that line and verifies the **host** port accepts a connection before reporting success, then leaves the URL for you to point a VNC client at directly (no SSH tunnel, unlike linux's loopback-bound `127.0.0.1:5901`).
+- **`tart-up --gui=headless <vm>`** (or no flag) — behaves the same as any non-GUI image on either platform.
+
+Autologin for the console session is a base-image property Cirrus ships, not something this repo bakes — and it stays workable because darwin's build never locks the account password (see [SECURITY.md](./SECURITY.md)). Select a mode with the `--gui=` flag, or — same mechanism as linux, since `~/.config/tart-stacks/gui` is read by `bin/tart-up` regardless of platform — a `<bare-vm-name> headless|vnc|window` line in that file (an absent line means headless; malformed or duplicate entries fail closed).
 
 ## Daily use
 
@@ -221,6 +241,7 @@ The image still boots headless by default; a boot opts into the desktop by start
 ```bash
 tart-new app-a php fedora       # validate stack + image, clone (resources optional)
 tart-new gui-a php fedora kde   # same, from the GUI flavor fedora-php-kde
+tart-new mac-a php macos        # same, from the darwin platform — no <de>, ever
 ssh tart-app-a                  # auto-starts the stopped clone and connects
 ```
 
