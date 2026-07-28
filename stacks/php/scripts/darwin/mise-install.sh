@@ -101,10 +101,11 @@ export PATH="${BISON_PREFIX}/bin:$PATH"
 # PHP_SETUP_OPENSSL macro needs to attempt detection in the first place).
 # Measured on macos-probe: without it, `./configure` reports "checking for
 # OpenSSL support... no" and PHP builds with no openssl extension and no
-# https:// stream wrapper at all — silent, since this repo's smoke gate
-# never checked for openssl on either platform (a pre-existing gap this task
-# did not introduce; see task-13-report.md). ext/openssl's own config.m4 is
-# PKG_CHECK_MODULES-only, same as sodium/zip, so the flag stays bare.
+# https:// stream wrapper at all — silent from configure's own output;
+# membership_gate's `openssl` token below is what turns a missing extension
+# into a build failure instead of a runtime surprise in a clone. ext/openssl's
+# own config.m4 is PKG_CHECK_MODULES-only, same as sodium/zip, so the flag
+# stays bare.
 #
 # --with-sodium/--with-zip/--with-external-gd also stay bare: none of
 # libsodium/libzip/gd is keg-only, and none of their config.m4 accepts a
@@ -255,7 +256,7 @@ membership_gate "PHP extensions" "$(php -m)" \
     gd imagick \
     redis memcached \
     intl mbstring curl json 'zend opcache' \
-    sodium readline bz2 zip \
+    sodium readline bz2 zip openssl \
     pcov xdebug
 
 # Composer — official installer. Composer isn't bundled with PHP the way

@@ -127,7 +127,7 @@ membership_gate "PHP extensions" "$(php -m)" \
     gd imagick \
     redis memcached \
     intl mbstring curl json 'zend opcache' \
-    sodium readline bz2 zip \
+    sodium readline bz2 zip openssl \
     pcov xdebug
 
 # Composer — official installer. Composer isn't bundled with PHP the way
