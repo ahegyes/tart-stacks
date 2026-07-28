@@ -39,6 +39,17 @@ printf 'fedora\nubuntu\n' > "$WORK/os2"
 # Desktop tokens for the GUI-flavor arm of tart_is_base_image.
 printf 'kde\nxfce\n' > "$WORK/desktops"
 
+# Two-file OS glob (darwin + linux) reused throughout: by the multi-platform
+# main-flow assertions (darwin default display, <de> refusal, grouped "not
+# supported" listing), by tart_os_platform's own unit tests, and by
+# tart_is_base_image's real-glob arm below. "darwin" sorts before "linux" —
+# the ordering that would let a resolver stopping at the first glob hit
+# silently prefer one platform over the other.
+mkdir -p "$WORK/multi-os/darwin" "$WORK/multi-os/linux"
+printf 'macos\n'  > "$WORK/multi-os/darwin/os"
+printf 'fedora\n' > "$WORK/multi-os/linux/os"
+MULTI_GLOB="$WORK/multi-os/*/os"
+
 # Mock `tart` so list output is deterministic and clone/set are recorded.
 # Mirrors parsing.sh's fake-tart-on-PATH approach. .Source=="local" is the
 # real field tart-new's image_built keys on. MOCK_TART_SET_RC makes `tart set`
@@ -71,7 +82,7 @@ JSON
 # exit code, stderr message, and the recorded tart calls.
 run_new() { # args... -> stdout; stderr to $WORK/err; exit code in $rc
   rc=0
-  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_OS_FILE="$WORK/os" TART_OS_FILES="$WORK/os" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
+  PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_OS_FILES="${RUN_NEW_OS_FILES:-$WORK/os}" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
     bash "$BIN/tart-new" "$@" >"$WORK/out" 2>"$WORK/err" </dev/null || rc=$?
 }
 
@@ -168,6 +179,63 @@ assert_contains "GUI clone sizes its display" "$(<"$TART_CALLS")" "set deskvm --
 : > "$TART_CALLS"
 run_new deskvm2 php fedora kde --display 2560x1440
 assert_contains "explicit --display overrides the GUI default" "$(<"$TART_CALLS")" "set deskvm2 --display 2560x1440 --display-refit"
+
+# darwin: no <de> axis, and a clone gets the default display on PLATFORM
+# alone — every darwin image has a desktop (it's intrinsic), so there is no
+# headless arm to hold it back the way a linux clone's missing <de> does.
+cat > "$TART_LIST_JSON" <<'JSON'
+[{"Name":"macos-php","Source":"local"}]
+JSON
+: > "$TART_CALLS"
+RUN_NEW_OS_FILES="$MULTI_GLOB" run_new macvm php macos
+assert_eq       "darwin clone exits 0" 0 "$rc"
+assert_contains "darwin clone gets the default display with no <de> involved" \
+  "$(<"$TART_CALLS")" "set macvm --display 1920x1080 --display-refit"
+
+: > "$TART_CALLS"
+RUN_NEW_OS_FILES="$MULTI_GLOB" run_new macvm2 php macos --display 2560x1440
+assert_contains "explicit --display overrides the darwin default too" \
+  "$(<"$TART_CALLS")" "set macvm2 --display 2560x1440 --display-refit"
+
+# darwin refuses a <de> even when the token IS a valid desktop elsewhere —
+# the gate is about the PLATFORM having no DE axis at all, not about the
+# token being unrecognized.
+: > "$TART_CALLS"
+RUN_NEW_OS_FILES="$MULTI_GLOB" run_new macdesk php macos kde
+assert_eq       "<de> refused on darwin even for a token that IS supported elsewhere" 1 "$rc"
+assert_contains "darwin <de> refusal names the reason" "$(<"$WORK/err")" "no DE axis"
+assert_contains "darwin <de> refusal points at the real answer" "$(<"$WORK/err")" "tart-up --gui"
+assert_absent   "darwin <de> refusal is not misreported as an unsupported desktop" "$(<"$WORK/err")" "not supported"
+assert_absent   "darwin <de> refusal clones nothing" "$(<"$TART_CALLS")" "clone"
+
+# The darwin gate must fire BEFORE de_supported — this is the case that's
+# actually order-sensitive (unlike 'kde' above: a valid token sails past
+# de_supported either way, so that case alone can't tell the two orderings
+# apart). 'cinnamon' is supported nowhere, so the WRONG order would answer
+# "desktop 'cinnamon' not supported; available: kde, gnome, xfce" instead —
+# true nowhere, and it misdirects the reader at shared/linux/desktops instead
+# of naming the real reason (darwin has no DE axis at all).
+: > "$TART_CALLS"
+RUN_NEW_OS_FILES="$MULTI_GLOB" run_new macdesk2 php macos cinnamon
+assert_eq       "<de> refused on darwin for a token unsupported everywhere too" 1 "$rc"
+assert_contains "darwin <de> refusal (unsupported-everywhere token) still names the real reason" \
+  "$(<"$WORK/err")" "no DE axis"
+assert_absent   "darwin <de> refusal (unsupported-everywhere token) is not misreported as an unsupported desktop" \
+  "$(<"$WORK/err")" "not supported"
+assert_absent   "darwin <de> refusal (unsupported-everywhere token) clones nothing" "$(<"$TART_CALLS")" "clone"
+
+# The "OS not supported" listing groups tokens under the platform that claims
+# them (check-os at Makefile:121-148 is the shape matched) rather than
+# flattening every platform's tokens into one line a reader can't route back
+# to a directory.
+: > "$TART_CALLS"
+RUN_NEW_OS_FILES="$MULTI_GLOB" run_new app-x php arch
+assert_eq       "unsupported OS across a real multi-platform glob exits 1" 1 "$rc"
+assert_contains "unsupported OS (multi-platform) still says not supported" "$(<"$WORK/err")" "not supported"
+assert_contains "grouped listing headers the darwin file and lists its token" \
+  "$(<"$WORK/err")" "$(printf '  darwin:\n    macos')"
+assert_contains "grouped listing headers the linux file and lists its token" \
+  "$(<"$WORK/err")" "$(printf '  linux:\n    fedora')"
 
 # Restore the shared fixture list for the cases below.
 cat > "$TART_LIST_JSON" <<'JSON'
@@ -294,17 +362,14 @@ done
 # which would behave identically even if tart-new's call site accidentally
 # unquoted "$OS_FILES" — no glob metacharacters, nothing to word-split. In
 # production TART_OS_FILES is a real glob ($REPO/shared/*/os); this runs the
-# actual script once against a genuine multi-file glob so an unquoted
-# "$OS_FILES" there — which would expand at the CALL SITE and shift
-# DESKTOPS_FILE out of position — has an end-to-end assertion that can catch
-# it. "darwin" sorts before "linux": fedora-php only refuses if the guard
-# reaches past the FIRST glob file.
-mkdir -p "$WORK/multi-os/darwin" "$WORK/multi-os/linux"
-printf 'macos\n'  > "$WORK/multi-os/darwin/os"
-printf 'fedora\n' > "$WORK/multi-os/linux/os"
+# actual script once against a genuine multi-file glob (MULTI_GLOB, set up
+# above) so an unquoted "$OS_FILES" there — which would expand at the CALL
+# SITE and shift DESKTOPS_FILE out of position — has an end-to-end assertion
+# that can catch it. "darwin" sorts before "linux": fedora-php only refuses if
+# the guard reaches past the FIRST glob file.
 : > "$TART_CALLS"
-PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" TART_OS_FILE="$WORK/os" \
-  TART_OS_FILES="$WORK/multi-os/*/os" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
+PATH="$WORK/bin:$PATH" TART_STACKS_DIR="$WORK/stacks" \
+  TART_OS_FILES="$MULTI_GLOB" TART_DESKTOPS="$WORK/desktops" HOME="$WORK/home" \
   bash "$BIN/tart-new" fedora-php php fedora >"$WORK/out" 2>"$WORK/err" </dev/null; rc=$?
 assert_eq       "reserved name from the SECOND glob file (linux) refused end-to-end" 1 "$rc"
 assert_contains "end-to-end refusal explains itself" "$(<"$WORK/err")" "reserved base-image name"
@@ -359,14 +424,11 @@ check "-base without an OS not a base" 1 tart_is_base_image app-base    "$WORK/s
 # Every case above passes "$WORK/os2" — a single file with no glob
 # metacharacters, so it would behave identically even if the 3rd arg were
 # quoted into never expanding. In production it's a real glob
-# (shared/*/os); these cases point it at an actual multi-file glob so the
-# loop reaching past the FIRST matched file is load-bearing, not incidental.
-# "darwin" sorts before "linux" — the same ordering that let the un-fixed
-# PLATFORM resolver silently pick the wrong platform.
-mkdir -p "$WORK/multi-os/darwin" "$WORK/multi-os/linux"
-printf 'macos\n'  > "$WORK/multi-os/darwin/os"
-printf 'fedora\n' > "$WORK/multi-os/linux/os"
-MULTI_GLOB="$WORK/multi-os/*/os"
+# (shared/*/os); these cases point it at MULTI_GLOB (set up above) — an
+# actual multi-file glob — so the loop reaching past the FIRST matched file is
+# load-bearing, not incidental. "darwin" sorts before "linux" — the same
+# ordering that let the un-fixed PLATFORM resolver silently pick the wrong
+# platform.
 
 # tart_is_base_image can `exit` directly (the unreadable-file refusal below),
 # which would kill this whole test script if called bare — every case that
@@ -408,6 +470,40 @@ assert_contains "refusal names the unreadable file" "$(<"$WORK/base-err")" "abse
 ( tart_is_base_image app-a "$WORK/stacks" "$WORK/os2" "$WORK/absent-desktops" ) 2>"$WORK/base-err2"; brc=$?
 if [ "$brc" -ne 0 ]; then ok "missing desktops file → loud refusal, no fail-open"; else bad "missing desktops file → loud refusal, no fail-open" "want rc!=0 got rc=0"; fi
 assert_contains "refusal names the unreadable desktops file" "$(<"$WORK/base-err2")" "absent-desktops"
+
+echo "bin/lib/common.sh — tart_os_platform:"
+# Reuses MULTI_GLOB (darwin: macos, linux: fedora): darwin sorts before
+# linux, so a resolver that stopped scanning at the first hit would silently
+# prefer darwin over an ambiguous token instead of refusing it.
+prc=0; pout=$(tart_os_platform macos "$MULTI_GLOB") || prc=$?
+assert_eq "tart_os_platform macos → darwin"      darwin "$pout"
+assert_eq "tart_os_platform macos → exit 0"           0 "$prc"
+prc=0; pout=$(tart_os_platform fedora "$MULTI_GLOB") || prc=$?
+assert_eq "tart_os_platform fedora → linux (must-pass control)"  linux "$pout"
+assert_eq "tart_os_platform fedora → exit 0 (must-pass control)"     0 "$prc"
+prc=0; pout=$(tart_os_platform arch "$MULTI_GLOB") || prc=$?
+assert_eq "tart_os_platform token claimed by NO platform → refuses, prints nothing" "" "$pout"
+assert_eq "tart_os_platform token claimed by NO platform → exit 1"                  1 "$prc"
+
+# A token claimed by BOTH platforms is exactly as unresolved as one claimed by
+# neither — a resolver that stopped scanning at the first glob hit would
+# return darwin's answer here instead of refusing.
+mkdir -p "$WORK/dupe-os/darwin" "$WORK/dupe-os/linux"
+printf 'dupe\nmaconly\n'   > "$WORK/dupe-os/darwin/os"
+printf 'dupe\nlinuxonly\n' > "$WORK/dupe-os/linux/os"
+DUPE_GLOB="$WORK/dupe-os/*/os"
+prc=0; pout=$(tart_os_platform dupe "$DUPE_GLOB") || prc=$?
+assert_eq "tart_os_platform token claimed by BOTH platforms → refuses, prints nothing" "" "$pout"
+assert_eq "tart_os_platform token claimed by BOTH platforms → exit 1"                  1 "$prc"
+# Must-pass controls beside the ambiguous case: an unambiguous token in the
+# SAME glob still resolves — a resolver that refused everything would pass
+# the ambiguous case above for the wrong reason.
+prc=0; pout=$(tart_os_platform maconly "$DUPE_GLOB") || prc=$?
+assert_eq "tart_os_platform unambiguous token in the dupe glob → darwin (must-pass control)" darwin "$pout"
+assert_eq "tart_os_platform unambiguous token in the dupe glob → exit 0 (must-pass control)"      0 "$prc"
+prc=0; pout=$(tart_os_platform linuxonly "$DUPE_GLOB") || prc=$?
+assert_eq "tart_os_platform unambiguous token in the dupe glob → linux (must-pass control)" linux "$pout"
+assert_eq "tart_os_platform unambiguous token in the dupe glob → exit 0 (must-pass control)"     0 "$prc"
 
 echo
 echo "  $pass passed, $fail failed"

@@ -25,14 +25,11 @@ SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 
-OS_FILE="${TART_OS_FILE:-$REPO/shared/linux/os}"
-os_supported() { grep -qxF "$1" <(grep -vE '^[[:space:]]*(#|$)' "$OS_FILE" 2>/dev/null); }
-
-# Every platform's os file, for the base-image guard below only — cloning a
-# stack image is still linux-only (os_supported above), but the RESERVED-NAME
-# check must not be, or a name shaped like another platform's clone source
-# (e.g. macos-base, once `make bootstrap OS=macos` can create a real one)
-# would be free for a dev VM to grab here first.
+# Every platform's os file (shared/*/os) — tart-new clones on any platform
+# whose token is listed here, not just linux. tart_os_platform (common.sh) is
+# the token-side peer of tart_vm_platform: it resolves an OS token to the
+# platform that owns it, both for the "is this OS supported" gate below and
+# to decide whether the clone can carry a <de>.
 OS_FILES="${TART_OS_FILES:-$REPO/shared/*/os}"
 
 DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/linux/desktops}"
@@ -160,9 +157,33 @@ if ! stack_exists "$STACK"; then
   exit 1
 fi
 
-# 3. OS must be supported.
-if ! os_supported "$OS"; then
-  echo "$prog: OS '$OS' not supported; available: $(grep -vE '^[[:space:]]*(#|$)' "$OS_FILE" | paste -sd, - | sed 's/,/, /g')" >&2
+# 3. OS must be supported, and must resolve to exactly one platform. This VM
+#    doesn't exist yet, so there's nothing in `tart list` to ask — unlike
+#    tart_vm_platform, tart_os_platform decides from the token and shared/*/os
+#    alone. The listing below groups tokens under the platform that claims
+#    them (check-os at Makefile:121-148 is the shape matched) rather than
+#    flattening them: a reader can't route a flattened "macos fedora ubuntu"
+#    back to a directory.
+PLATFORM=$(tart_os_platform "$OS" "$OS_FILES") || {
+  echo "$prog: OS '$OS' not supported; available:" >&2
+  # shellcheck disable=SC2086  # deliberately unquoted: OS_FILES is a shell
+  # glob (shared/*/os) expanding to one file per platform.
+  for f in $OS_FILES; do
+    echo "  $(basename "$(dirname "$f")"):" >&2
+    grep -vE '^[[:space:]]*(#|$)' "$f" | sed 's/^/    /' >&2
+  done
+  exit 1
+}
+
+# 3a. darwin has no DE axis — the macOS desktop is intrinsic, so a darwin
+#     image is always named <os>-<stack>, never <os>-<stack>-<de>. This must
+#     precede de_supported below: an UNSUPPORTED token (e.g. cinnamon) would
+#     otherwise be refused as "desktop 'cinnamon' not supported; available:
+#     kde, gnome, xfce" — true nowhere, and it misdirects the reader at
+#     shared/linux/desktops instead of naming the real reason. Mirrors the
+#     Makefile's check-gui refusal (Makefile:163-166).
+if [ -n "$DE" ] && [ "$PLATFORM" = "darwin" ]; then
+  echo "$prog: <de> is a linux-only argument — the macOS desktop is intrinsic, so darwin images have no DE axis and are named <os>-<stack> with no -<de> suffix. Use 'tart-up --gui=window' (or --gui=vnc) on the clone instead." >&2
   exit 1
 fi
 
@@ -221,14 +242,24 @@ set_args=()
 [ -n "$CPU" ]  && set_args+=(--cpu "$CPU")
 [ -n "$MEM" ]  && set_args+=(--memory "$MEM")
 [ -n "$DISK" ] && set_args+=(--disk-size "$DISK")
-# A GUI clone gets a workable screen by construction. Tart's own default is
-# 1024x768, which a desktop session has no way to change from inside the guest —
-# the resolution is a property of the virtual display, not of the X session — so
-# a clone left at the default is stuck there for its whole life. Any clone given
-# a geometry gets --display-refit with it, so the guest follows the host window
-# as it is resized; a clone from a non-GUI image has no desktop to reflow, which
-# makes both flags inert there rather than different.
-display="${DISPLAY_GEOMETRY:-${DE:+$DEFAULT_DISPLAY_GEOMETRY}}"
+# A clone gets a workable screen by construction. Tart's own default is
+# 1024x768, which nothing inside the guest can change — the resolution is a
+# property of the virtual display, not of the desktop session — so a clone
+# left at the default is stuck there for its whole life (measured: a real
+# macos-php clone's config.json ships 1024x768 with no displayRefit key). Any
+# clone given a geometry gets --display-refit with it, so the guest follows
+# the host window as it is resized. A linux clone only gets the default when
+# it carries a <de> — a headless linux image has no desktop to reflow, so both
+# flags are inert there. A darwin clone has no <de> to key off at all (the
+# macOS desktop is intrinsic, not optional), so it defaults on PLATFORM alone —
+# every darwin clone has a desktop, so refit is never inert there.
+if [ -n "$DISPLAY_GEOMETRY" ]; then
+  display="$DISPLAY_GEOMETRY"
+elif [ -n "$DE" ] || [ "$PLATFORM" = "darwin" ]; then
+  display="$DEFAULT_DISPLAY_GEOMETRY"
+else
+  display=""
+fi
 [ -n "$display" ] && set_args+=(--display "$display" --display-refit)
 if [ "${#set_args[@]}" -gt 0 ]; then
   set_rc=0
