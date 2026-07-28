@@ -47,7 +47,7 @@ help:
 	@echo "  DE — desktop for GUI=1 (default: kde). Must be listed in shared/linux/desktops. e.g. make build STACK=php OS=fedora GUI=1 DE=xfce"
 
 list-stacks:
-	@ls -1 stacks 2>/dev/null | sed 's/^/  /' || echo "  (none)"
+	@stacks=$$(ls -1 stacks 2>/dev/null); if [ -n "$$stacks" ]; then echo "$$stacks" | sed 's/^/  /'; else echo "  (none)"; fi
 
 # Host-side install (macOS). Idempotent; safe to re-run. Logic lives in
 # script/setup so the SSH-config validation stays testable.
@@ -74,7 +74,7 @@ test:
 check-stack-token:
 	@if [ -z "$(STACK)" ]; then \
 		echo "ERROR: STACK is required (e.g., make build STACK=php OS=fedora, make scaffold STACK=python). Available stacks:" >&2; \
-		ls -1 stacks 2>/dev/null | sed 's/^/  /' >&2 || echo "  (none)" >&2; \
+		stacks=$$(ls -1 stacks 2>/dev/null); if [ -n "$$stacks" ]; then echo "$$stacks" | sed 's/^/  /' >&2; else echo "  (none)" >&2; fi; \
 		exit 1; \
 	fi
 	@if ! printf '%s\n' "$(STACK)" | grep -qE '^[a-z0-9]+$$'; then \
@@ -86,7 +86,7 @@ check-stack-token:
 check-stack: check-stack-token
 	@if [ ! -d "$(STACK_DIR)" ]; then \
 		echo "ERROR: stack '$(STACK)' not found at $(STACK_DIR)/. Available stacks:" >&2; \
-		ls -1 stacks 2>/dev/null | sed 's/^/  /' >&2 || echo "  (none)" >&2; \
+		stacks=$$(ls -1 stacks 2>/dev/null); if [ -n "$$stacks" ]; then echo "$$stacks" | sed 's/^/  /' >&2; else echo "  (none)" >&2; fi; \
 		exit 1; \
 	fi
 
@@ -186,8 +186,13 @@ init:
 # ghcr.io/cirruslabs/<os>, keyed directly off the OS token, but Cirrus
 # publishes macOS per release rather than under a rolling name (macos-tahoe-base,
 # macos-sequoia-base, …), so darwin can't derive its image from $(OS) the way
-# linux does — MACOS_RELEASE names the release here instead. Bumping macOS is
-# editing this line and rebuilding — the same shape as FEDORA_TARGET_RELEASE.
+# linux does — MACOS_RELEASE names the release here instead. Bumping it is
+# editing this line and rebuilding — unlike FEDORA_TARGET_RELEASE, which
+# pkg_release_upgrade actively drives the guest to, this only selects which
+# Cirrus base gets pulled; shared/darwin/scripts/family-lib.sh's
+# MACOS_TARGET_RELEASE is a separate floor (`-ge`, not an equality check), so
+# raising MACOS_RELEASE without also raising that floor builds silently on the
+# newer release rather than failing.
 # `:=`, not `=`: PLATFORM above is itself `:=` (fixed once OS is known), and a
 # recursively-expanded BASE_IMAGE would otherwise re-evaluate this $(if …) on
 # every reference instead of settling once alongside it.
