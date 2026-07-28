@@ -27,13 +27,23 @@ tart_vm_state() {
 # maintains, while `tart get`'s OS field is a property of the VM Tart
 # actually built (confirmed empirically: `tart get macos-php --format json`
 # answers `"OS":"darwin"`, `tart get fedora-php --format json` answers
-# `"OS":"linux"`). Anything other than the literal "darwin" — a missing
-# field, an unrecognized value, a failed `tart get` — falls safe onto linux,
-# the platform every dev VM in this repo was until darwin existed.
+# `"OS":"linux"`). stderr stays attached, same as tart_vm_state, so tart's
+# (or jq's) real error reaches the terminal. Returns 1 on anything short of
+# a confirmed answer — a missing VM, a failed `tart get`, an empty or
+# unrecognized OS field — the same "refuse rather than guess" contract
+# tart_vm_state and tart_is_base_image already hold to for their own reads. A
+# caller MUST NOT treat a nonzero return as "linux": only a printed "darwin"
+# or "linux" is a confirmed answer. This is what keeps a future caller safe
+# by default even before it grows its own tart_need_cmd guards — a missing
+# `tart`/`jq` yields empty stdin into jq's `// empty` and lands in the same
+# refusal, no special-casing required.
 tart_vm_platform() {
-  case "$(tart get "$1" --format json 2>/dev/null | jq -r '.OS // empty' 2>/dev/null)" in
+  local os
+  os=$(tart get "$1" --format json | jq -r '.OS // empty') || return 1
+  case "$os" in
     darwin) printf 'darwin' ;;
-    *)      printf 'linux'  ;;
+    linux)  printf 'linux'  ;;
+    *)      return 1 ;;
   esac
 }
 

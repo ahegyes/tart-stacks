@@ -68,7 +68,16 @@ case "$1" in
       exit "${MOCK_TART_LIST_RC}"
     fi
     printf '[{"Name":"%s","Source":"local","State":"%s"}]\n' "${MOCK_VM:-app-a}" "${MOCK_STATE:-stopped}" ;;
-  get)  printf '{"OS":"%s"}\n' "${MOCK_PLATFORM:-linux}" ;;   # drives tart_vm_platform
+  get)
+    # MOCK_TART_GET_RC simulates a failed `tart get` (a nonexistent VM, or
+    # the TOCTOU where it vanished between the earlier `tart list` and this
+    # call) exactly as real tart does: an error to stderr, nothing on
+    # stdout, a nonzero exit — never a JSON body to salvage an answer from.
+    if [ "${MOCK_TART_GET_RC:-0}" -ne 0 ]; then
+      echo "MOCK_TART_GET_STDERR_MARKER" >&2
+      exit "${MOCK_TART_GET_RC}"
+    fi
+    printf '{"OS":"%s"}\n' "${MOCK_PLATFORM:-linux}" ;;   # drives tart_vm_platform
   ip)   printf '%s\n' "${MOCK_IP-10.0.0.9}" ;;   # set MOCK_IP='' to drive the no-lease path
   exec)
     shift 2
@@ -169,6 +178,8 @@ chmod +x "$MOCKBIN/system_profiler"
 # Knobs arrive as env on the call: MOCK_LIST_VM (default app-a), MOCK_ALIVE
 # (default 1 — a listed-running VM has a live process), MOCK_TART_LIST_RC,
 # MOCK_PLATFORM (default linux — drives tart_vm_platform via `tart get`),
+# MOCK_TART_GET_RC (default 0 — a nonzero simulates a failed `tart get`, the
+# TOCTOU where the VM vanished between `tart list` and `tart get`),
 # MOCK_NC_RC, MOCK_NC_VNC_RC, MOCK_SS_OUTPUT, MOCK_SS_SEQUENCE_FILE,
 # MOCK_SS_READ_FAIL, MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH,
 # MOCK_TART_VNC_PRINT, MOCK_VNC_URL, MOCK_VNC_PORT, MOCK_SYSTEM_PROFILER_RC,
@@ -181,6 +192,7 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
   : > "$CALLS"; : > "$SS_COUNT"; rc=0
   PATH="$MOCKBIN:$PATH" HOME="$SANDBOX_HOME" MOCK_VM="${MOCK_LIST_VM:-app-a}" MOCK_STATE="$state" MOCK_IP="${MOCK_IP-10.0.0.9}" MOCK_HOSTNAME="$hostname" \
     MOCK_ALIVE="${MOCK_ALIVE-1}" MOCK_TART_LIST_RC="${MOCK_TART_LIST_RC-0}" MOCK_PLATFORM="${MOCK_PLATFORM-linux}" \
+    MOCK_TART_GET_RC="${MOCK_TART_GET_RC-0}" \
     MOCK_NC_RC="${MOCK_NC_RC-0}" MOCK_NC_VNC_RC="${MOCK_NC_VNC_RC-}" \
     MOCK_SS_OUTPUT="${MOCK_SS_OUTPUT-LISTEN 0 5 127.0.0.1:5901 0.0.0.0:*}" \
     MOCK_SS_SEQUENCE_FILE="${MOCK_SS_SEQUENCE_FILE-}" MOCK_SS_COUNT_FILE="$SS_COUNT" \
@@ -585,11 +597,37 @@ assert_absent "hostname already correct → no set-hostname" "$(cat "$CALLS")" "
 # ---- tart_vm_platform: direct unit coverage (bypasses the runup harness) --
 # Branches on `tart get`'s OS field, never the <os>-<stack> naming convention
 # this repo's own images follow — proven here against a VM name that carries
-# no OS hint at all ("app-a").
-platform_of() { PATH="$MOCKBIN:$PATH" MOCK_PLATFORM="$1" bash -c '. "'"$BIN"'/lib/common.sh"; tart_vm_platform app-a'; }
-assert_eq "tart_vm_platform darwin → darwin"                       darwin "$(platform_of darwin)"
-assert_eq "tart_vm_platform linux → linux (must-pass control)"     linux  "$(platform_of linux)"
-assert_eq "tart_vm_platform unrecognized OS token → linux (fail-safe default)" linux "$(platform_of bogus)"
+# no OS hint at all ("app-a"). MUST refuse (nonzero rc, nothing printed)
+# rather than manufacture "linux" on anything short of a confirmed answer: a
+# caller that treated a refusal as "linux" would silently misclassify a real
+# darwin VM behind a transient failure.
+platform_of() { # <MOCK_PLATFORM> <MOCK_TART_GET_RC>
+  PATH="$MOCKBIN:$PATH" MOCK_PLATFORM="$1" MOCK_TART_GET_RC="${2:-0}" \
+    bash -c '. "'"$BIN"'/lib/common.sh"; tart_vm_platform app-a' 2>/dev/null
+}
+prc=0; pout=$(platform_of darwin 0) || prc=$?
+assert_eq "tart_vm_platform darwin → darwin"                   darwin "$pout"
+assert_eq "tart_vm_platform darwin → exit 0"                        0 "$prc"
+prc=0; pout=$(platform_of linux 0) || prc=$?
+assert_eq "tart_vm_platform linux → linux (must-pass control)" linux  "$pout"
+assert_eq "tart_vm_platform linux → exit 0 (must-pass control)"     0 "$prc"
+prc=0; pout=$(platform_of bogus 0) || prc=$?
+assert_eq "tart_vm_platform unrecognized OS token → refuses, prints nothing" "" "$pout"
+assert_eq "tart_vm_platform unrecognized OS token → exit 1"                1 "$prc"
+prc=0; pout=$(platform_of '' 2) || prc=$?
+assert_eq "tart_vm_platform failed 'tart get' → refuses, prints nothing" "" "$pout"
+assert_eq "tart_vm_platform failed 'tart get' → exit 1"                1 "$prc"
+
+# The tart-up call site must propagate that refusal rather than starting the
+# VM under a guessed platform. This is the reviewer's TOCTOU: tart_vm_state
+# (a SEPARATE `tart list` call, at the base-image guard above) already
+# confirmed the VM exists; this simulates it vanishing (or `tart get`
+# otherwise failing) before the platform read that follows.
+MOCK_TART_GET_RC=2 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" app-a
+assert_rc       "tart get fails after list confirmed the VM (TOCTOU) → exit 1" 1
+assert_contains "TOCTOU diagnostic names the refusal" "$(cat "$ERR")" "could not determine whether 'app-a' is a darwin or linux VM"
+assert_absent   "TOCTOU → never starts the VM under a guessed platform" "$(cat "$CALLS")" "tart run"
 
 # ---- darwin hostname: scutil, never hostnamectl ----------------------------
 MOCK_PLATFORM=darwin runup stopped wrong-name "$EMPTY" "$EMPTY" "$EMPTY" app-a

@@ -28,7 +28,8 @@
 # linux serves it from a guest-side systemd unit; darwin has no guest listener
 # at all, serving it host-side via Tart's own `--vnc-experimental`. Platform is
 # read from Tart itself (`tart get --format json`'s OS field), never guessed
-# from the image name — see tart_vm_platform in bin/lib/common.sh.
+# from the image name — see tart_vm_platform in bin/lib/common.sh, which
+# refuses to answer rather than default to linux on a failed read.
 
 set -euo pipefail
 
@@ -112,11 +113,6 @@ if tart_is_base_image "$VM" "$STACKS_DIR" "$OS_FILES" "$DESKTOPS_FILE"; then
   echo "$prog: '$VM' is a stack base image, not a dev VM — refusing to start. Clone one with 'tart-new <name> <stack> <os>'." >&2
   exit 1
 fi
-
-# Branch on what Tart reports about this VM, never the `<os>-<stack>` naming
-# convention this repo's own images follow — a VM created outside that
-# convention still reports its real OS here, from Tart itself.
-PLATFORM=$(tart_vm_platform "$VM")
 
 # ---- net-policy (opt-in; applies uniformly to every VM) --------------------
 # Whitespace-separated tart `--net-*` flags read from a single file; tokens
@@ -561,6 +557,19 @@ if [ "$STATE" = "running" ]; then
     echo "$prog: '$VM' already running — gui mode '$GUI_MODE' applies at boot, so it has whatever it started with (stop + start to apply gui mode changes)." >&2
   fi
 elif [ "$STATE" = "stopped" ]; then
+  # Branch on what Tart reports about this VM, never the `<os>-<stack>`
+  # naming convention this repo's own images follow. Resolved only here, not
+  # unconditionally up front: this is the only branch that ever reads
+  # $PLATFORM (an already-running VM's hostname/gui were set on the boot that
+  # started it), and it must fail closed rather than default to linux —
+  # tart_vm_platform refuses to answer on a failed `tart get` or an
+  # empty/unrecognized OS field (a real TOCTOU here: tart_vm_state above
+  # already confirmed this VM exists, via a SEPARATE `tart list` call, and it
+  # can still vanish or become briefly unreadable before this one runs).
+  PLATFORM=$(tart_vm_platform "$VM") || {
+    echo "$prog: could not determine whether '$VM' is a darwin or linux VM (a failed 'tart get', or an empty/unrecognized OS field — see any error above); refusing to start without knowing which platform-specific boot steps it needs." >&2
+    exit 1
+  }
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
