@@ -333,11 +333,12 @@ elif [ "$PLATFORM" = "darwin" ]; then
     exit 1
   fi
   # Parse each LISTEN row into "addr port": netstat renders the Local Address
-  # column address-and-port joined by a dot (`127.0.0.1.4445`, `[::1].4445`,
-  # `*.22`) — an IPv4 address embeds three more dots of its own, and a
-  # bracketed IPv6 address embeds none, so only the LAST dot is the port
-  # separator; `sub()`'s greedy `.*\.` match finds it regardless of how many
-  # dots came before.
+  # column address-and-port joined by a dot (`127.0.0.1.4445`, `::1.4445`,
+  # `*.22` — measured directly against the real binary; IPv6 is NOT
+  # bracketed here, unlike ss's `[::1]:5901` the linux VNC stage parses
+  # below) — an IPv4 address embeds three more dots of its own, so only the
+  # LAST dot is the port separator; `sub()`'s greedy `.*\.` match finds it
+  # regardless of how many dots came before.
   rows=$(printf '%s\n' "$listener_table" | awk '
     $NF == "LISTEN" {
       addr = $4; port = $4
@@ -381,18 +382,22 @@ elif [ "$PLATFORM" = "darwin" ]; then
   # RemoteForward …` in ~/.config/tart-stacks/forwards makes sshd-sess bind
   # the forwarded port on the GUEST's loopback for the life of that session —
   # real sockets, not a mocking artifact, and not exposure: nothing outside
-  # the guest can reach 127.0.0.1 or [::1] inside it. Do not tighten this
-  # back to the build-time script's bar; that reintroduces a false FAIL that
-  # is invisible in the mocked suite and CI (no forwards there) and fires
-  # only for the operator this whole check exists to protect. Same allowlist
-  # vocabulary as the linux VNC stage's loopback-bind classifier above.
+  # the guest can reach 127.0.0.1 or ::1 inside it. Do not tighten this back
+  # to the build-time script's bar; that reintroduces a false FAIL that is
+  # invisible in the mocked suite and CI (no forwards there) and fires only
+  # for the operator this whole check exists to protect. The allowlist below
+  # is NOT the same spelling the linux VNC stage's loopback classifier uses
+  # (`[::1]:5901`, bracketed) — that one parses `ss`, this one parses
+  # macOS's `netstat`, and the two tools render IPv6 loopback differently
+  # for the identical concept; each classifier matches its own tool's real
+  # output, not each other's.
   non_loopback=$(printf '%s\n' "$rows" | awk '
     $2 != "22" {
       addr = $1
-      if (addr != "127.0.0.1" && addr != "[::1]") print addr":"$2
+      if (addr != "127.0.0.1" && addr != "::1") print addr":"$2
     }')
   if [ -n "$non_loopback" ]; then
-    echo "$prog: FAIL — 'tart-$VM' has a non-loopback listener beyond :22 ($(printf '%s' "$non_loopback" | tr '\n' ' ')) — a loopback bind (127.0.0.1 / [::1]) is tolerated as the operator's own RemoteForward tunnel, but this is reachable beyond the guest itself." >&2
+    echo "$prog: FAIL — 'tart-$VM' has a non-loopback listener beyond :22 ($(printf '%s' "$non_loopback" | tr '\n' ' ')) — a loopback bind (127.0.0.1 / ::1) is tolerated as the operator's own RemoteForward tunnel, but this is reachable beyond the guest itself." >&2
     exit 1
   fi
   printf '%s: ok   %-22s %s\n' "$prog" "listener surface" ":22 alone beyond loopback (survived clone)" >&2

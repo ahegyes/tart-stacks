@@ -527,11 +527,16 @@ assert_contains "unexpected-port failure names the port"  "$(cat "$ERR")" "88"
 # The real-gate regression: a `Host tart-* RemoteForward …` block in
 # ~/.config/tart-stacks/forwards makes sshd-sess bind the forwarded port on
 # the GUEST's loopback for the life of the operator's ssh session — real
-# sockets on 127.0.0.1/[::1], not exposure. Both families (v4 loopback, v6
+# sockets on 127.0.0.1/::1, not exposure. Both families (v4 loopback, v6
 # loopback), both operator ports (4445, 8080) from the real failure, MUST
-# still pass.
+# still pass. Fixture format measured directly against the real `netstat -an
+# -p tcp` binary (macOS host) — IPv6 loopback prints unbracketed (`::1.PORT`),
+# NOT `[::1].PORT`; a bracketed fixture here would pass against code that
+# can't actually classify the real guest's output (round-1 mistake: both the
+# fixture and the classifier were wrong the same way, so the test proved
+# nothing).
 MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
-  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 127.0.0.1.4445 *.* LISTEN\ntcp6 0 0 [::1].4445 *.* LISTEN\ntcp4 0 0 127.0.0.1.8080 *.* LISTEN\ntcp6 0 0 [::1].8080 *.* LISTEN')" \
+  MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 127.0.0.1.4445 *.* LISTEN\ntcp6 0 0 ::1.4445 *.* LISTEN\ntcp4 0 0 127.0.0.1.8080 *.* LISTEN\ntcp6 0 0 ::1.8080 *.* LISTEN')" \
   run_smoke php macos
 assert_rc       "darwin loopback-bound RemoteForward ports → smoke PASSES" 0
 assert_contains "loopback-forward run still reports the listener-surface ok line" "$(cat "$ERR")" ":22 alone beyond loopback"
