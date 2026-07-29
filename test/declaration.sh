@@ -267,9 +267,11 @@ membership_tokens() { # <installer> — one token per line; ERR lines on misuse
     # never pass, so the static check must not certify it. Checked BY
     # POSITION (label token, then the listing) — an anywhere-match would let
     # a decoy label spelled "$(php -m)" vouch for a single-quoted listing.
-    # The label itself may take any form the lexer accepts: double-quoted,
-    # single-quoted, or a bare word.
-    label_pat="\"[^\"]*\"|'[^']*'|[A-Za-z0-9_.-]+"
+    # The label itself may take any form the lexer accepts — quoted, bare,
+    # or mixed fragments (abc"def") — its content carries no semantics here;
+    # only the listing token's quoting does. One token = one or more
+    # quoted-or-bare fragments with no intervening space.
+    label_pat="(\"[^\"]*\"|'[^']*'|[^\"'[:space:]])+"
     if ! printf '%s\n' "$call" | grep -qE "^membership_gate[[:space:]]+($label_pat)[[:space:]]+\"\\\$\\(php -m\\)\"([[:space:]]|\$)"; then
       printf 'ERR\tmembership listing must be the double-quoted "$(php -m)" in argument position two — a single-quoted listing is a literal string, never the module list\n'
     fi
@@ -1001,6 +1003,18 @@ mk_squote_label() { mk_stack "$1"; printf 'ext|imagick|pecl\n' >> "$1/tools"
 d="$WORK/squote-label"; rm -rf "$d"; mk_squote_label "$d"
 run_fixture squote-label "$d"
 if [ "$frc" -eq 0 ]; then ok "a single-quoted label with a double-quoted listing → passes (must-pass control)"; else bad "a single-quoted label with a double-quoted listing → passes (must-pass control)" "$fout"; fi
+
+# A bare label carrying token characters the simple word class lacks — @, :,
+# + — is equally lexer-valid; the listing check must not reject it.
+mk_bare_label() { mk_stack "$1"; printf 'ext|imagick|pecl\n' >> "$1/tools"
+  local p
+  for p in linux darwin; do
+    printf 'smoke_gate "r" -- uv --version\nfor ext in imagick; do\n  :\ndone\nmembership_gate php@8:ext+list "$(php -m)" imagick\n' > "$1/scripts/$p/mise-install.sh"
+  done
+}
+d="$WORK/bare-label"; rm -rf "$d"; mk_bare_label "$d"
+run_fixture bare-label "$d"
+if [ "$frc" -eq 0 ]; then ok "a bare label with @:+ characters → passes (must-pass control)"; else bad "a bare label with @:+ characters → passes (must-pass control)" "$fout"; fi
 
 mut_double_heredoc()  { mk_stack "$1"
   printf 'cat <<A <<B\nx\nA\ny\nB\nsmoke_gate "runtimes" -- uv --version\n' > "$1/scripts/linux/mise-install.sh"

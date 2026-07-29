@@ -282,8 +282,10 @@ while IFS='|' read -r binary probe; do
   # command position.
   argv0="${probe%% *}"
   case "$argv0" in
-    [!A-Za-z0-9_]*|*[!A-Za-z0-9._+-]*)
-      echo "$prog: FAIL — the proof '$probe' in stacks/$STACK/tools does not begin with a command word (an assignment or option there runs nothing and exits 0)." >&2
+    ''|[!A-Za-z0-9_]*|*[!A-Za-z0-9._+-]*)
+      # The empty arm matters: a leading-space proof yields an empty argv0,
+      # which matches neither character-class pattern.
+      echo "$prog: FAIL — the proof '$probe' in stacks/$STACK/tools does not begin with a command word (an assignment, option, or leading space there runs nothing it claims to)." >&2
       exit 1 ;;
   esac
   # And it must exercise the row's own binary — either executing it

@@ -540,6 +540,12 @@ printf 'tool|flag|FLAG=x|installer|FLAG=x|assignment proof\n' > "$FAKE_REPO/stac
 MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
 assert_rc       "an assignment-shaped proof → FAIL" 1
 assert_contains "the non-command argv0 is named" "$(cat "$ERR")" "does not begin with a command word"
+# An empty binary with a leading-space proof: argv0 comes out empty, which
+# matches no character-class pattern — only an explicit empty arm refuses it.
+printf 'tool|x||installer| uv --version|leading-space proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "an empty binary with a leading-space proof → FAIL" 1
+assert_contains "the empty argv0 is refused" "$(cat "$ERR")" "does not begin with a command word"
 SMOKE="$SMOKE_REAL"
 
 # The hardening posture, read from sshd's effective config rather than the file.
