@@ -635,9 +635,8 @@ assert_contains "unexpected-port failure names the port"  "$(cat "$ERR")" "88"
 # still pass. Fixture format measured directly against the real `netstat -an
 # -p tcp` binary (macOS host) — IPv6 loopback prints unbracketed (`::1.PORT`),
 # NOT `[::1].PORT`; a bracketed fixture here would pass against code that
-# can't actually classify the real guest's output (round-1 mistake: both the
-# fixture and the classifier were wrong the same way, so the test proved
-# nothing).
+# can't actually classify the real guest's output — with the fixture and the
+# classifier wrong the same way, the test would prove nothing.
 MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
   MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 127.0.0.1.4445 *.* LISTEN\ntcp6 0 0 ::1.4445 *.* LISTEN\ntcp4 0 0 127.0.0.1.8080 *.* LISTEN\ntcp6 0 0 ::1.8080 *.* LISTEN')" \
   run_smoke php macos

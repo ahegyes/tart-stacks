@@ -45,8 +45,8 @@ CMD_WORD='^[A-Za-z0-9_][A-Za-z0-9_.+-]*$'
 ARG_WORD='^[A-Za-z0-9_.+=/:@-]+$'
 EXT_TOKEN='^[a-z0-9_][a-z0-9_ .-]*$'
 
-# name -> binary aliases: the irreducible convention facts, in one reviewed
-# place. Everything else requires name == binary.
+# name -> binary aliases: the irreducible convention facts, in one place.
+# Everything else requires name == binary.
 alias_binary() { # <name> — prints the expected binary
   case "$1" in
     maven)  echo mvn ;;
@@ -169,8 +169,8 @@ gate_calls() { # <installer> <gate-name> — one joined call text per line; ERR 
     # Two real heredocs on one line queue two bodies — outside the lexer
     # subset, reported rather than half-skipped. Still syntactic parity, not
     # a shell parser — a gate spelled inside a multiline quoted string would
-    # need one; none exists in this repo and the r5-1 contract already
-    # scopes execution proof to the build log.
+    # need one; none exists in this repo, and the file header scopes
+    # execution proof to the build log.
     /<</ {
       rest = $0; base = 0; nfound = 0
       while (match(rest, /<<-?[ \t]*[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/)) {
@@ -718,8 +718,6 @@ mut_fake_listing() { # membership listing replaced with a fabricated one
 }
 fixture_red "fabricated membership listing" "must be exactly" mut_fake_listing
 
-# ── the holes the CP1 review closed, each pinned red ────────────────────────
-
 mut_heredoc_gate() { # the only gate text lives inside a heredoc body
   mk_stack "$1"
   printf 'cat > /tmp/x <<EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
@@ -765,8 +763,6 @@ mut_ext_only()        { mk_stack "$1"; printf 'ext|imagick|pecl\n' > "$1/tools"
   local p; for p in linux darwin; do printf 'for ext in imagick; do\n  :\ndone\nmembership_gate "exts" "$(php -m)" imagick\n' > "$1/scripts/$p/mise-install.sh"; done; }
 fixture_red "ext-only declaration (zero tool rows)" "no tool rows" mut_ext_only
 
-# ── the holes the CP1 round-2 review closed, each pinned red ────────────────
-
 mut_spaced_heredoc()  { mk_stack "$1"
   printf 'cat > /tmp/x << EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
 }
@@ -783,8 +779,6 @@ fixture_red "backslash escape in a quoted key" "backslash escape" mut_escaped_ke
 
 mut_bare_membership() { mk_stack "$1"; printf 'membership_gate\n' >> "$1/scripts/linux/mise-install.sh"; }
 fixture_red "bare membership_gate call" "no listing argument" mut_bare_membership
-
-# ── the holes the CP1 round-3 review closed, each pinned red or held green ──
 
 mut_bare_smoke_gate() { mk_stack "$1"; printf 'smoke_gate\n' >> "$1/scripts/linux/mise-install.sh"; }
 fixture_red "bare smoke_gate call" "no label argument" mut_bare_smoke_gate
@@ -807,8 +801,6 @@ mut_tab_gate_valid()  { mk_stack "$1"; printf 'smoke_gate\t"runtimes" -- uv --ve
 d="$WORK/tab-valid"; rm -rf "$d"; mut_tab_gate_valid "$d"
 run_fixture tab-valid "$d"
 if [ "$frc" -eq 0 ]; then ok "valid tab-delimited gate call → passes (must-pass control)"; else bad "valid tab-delimited gate call → passes (must-pass control)" "$fout"; fi
-
-# ── the hole the CP1 round-4 review closed ──────────────────────────────────
 
 mut_mixed_redirect()  { mk_stack "$1"
   printf 'cat <<<true <<EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
