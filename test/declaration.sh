@@ -117,8 +117,11 @@ parse_mise() { # <mise.toml>
       if (sect == "ROOT") { print "ERR\troot-level assignment (every assignment belongs to a section): " $0; next }
       # TOML basic strings decode backslash escapes ("experimental" is
       # the key experimental) — outside the closed subset, so any backslash
-      # in a quoted key is rejected rather than compared undecoded.
+      # in a quoted key is rejected rather than compared undecoded. A
+      # literal tab is also valid TOML inside a quoted key and would inject
+      # a field into this parser own tab-separated output — same rejection.
       if (quoted == "quoted" && key ~ /\\/) { print "ERR\tbackslash escape in quoted key (outside the closed subset): " $0; next }
+      if (quoted == "quoted" && key ~ /\t/) { print "ERR\ttab character in quoted key (outside the closed subset): " $0; next }
       sub(/[ \t]*$/, "", val)
       # Quoted values KEEP their quotes in the output: a TOML string "true"
       # is not the boolean true, and stripping the quotes here would let the
@@ -165,7 +168,10 @@ gate_calls() { # <installer> <gate-name> — one joined call text per line; ERR 
     # still syntactic parity, not a shell parser — a gate spelled inside a
     # multiline quoted string would need one; none exists in this repo and
     # the r5-1 contract already scopes execution proof to the build log.
-    /<</ && match($0, /<<-?[ \t]*[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/) && substr($0, RSTART + 2, 1) != "<" {
+    # The preceding-character guard is what excludes herestrings: in <<<true
+    # the regex engine restarts at the SECOND < and would otherwise read a
+    # heredoc with terminator true, hiding everything after it.
+    /<</ && match($0, /<<-?[ \t]*[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/) && substr($0, RSTART + 2, 1) != "<" && (RSTART == 1 || substr($0, RSTART - 1, 1) != "<") {
       hd_term = substr($0, RSTART, RLENGTH)
       sub(/^<<-?[ \t]*/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
       inheredoc = 1
@@ -223,7 +229,12 @@ smoke_gate_groups() { # <installer> — one \x1f-joined group per line; ERR line
       # empty argv[0].
       $0 == "" { print "ERR\tempty token in a smoke_gate group"; next }
       { grp = (n ? grp "\037" $0 : $0); n++ }
-      END { if (n) print grp }
+      END {
+        if (n) print grp
+        # A bare call (no label) dereferences an unset $1 in the real helper
+        # under set -u — it must be an error here, not an invisible no-op.
+        if (NR < 2) print "ERR\tsmoke_gate call with no label argument (the real build would fail under set -u)"
+      }
     '
   done < <(gate_calls "$1" smoke_gate)
 }
@@ -761,6 +772,30 @@ fixture_red "backslash escape in a quoted key" "backslash escape" mut_escaped_ke
 
 mut_bare_membership() { mk_stack "$1"; printf 'membership_gate\n' >> "$1/scripts/linux/mise-install.sh"; }
 fixture_red "bare membership_gate call" "no listing argument" mut_bare_membership
+
+# ── the holes the CP1 round-3 review closed, each pinned red or held green ──
+
+mut_bare_smoke_gate() { mk_stack "$1"; printf 'smoke_gate\n' >> "$1/scripts/linux/mise-install.sh"; }
+fixture_red "bare smoke_gate call" "no label argument" mut_bare_smoke_gate
+
+mut_herestring_hide() { mk_stack "$1"
+  printf 'grep -q x <<<true\nsmoke_gate "extra" -- jq --version\n' >> "$1/scripts/linux/mise-install.sh"
+}
+fixture_red "undeclared gate after a herestring" "no declaration row" mut_herestring_hide
+
+mut_tab_quoted_key()  { mk_stack "$1"; printf '[tools]\nuv = "latest"\n\n[settings]\n"uv\tjunk" = true\n' > "$1/files/mise.toml"; }
+fixture_red "literal tab inside a quoted TOML key" "tab character in quoted key" mut_tab_quoted_key
+
+mut_tab_gate_extra()  { mk_stack "$1"; printf 'smoke_gate\t"extra" -- jq --version\n' >> "$1/scripts/linux/mise-install.sh"; }
+fixture_red "tab-delimited gate call with an undeclared group" "no declaration row" mut_tab_gate_extra
+
+# The valid tab-delimited control: pins the "\t" arm of the gate-name match
+# from the other side — removing the arm makes this call invisible and the
+# declared proof reads as missing.
+mut_tab_gate_valid()  { mk_stack "$1"; printf 'smoke_gate\t"runtimes" -- uv --version\n' > "$1/scripts/linux/mise-install.sh"; }
+d="$WORK/tab-valid"; rm -rf "$d"; mut_tab_gate_valid "$d"
+run_fixture tab-valid "$d"
+if [ "$frc" -eq 0 ]; then ok "valid tab-delimited gate call → passes (must-pass control)"; else bad "valid tab-delimited gate call → passes (must-pass control)" "$fout"; fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
