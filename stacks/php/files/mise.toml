@@ -36,7 +36,9 @@ php = "vfox:jdx/vfox-php"
 
 [settings]
 # Corepack shims land after every node install, not just the global one, so a
-# project-pinned node gets pnpm/yarn too.
+# project-pinned node gets pnpm/yarn too — for Nodes that still bundle
+# Corepack (24 and earlier); mise's enable is conditional on the corepack
+# executable existing in that install, and Node 25+ ships without it.
 node.corepack = true
 
 # Set to true while debugging tool installs (especially PHP, which compiles from source).

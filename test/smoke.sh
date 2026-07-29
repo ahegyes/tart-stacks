@@ -23,6 +23,15 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
+assert_probe_line() { # label probe — the EXACT ssh-argv line a probe must produce,
+  # whole-line matched: a substring match would tolerate extra ssh arguments
+  # around the expected remote command.
+  if grep -qxF "ssh-argv [-n] [-o] [BatchMode=yes] [tart-smoke-vm] [$2]" "$CALLS"; then
+    ok "$1"
+  else
+    bad "$1" "no exact ssh-argv line for » $2 « in: $(grep '^ssh-argv' "$CALLS" | tr '\n' '|')"
+  fi
+}
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
 assert_rc() { # label want — checks $rc from the last run_smoke
@@ -63,8 +72,15 @@ M
 cat > "$MOCKBIN/ssh" <<'M'
 #!/usr/bin/env bash
 echo "ssh $*" >> "$CALLS"
+# A second record with each argv element bracketed: the flattened line above
+# cannot distinguish one remote command from several arguments, so the probe
+# assertions match this exact-capture form — a raw declaration row leaking to
+# ssh as the command is visible here and invisible above.
+{ printf 'ssh-argv'; printf ' [%s]' "$@"; echo; } >> "$CALLS"
 [ "${MOCK_SSH_RC:-0}" -eq 0 ] || exit "${MOCK_SSH_RC}"
 case "$*" in
+  "command -v "*|*" command -v "*)
+    exit "${MOCK_TOOL_RC:-0}" ;;
   *tart-stacks-vnc.service*)
     exit "${MOCK_VNC_START_RC:-0}" ;;
   */dev/tcp/127.0.0.1/5901*)
@@ -425,53 +441,112 @@ assert_rc       "a headless image smoked as a GUI flavor → FAIL" 1
 MOCK_TOOL_RC=127 run_smoke php fedora
 assert_rc       "toolchain unreachable non-interactively → FAIL" 1
 assert_contains "toolchain failure explains the consequence" "$(cat "$ERR")" "PATH wiring is broken"
-# The probe list is read from stacks/<stack>/smoke-probe, so each stack is
-# checked against what IT declares — not against a php-or-else-jvm fork that
-# probes a third stack for a runtime it does not have. Asserted against the
-# real files rather than a fixture: the point is that the shipped declarations
-# are the ones that run.
+# The probes come from the proof column of stacks/<stack>/tools, so each
+# stack is checked against what IT declares — not against a php-or-else-jvm
+# fork that probes a third stack for a runtime it does not have. Asserted
+# against the real files rather than a fixture: the point is that the shipped
+# declarations are the ones that run. The exact-capture ssh-argv form is what
+# proves COLUMN FIVE reached ssh as one whole command — a raw `tool|…` row
+# leaking through would carry the delimiter, asserted absent below.
 run_smoke php fedora
 assert_rc       "php declaration-driven run → exit 0 (probe loop actually ran)" 0
-assert_contains "php stack probes php"      "$(cat "$CALLS")" "php --version"
-assert_contains "php stack probes composer" "$(cat "$CALLS")" "composer --version"
+assert_probe_line "php stack probes php (exact remote command)"      "php --version"
+assert_probe_line "php stack probes composer (exact remote command)" "composer --version"
+assert_probe_line "php stack probes the pnpm shim (exact remote command)" "command -v pnpm"
 assert_absent   "php stack does not probe java" "$(cat "$CALLS")" "java"
+assert_absent   "no raw declaration row reached ssh as a command" "$(cat "$CALLS")" "[tool|"
 MOCK_MANIFEST_STACK=jvm run_smoke jvm fedora
 # The rc control is load-bearing: the loop below emits one assertion per
-# DATA line, so a comment-only smoke-probe would shrink it to zero
+# tool row, so a declaration with zero tool rows would shrink it to zero
 # assertions and this whole block would silently stop testing anything.
 assert_rc       "jvm declaration-driven run → exit 0 (probe loop actually ran)" 0
 jvm_calls="$(cat "$CALLS")"
 while IFS= read -r want; do
-  assert_contains "jvm stack probes '$want'" "$jvm_calls" "$want"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/stacks/jvm/smoke-probe")
+  assert_probe_line "jvm stack probes '$want' (exact remote command)" "$want"
+done < <(awk -F'|' '$1 == "tool" { print $5 }' "$REPO/stacks/jvm/tools")
 assert_absent "jvm stack does not probe php" "$jvm_calls" "php --version"
+assert_absent "no raw declaration row reached ssh as a command (jvm)" "$jvm_calls" "[tool|"
 
 # A stack with no declaration must FAIL rather than silently probe nothing:
 # "toolchain passed" having probed zero commands is the failure mode the data
-# file exists to prevent. Pinned to this gate's own wording — the empty-file
-# gate below also says "smoke-probe", so a looser match would stay green with
+# file exists to prevent. Pinned to this gate's own wording — the zero-rows
+# gate below also names the file, so a looser match would stay green with
 # this branch deleted.
 MOCK_MANIFEST_STACK=ghost run_smoke ghost fedora
-assert_rc       "a stack with no smoke-probe file → FAIL" 1
-assert_contains "missing probe list names the file" "$(cat "$ERR")" "no probe list at"
+assert_rc       "a stack with no tools file → FAIL" 1
+assert_contains "missing declaration names the file" "$(cat "$ERR")" "no tool declaration at"
 
-# Present but declaring nothing is the same defect in a different shape, and
-# takes the OTHER gate. script/smoke resolves stacks/ from its own location,
-# so the fixture is a scratch repo holding a copy of the script, the libs it
-# sources, the os token lists, and one stack whose smoke-probe is comment-only.
+# Present but declaring no tool rows is the same defect in two shapes —
+# comment-only, and ext-rows-only (a valid php-like declaration whose tool
+# rows were deleted): both must take the zero-rows gate, and the mixed
+# tool+ext control beside them proves ext rows don't break the probe loop.
+# script/smoke resolves stacks/ from its own location, so the fixture is a
+# scratch repo holding a copy of the script, the libs it sources, the os
+# token lists, and the fixture stacks.
 FAKE_REPO="$WORK/hollow-repo"
 mkdir -p "$FAKE_REPO/script" "$FAKE_REPO/bin/lib" "$FAKE_REPO/shared/linux" \
-         "$FAKE_REPO/shared/darwin" "$FAKE_REPO/stacks/hollow"
+         "$FAKE_REPO/shared/darwin" "$FAKE_REPO/stacks/hollow" \
+         "$FAKE_REPO/stacks/extonly" "$FAKE_REPO/stacks/mixed"
 cp "$SMOKE" "$FAKE_REPO/script/smoke"
 cp "$REPO"/bin/lib/*.sh "$FAKE_REPO/bin/lib/"
 cp "$REPO/shared/linux/os" "$FAKE_REPO/shared/linux/os"
 cp "$REPO/shared/darwin/os" "$FAKE_REPO/shared/darwin/os"
-printf '# a probe list holding only commentary\n\n' > "$FAKE_REPO/stacks/hollow/smoke-probe"
+printf '# a declaration holding only commentary\n\n' > "$FAKE_REPO/stacks/hollow/tools"
+printf 'ext|imagick|pecl\next|gd|bundled\n' > "$FAKE_REPO/stacks/extonly/tools"
+printf 'tool|uv|uv|mise:uv|uv --version|python project manager\next|imagick|pecl\n' > "$FAKE_REPO/stacks/mixed/tools"
 SMOKE_REAL="$SMOKE"; SMOKE="$FAKE_REPO/script/smoke"
 MOCK_MANIFEST_STACK=hollow run_smoke hollow fedora
+assert_rc       "a comment-only tools file → FAIL" 1
+assert_contains "zero tool rows names the vacuous pass it prevents" "$(cat "$ERR")" "declares no tool rows"
+MOCK_MANIFEST_STACK=extonly run_smoke extonly fedora
+assert_rc       "an ext-only tools file → FAIL (ext rows carry no runtime probe)" 1
+assert_contains "ext-only failure takes the zero-rows gate" "$(cat "$ERR")" "declares no tool rows"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "a mixed tool+ext file → exit 0 (must-pass control)" 0
+assert_probe_line "mixed file probes its tool row (exact remote command)" "uv --version"
+assert_absent   "mixed file never probes an ext row" "$(cat "$CALLS")" "imagick"
+# A malformed final row with an empty proof. The probe list carries
+# binary|proof per line, so even a trailing empty proof leaves a non-blank
+# line that command substitution cannot strip — the row reaches the loop and
+# the empty-proof gate refuses it (the row-count guard behind it stays as
+# defense in depth against a future format change reintroducing strippable
+# lines).
+printf 'tool|uv|uv|mise:uv|uv --version|python project manager\ntool|jq|jq|installer||broken row\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "a trailing empty-proof row → FAIL" 1
+assert_contains "the empty proof is named" "$(cat "$ERR")" "empty or whitespace-only proof column"
+# A whitespace-only proof is not empty to [ -z ] and a remote shell runs a
+# blank command successfully — the probe loop's own guard must catch it.
+printf 'tool|jq|jq|installer| |whitespace proof\ntool|uv|uv|mise:uv|uv --version|python project manager\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "a whitespace-only proof → FAIL" 1
+assert_contains "whitespace-only proof names the vacuous green it prevents" "$(cat "$ERR")" "whitespace-only proof column"
+# A proof that runs something other than its row's binary — `true` being the
+# canonical vacuous case — certifies nothing; smoke must refuse without
+# depending on the static suite having run.
+printf 'tool|uv|uv|mise:uv|true|vacuous proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "a proof not exercising its binary → FAIL" 1
+assert_contains "the mismatched proof names both sides" "$(cat "$ERR")" "does not exercise its row's binary 'uv'"
+# Shell syntax after a matching prefix — `uv --version; true` — would let the
+# trailing command mask the probed tool's own exit status.
+printf 'tool|uv|uv|mise:uv|uv --version; true|masked proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "shell syntax inside a proof → FAIL" 1
+assert_contains "the shell syntax is named" "$(cat "$ERR")" "contains shell syntax"
+# An assignment as binary+proof — FLAG=x — is inside the character class but
+# a shell runs it as an assignment, exits 0, and executes nothing.
+printf 'tool|flag|FLAG=x|installer|FLAG=x|assignment proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "an assignment-shaped proof → FAIL" 1
+assert_contains "the non-command argv0 is named" "$(cat "$ERR")" "does not begin with a command word"
+# An empty binary with a leading-space proof: argv0 comes out empty, which
+# matches no character-class pattern — only an explicit empty arm refuses it.
+printf 'tool|x||installer| uv --version|leading-space proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "an empty binary with a leading-space proof → FAIL" 1
+assert_contains "the empty argv0 is refused" "$(cat "$ERR")" "does not begin with a command word"
 SMOKE="$SMOKE_REAL"
-assert_rc       "a comment-only smoke-probe → FAIL" 1
-assert_contains "empty probe list names the vacuous pass it prevents" "$(cat "$ERR")" "lists no commands"
 
 # The hardening posture, read from sshd's effective config rather than the file.
 for missing in "passwordauthentication no" "permitrootlogin no" "kbdinteractiveauthentication no" "streamlocalbindunlink yes"; do
@@ -588,9 +663,8 @@ assert_contains "unexpected-port failure names the port"  "$(cat "$ERR")" "88"
 # still pass. Fixture format measured directly against the real `netstat -an
 # -p tcp` binary (macOS host) — IPv6 loopback prints unbracketed (`::1.PORT`),
 # NOT `[::1].PORT`; a bracketed fixture here would pass against code that
-# can't actually classify the real guest's output (round-1 mistake: both the
-# fixture and the classifier were wrong the same way, so the test proved
-# nothing).
+# can't actually classify the real guest's output — with the fixture and the
+# classifier wrong the same way, the test would prove nothing.
 MOCK_MANIFEST_OS=macos MOCK_MANIFEST_SWVERSID=macos \
   MOCK_NETSTAT_LISTENERS="$(printf 'tcp4 0 0 *.22 *.* LISTEN\ntcp4 0 0 127.0.0.1.4445 *.* LISTEN\ntcp6 0 0 ::1.4445 *.* LISTEN\ntcp4 0 0 127.0.0.1.8080 *.* LISTEN\ntcp6 0 0 ::1.8080 *.* LISTEN')" \
   run_smoke php macos

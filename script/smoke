@@ -233,32 +233,85 @@ fi
 # The toolchain has to be reachable the way an agent or a script reaches it: a
 # login shell with no rc file, which is what `ssh <vm> <cmd>` runs.
 #
-# The probe list is DATA, per stack, for the same reason packages.<family> is:
-# a two-way `php or else java` fork silently probes a third stack for the wrong
-# runtime, and it can only ever cover the one command it hardcodes — so
-# everything else a stack's README advertises goes unproven while the closing
-# line still reports "toolchain".
-PROBE_FILE="$REPO/stacks/$STACK/smoke-probe"
-if [ ! -f "$PROBE_FILE" ]; then
-  echo "$prog: FAIL — no probe list at stacks/$STACK/smoke-probe, so there is nothing to prove about this stack's toolchain (make scaffold stamps one; add a line per tool)." >&2
+# The probe commands are DATA, per stack, for the same reason packages.<family>
+# is: a two-way `php or else java` fork silently probes a third stack for the
+# wrong runtime, and it can only ever cover the one command it hardcodes. They
+# come from the proof column of the stack's tool declaration — the same rows
+# the build-time smoke_gate is held to (test/declaration.sh enforces that
+# equality), so what this loop proves at runtime is exactly what the build
+# gated, with no second list to drift. Only `tool` rows probe; `ext` rows are
+# build-time membership claims with no runtime command.
+TOOLS_FILE="$REPO/stacks/$STACK/tools"
+if [ ! -f "$TOOLS_FILE" ]; then
+  echo "$prog: FAIL — no tool declaration at stacks/$STACK/tools, so there is nothing to prove about this stack's toolchain (make scaffold stamps one; add a row per tool)." >&2
   exit 1
 fi
-probes=$(grep -vE '^[[:space:]]*(#|$)' "$PROBE_FILE" || true)
+probes=$(awk -F'|' '$1 == "tool" { print $3 "|" $5 }' "$TOOLS_FILE")
 if [ -z "$probes" ]; then
-  echo "$prog: FAIL — stacks/$STACK/smoke-probe lists no commands, so 'toolchain' below would pass without probing anything." >&2
+  echo "$prog: FAIL — stacks/$STACK/tools declares no tool rows, so 'toolchain' below would pass without probing anything." >&2
   exit 1
 fi
-while IFS= read -r probe; do
+# The row count is taken from the file independently of the probe
+# extraction, so a row the extraction or the loop loses for any reason fails
+# the comparison below instead of passing silently unprobed.
+n_rows=$(awk -F'|' '$1 == "tool"' "$TOOLS_FILE" | wc -l | tr -d ' ')
+n_probed=0
+while IFS='|' read -r binary probe; do
+  # A tool row whose proof column is empty or whitespace-only would hand ssh
+  # a blank command, which a login shell exits 0 on — a green with nothing
+  # probed. Refuse it here even though test/declaration.sh also rejects the
+  # row shape: this script must not depend on another check having run.
+  case "$probe" in
+    *[![:space:]]*) ;;
+    *)
+      echo "$prog: FAIL — a tool row in stacks/$STACK/tools has an empty or whitespace-only proof column; a blank ssh command exits 0 without probing anything." >&2
+      exit 1 ;;
+  esac
+  # The proof must be plain argv words — no shell syntax. Without this, a
+  # prefix like `uv --version; true` matches the binary check below and the
+  # `true` masks a missing tool; the static suite rejects the shape too, but
+  # this script's verdict must not depend on another check having run.
+  case "$probe" in
+    *[!A-Za-z0-9._+=/:@\ -]*)
+      echo "$prog: FAIL — the proof '$probe' in stacks/$STACK/tools contains shell syntax; proofs are argv words only, so nothing can mask the probed command's own exit status." >&2
+      exit 1 ;;
+  esac
+  # argv[0] gets the stricter command-word grammar: no =, :, or /, first
+  # character alphanumeric. A shell reads FLAG=x as an assignment and exits 0
+  # having executed nothing, so an assignment-shaped word must never be the
+  # command position.
+  argv0="${probe%% *}"
+  case "$argv0" in
+    ''|[!A-Za-z0-9_]*|*[!A-Za-z0-9._+-]*)
+      # The empty arm matters: a leading-space proof yields an empty argv0,
+      # which matches neither character-class pattern.
+      echo "$prog: FAIL — the proof '$probe' in stacks/$STACK/tools does not begin with a command word (an assignment, option, or leading space there runs nothing it claims to)." >&2
+      exit 1 ;;
+  esac
+  # And it must exercise the row's own binary — either executing it
+  # (argv[0]) or the blessed existence form `command -v <binary>` — or it
+  # certifies nothing about the tool.
+  case "$probe" in
+    "$binary"|"$binary "*|"command -v $binary") ;;
+    *)
+      echo "$prog: FAIL — the proof '$probe' does not exercise its row's binary '$binary' (stacks/$STACK/tools); a proof that runs something else certifies nothing about the tool." >&2
+      exit 1 ;;
+  esac
   # -n: ssh reads stdin by default, which here is the probe list feeding this
   # very loop — without it the first probe consumes the rest and only one tool
   # is ever checked.
   if ssh -n -o BatchMode=yes "tart-$VM" "$probe" >/dev/null 2>&1; then
     printf '%s: ok   %-22s %s\n' "$prog" "non-interactive" "$probe" >&2
+    n_probed=$((n_probed + 1))
   else
     echo "$prog: FAIL — '$probe' does not work over a non-interactive ssh, so the image's PATH wiring is broken for scripts and agents." >&2
     exit 1
   fi
 done <<< "$probes"
+if [ "$n_probed" -ne "$n_rows" ]; then
+  echo "$prog: FAIL — stacks/$STACK/tools has $n_rows tool row(s) but only $n_probed probe(s) ran — a row with an empty or malformed proof column was silently dropped." >&2
+  exit 1
+fi
 
 # The hardening posture 99-finalize establishes, read from sshd's own effective
 # config rather than from the drop-in file it was written into.

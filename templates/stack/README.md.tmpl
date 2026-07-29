@@ -8,9 +8,23 @@ This file documents what's in *this* stack.
 
 ## What's in this stack
 
-- **\<runtime\>** — version-managed via mise ([`files/mise.toml`](./files/mise.toml)).
+The inventory below is generated from [`tools`](./tools), the stack's canonical tool declaration: every **tool** row is hard-gated at build (the installers' `smoke_gate` calls are held to it by the test suite) and probed at runtime (`make smoke` runs each Runtime probe over a non-interactive ssh).
+
+<!-- tools:begin -->
+<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->
+| Tool | Managed by | Build gate | Runtime probe | Purpose |
+|---|---|---|---|---|
+| node | mise (`node = lts`) | smoke_gate | `node --version` | JS runtime baseline; replace or extend per the __STACK__ toolchain |
+| corepack | Corepack (enabled at build by mise_runtime_setup) | smoke_gate | `corepack --version` | package-manager shim dispatcher, ships with Node 24 and earlier |
+| pnpm | Corepack (enabled at build by mise_runtime_setup) | smoke_gate | `command -v pnpm` | Corepack shim; resolves per-project via package.json packageManager |
+| yarn | Corepack (enabled at build by mise_runtime_setup) | smoke_gate | `command -v yarn` | Corepack shim; resolves per-project via package.json packageManager |
+<!-- tools:end -->
+
+**Notes**
+
+- **Corepack shims** — `pnpm`/`yarn` resolve per project via `package.json`'s `packageManager`. The shims exist for Nodes that bundle Corepack (24 and earlier); a project-pinned Node 25+ gets no shims from either the mise setting or the build's enable step — provision Corepack yourself in that case.
 
 ## Customization
 
-- **Tool versions**: [`files/mise.toml`](./files/mise.toml).
+- **Tool versions**: [`files/mise.toml`](./files/mise.toml). Every tool needs its row in [`tools`](./tools) and its `smoke_gate` group in both installers — `make test` holds the three to equality; `make docs` regenerates the table above.
 - **Stack-specific build deps**: add packages to [`packages.dnf`](./packages.dnf) (Fedora/dnf names), [`packages.apt`](./packages.apt) (Debian/Ubuntu/apt names), and [`packages.brew`](./packages.brew) (Homebrew formula names) — keep all three aligned. [`scripts/00-stack.sh`](./scripts/00-stack.sh) reads the appropriate file for the OS being built.

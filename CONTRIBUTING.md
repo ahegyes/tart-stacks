@@ -15,7 +15,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
 
 ## Making changes
 
-1. Edit the relevant `shared/scripts/*.sh` (both platforms), `shared/linux/scripts/*.sh` or `shared/darwin/scripts/*.sh` (platform-only), `stacks/<name>/scripts/*.sh`, or `*/files/*` file.
+1. Edit the relevant `shared/scripts/*.sh` (both platforms), `shared/linux/scripts/*.sh` or `shared/darwin/scripts/*.sh` (platform-only), `stacks/<name>/scripts/*.sh`, or `*/files/*` file. A change that adds or removes a tool also touches `stacks/<name>/tools` (the canonical declaration), the matching `smoke_gate` group in both installers, and — via `make docs` — the README's generated inventory; `make test` holds all of them to each other, so a partial edit fails loudly rather than drifting.
 2. Fast pre-checks — mirror the CI gates locally:
    - `packer validate -var stack=<name> -var os=<os> linux.pkr.hcl` (or `darwin.pkr.hcl`, for an `<os>` from `shared/darwin/os`) (from the repo root, ~1s, HCL syntax) and `bash -n` on any script you changed — **syntax only, not proof of runtime behavior**.
    - `make test` — the plain-bash test suite (`test/*.sh`), exactly what the CI tests job runs.
@@ -30,7 +30,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
    tart-rm test-vm                    # guarded teardown when done
    ```
 
-> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, and `test`, run via `make`. `shared/scripts/`, `shared/linux/scripts/`, and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
+> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, `stack-docs`, and `test`, run via `make`. `shared/scripts/`, `shared/linux/scripts/`, and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
 
 ## PR conventions
 

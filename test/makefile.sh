@@ -265,12 +265,57 @@ for target in check-stack scaffold; do
   esac
 done
 
+# The docs targets and the generator's test wiring, pinned from outside the
+# files that carry them: `make docs`/`docs-check` must reach script/stack-docs,
+# and test/declaration.sh must actually invoke the --check — deleting that
+# block would otherwise leave every README block unverified while the rest of
+# the declaration suite stays green.
+echo "Makefile — the docs surface is wired:"
+# The complete executable recipe, pinned per target: the SCRIPT and the MODE
+# together — a mode word alone is satisfied by `echo --write`, and a bare
+# script mention by a recipe with the modes swapped.
+# shellcheck disable=SC2016  # the patterns match LITERAL Makefile text incl. $()
+if sed -n '/^docs:/,/^$/p' "$REPO/Makefile" | grep -qxF '	@"$(CURDIR)/script/stack-docs" --write'; then
+  ok "make docs runs stack-docs --write"
+else
+  bad "make docs runs stack-docs --write" "the docs recipe is not the pinned stack-docs --write line"
+fi
+# shellcheck disable=SC2016  # the pattern matches LITERAL Makefile text incl. $()
+if sed -n '/^docs-check:/,/^$/p' "$REPO/Makefile" | grep -qxF '	@"$(CURDIR)/script/stack-docs" --check'; then
+  ok "make docs-check runs stack-docs --check"
+else
+  bad "make docs-check runs stack-docs --check" "the docs-check recipe is not the pinned stack-docs --check line"
+fi
+# Two load-bearing invocations, pinned as WHOLE lines (the drift-control
+# fixture calls also name --check, and an unanchored fixed string is
+# satisfied by a comment carrying the same text beside a gutted call): the
+# bare call covers every stacks/*/ README, the $SCAF call the scaffold.
+# shellcheck disable=SC2016  # the patterns match LITERAL source text incl. $()
+if grep -qxF 'if out=$("$REPO/script/stack-docs" --check 2>&1); then' "$REPO/test/declaration.sh"; then
+  ok "test/declaration.sh --checks every stack README"
+else
+  bad "test/declaration.sh --checks every stack README" "the all-stacks stack-docs --check line is missing or reshaped"
+fi
+# shellcheck disable=SC2016  # the pattern matches LITERAL source text incl. $()
+if grep -qxF 'if out=$("$REPO/script/stack-docs" --check "$SCAF" 2>&1); then' "$REPO/test/declaration.sh"; then
+  ok "test/declaration.sh --checks the materialized scaffold"
+else
+  bad "test/declaration.sh --checks the materialized scaffold" "the scaffold stack-docs --check line is missing or reshaped"
+fi
+
 # The guard that makes every case above safe: a token the gates accept really does
 # get scaffolded, and it lands in the copy.
 echo "Makefile — scaffold writes only inside the sandbox:"
 assert_accepts "scaffold of a fresh valid token succeeds" scaffold STACK=probe
 if [ -f "$SANDBOX/stacks/probe/README.md" ]; then ok "scaffold wrote into the sandbox copy"
 else bad "scaffold wrote into the sandbox copy" "no $SANDBOX/stacks/probe/README.md"; fi
+# The tools declaration is what script/smoke probes and the gate checks hold
+# to — a scaffold without one stamps a stack that can never pass either.
+if [ -f "$SANDBOX/stacks/probe/tools" ]; then ok "scaffold stamped the tools declaration"
+else bad "scaffold stamped the tools declaration" "no $SANDBOX/stacks/probe/tools"; fi
+if grep -q '__STACK__' "$SANDBOX/stacks/probe/tools" 2>/dev/null; then
+  bad "the stamped tools file has no unsubstituted __STACK__" "placeholder survived"
+else ok "the stamped tools file has no unsubstituted __STACK__"; fi
 if [ -e "$REPO/stacks/probe" ]; then bad "scaffold left the checkout untouched" "$REPO/stacks/probe exists"
 else ok "scaffold left the checkout untouched"; fi
 

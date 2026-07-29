@@ -1,0 +1,24 @@
+# The stack's canonical tool declaration — the single source the verification
+# surfaces derive from. `script/smoke` executes each tool row's proof over
+# non-interactive ssh at runtime; test/declaration.sh holds the installers'
+# smoke_gate calls to set equality with the tool rows; script/stack-docs
+# generates the README inventory from all of it. Add one row per tool this
+# stack ships, AND its `-- <proof>` group in scripts/{linux,darwin}/
+# mise-install.sh — a row without its gate group, or a gate group without
+# its row, fails `make test`. Ext rows are build-time membership claims; the
+# first one also needs the `<!-- extensions:begin -->` and
+# `<!-- extensions:end -->` marker lines in README.md and a membership_gate
+# call in both installers (stack-docs and the suite name each missing piece).
+#
+# tool|<name>|<binary>|<managed-by>|<proof>|<purpose>
+#   name       canonical display name (== the mise key for plain mise: rows)
+#   binary     what the proof executes (name, unless the validator's alias
+#              table says otherwise)
+#   managed-by mise:<key> | node-corepack | installer
+#   proof      argv words, no shell syntax; `command -v <binary>` is the one
+#              blessed existence form, pnpm/yarn rows only
+# ext|<gate-token>|<source>   (only for stacks with a membership gate)
+tool|node|node|mise:node|node --version|JS runtime baseline; replace or extend per the __STACK__ toolchain
+tool|corepack|corepack|node-corepack|corepack --version|package-manager shim dispatcher, ships with Node 24 and earlier
+tool|pnpm|pnpm|node-corepack|command -v pnpm|Corepack shim; resolves per-project via package.json packageManager
+tool|yarn|yarn|node-corepack|command -v yarn|Corepack shim; resolves per-project via package.json packageManager

@@ -6,14 +6,55 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 
 ## What's in this stack
 
-**Version-managed runtimes** (via mise — installed by [`scripts/linux/mise-install.sh`](./scripts/linux/mise-install.sh) / [`scripts/darwin/mise-install.sh`](./scripts/darwin/mise-install.sh) per [`files/mise.toml`](./files/mise.toml))
+The inventory below is generated from [`tools`](./tools), the stack's canonical tool declaration: every **tool** row is hard-gated at build (the installers' `smoke_gate` calls are held to it by the test suite) and probed at runtime (`make smoke` runs each Runtime probe over a non-interactive ssh). **Extension** rows are proven at build time only, by the `membership_gate` check against `php -m` — the table's own columns say so.
+
+<!-- tools:begin -->
+<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->
+| Tool | Managed by | Build gate | Runtime probe | Purpose |
+|---|---|---|---|---|
+| node | mise (`node = lts`) | smoke_gate | `node --version` | JS runtime for tooling and mixed projects |
+| php | mise (`php = 8.5.8`) | smoke_gate | `php --version` | the PHP runtime, compiled from source via vfox-php |
+| composer | the stack's own installer script | smoke_gate | `composer --version` | PHP dependency manager |
+| corepack | Corepack (enabled at build by mise_runtime_setup) | smoke_gate | `corepack --version` | package-manager shim dispatcher, ships with Node 24 and earlier |
+| pnpm | Corepack (enabled at build by mise_runtime_setup) | smoke_gate | `command -v pnpm` | Corepack shim; resolves per-project via package.json packageManager |
+| yarn | Corepack (enabled at build by mise_runtime_setup) | smoke_gate | `command -v yarn` | Corepack shim; resolves per-project via package.json packageManager |
+<!-- tools:end -->
+
+### PHP extensions
+
+<!-- extensions:begin -->
+<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->
+| Extension | Source | Build gate | Runtime probe |
+|---|---|---|---|
+| pdo_sqlite | bundled | membership_gate | — |
+| sqlite3 | bundled | membership_gate | — |
+| mysqli | bundled | membership_gate | — |
+| pdo_mysql | bundled | membership_gate | — |
+| pdo_pgsql | bundled | membership_gate | — |
+| gd | bundled | membership_gate | — |
+| imagick | pecl | membership_gate | — |
+| redis | pecl | membership_gate | — |
+| memcached | pecl | membership_gate | — |
+| intl | bundled | membership_gate | — |
+| mbstring | bundled | membership_gate | — |
+| curl | bundled | membership_gate | — |
+| json | bundled | membership_gate | — |
+| zend opcache | bundled | membership_gate | — |
+| sodium | bundled | membership_gate | — |
+| readline | bundled | membership_gate | — |
+| bz2 | bundled | membership_gate | — |
+| zip | bundled | membership_gate | — |
+| openssl | bundled | membership_gate | — |
+| pcov | pecl | membership_gate | — |
+| xdebug | pecl | membership_gate | — |
+<!-- extensions:end -->
+
+**Notes**
 
 - **Node** — whichever LTS line mise's `lts` alias currently points to (`node = "lts"` in `files/mise.toml`). The alias is hardcoded in mise's source; jdx/mise bumps it shortly after each October LTS cutover, so fresh builds follow with a short lag.
-- **PHP 8.5** (pinned to a specific patch in `files/mise.toml`). Standard bundled extensions (DB drivers, GD, intl, mbstring, opcache, etc.) plus PECL adds: **Imagick**, **Redis**, **Memcached**, **PCOV** for coverage (always enabled — run `phpunit --coverage-text` or `--coverage-html=coverage/`), **Xdebug 3** (`XDEBUG_TRIGGER=1` to attach).
-
-**PHP toolchain**
-
-- **Composer** via the official installer (`~/.local/bin/composer`, self-updates with `composer self-update`).
+- **PHP** — pinned to a specific patch in `files/mise.toml`; compiled from source via mise+vfox-php. **PCOV is always enabled** — run `phpunit --coverage-text` or `--coverage-html=coverage/`; disable per-command with `php -d pcov.enabled=0`. **Xdebug 3** is in trigger mode: `XDEBUG_TRIGGER=1` to attach.
+- **Composer** — official installer (`~/.local/bin/composer`, self-updates with `composer self-update`).
+- **Corepack shims** — `pnpm`/`yarn` resolve per project via `package.json`'s `packageManager`. The shims exist for Nodes that bundle Corepack (24 and earlier); a project-pinned Node 25+ gets no shims from either the mise setting or the build's enable step — provision Corepack yourself in that case.
 
 **Stack-specific build dependencies** (installed by [`scripts/00-stack.sh`](./scripts/00-stack.sh))
 
@@ -26,14 +67,14 @@ PHP is compiled from source via mise+vfox-php, the plugin pinned in [`files/mise
 ## Customization
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml).
-- **Add or drop a PHP extension**: each PHP extension needs its build-dep package in [`packages.dnf`](./packages.dnf) (Fedora), [`packages.apt`](./packages.apt) (Debian/Ubuntu), and [`packages.brew`](./packages.brew) (darwin) — the inline comments list the extension each entry enables (e.g., `libpq-devel` / `libpq-dev` / `libpq` → `pdo_pgsql`). Pair every package change with the matching entry in the smoke-test list in both [`scripts/linux/mise-install.sh`](./scripts/linux/mise-install.sh) and [`scripts/darwin/mise-install.sh`](./scripts/darwin/mise-install.sh).
+- **Add or drop a PHP extension**: each PHP extension needs its build-dep package in [`packages.dnf`](./packages.dnf) (Fedora), [`packages.apt`](./packages.apt) (Debian/Ubuntu), and [`packages.brew`](./packages.brew) (darwin) — the inline comments list the extension each entry enables (e.g., `libpq-devel` / `libpq-dev` / `libpq` → `pdo_pgsql`). Then add the `ext|` row in [`tools`](./tools), the matching `membership_gate` token in both [`scripts/linux/mise-install.sh`](./scripts/linux/mise-install.sh) and [`scripts/darwin/mise-install.sh`](./scripts/darwin/mise-install.sh), and run `make docs` — `make test` fails until all three agree.
 - **Per-project version pin**: drop a `.mise.toml` in the project repo root and commit it, then run `mise trust` once inside the repo — project configs are deliberately untrusted until you do (that prompt is the supply-chain gate; a non-interactive agent runs `mise trust` as an explicit step). How much the gate covers moves with the mise release the image happened to install — see the note in [`files/mise.toml`](./files/mise.toml):
   ```toml
   [tools]
   node = "<major>"
   php  = "<major.minor.patch>"   # exact: a fuzzy "8.5" pulls RCs, which sort above the patch they precede
   ```
-- **PECL extension list**: edit the for-loop (identical in both) in [`scripts/linux/mise-install.sh`](./scripts/linux/mise-install.sh) and [`scripts/darwin/mise-install.sh`](./scripts/darwin/mise-install.sh) (`for ext in pcov xdebug imagick redis memcached; do`). Add to the smoke-test list too so a missing one fails the build.
+- **PECL extension list**: edit the for-loop (identical in both) in [`scripts/linux/mise-install.sh`](./scripts/linux/mise-install.sh) and [`scripts/darwin/mise-install.sh`](./scripts/darwin/mise-install.sh) (`for ext in pcov xdebug imagick redis memcached; do`), with the matching `ext|<name>|pecl` row in [`tools`](./tools) and `membership_gate` token — the test suite holds all three to equality, so a missing one fails `make test` before it can fail a build.
 - **Shell baseline**: [`shared/files/zshrc`](../../shared/files/zshrc) (affects every stack; edit there only if it's not stack-specific).
 
 ## Troubleshooting
