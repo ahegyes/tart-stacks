@@ -6,9 +6,9 @@
 # stack ships, AND its `-- <proof>` group in scripts/{linux,darwin}/
 # mise-install.sh — a row without its gate group, or a gate group without
 # its row, fails `make test`. Ext rows are build-time membership claims; the
-# first one also needs `<!-- extensions:begin/end -->` markers in README.md
-# and a membership_gate call in both installers (stack-docs and the suite
-# name each missing piece).
+# first one also needs the `<!-- extensions:begin -->` and
+# `<!-- extensions:end -->` marker lines in README.md and a membership_gate
+# call in both installers (stack-docs and the suite name each missing piece).
 #
 # tool|<name>|<binary>|<managed-by>|<proof>|<purpose>
 #   name       canonical display name (== the mise key for plain mise: rows)

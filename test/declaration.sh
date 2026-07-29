@@ -264,11 +264,12 @@ membership_tokens() { # <installer> — one token per line; ERR lines on misuse
     # The listing must be DOUBLE-quoted in the source: lex_tokens erases the
     # quote kind, and a single-quoted listing hands the gate the literal
     # string instead of the command substitution — a shape the build could
-    # never pass, so the static check must not certify it.
-    case "$call" in
-      *'"$(php -m)"'*) ;;
-      *) printf 'ERR\tmembership listing must be the double-quoted "$(php -m)" — a single-quoted listing is a literal string, never the module list\n' ;;
-    esac
+    # never pass, so the static check must not certify it. Checked BY
+    # POSITION (label token, then the listing) — an anywhere-match would let
+    # a decoy label spelled "$(php -m)" vouch for a single-quoted listing.
+    if ! printf '%s\n' "$call" | grep -qE '^membership_gate[[:space:]]+"[^"]*"[[:space:]]+"\$\(php -m\)"([[:space:]]|$)'; then
+      printf 'ERR\tmembership listing must be the double-quoted "$(php -m)" in argument position two — a single-quoted listing is a literal string, never the module list\n'
+    fi
     printf '%s\n' "$call" | lex_tokens | awk '
       NR == 1 { next }        # the literal membership_gate word
       NR == 2 { next }        # the label
@@ -977,6 +978,14 @@ fixture_red "single-quoted membership listing (a literal, never the module list)
 
 mut_piped_value()     { mk_stack "$1"; printf '[tools]\nuv = "latest|greatest"\n' > "$1/files/mise.toml"; }
 fixture_red "a pipe inside a quoted TOML value" "unsupported value" mut_piped_value
+
+mut_decoy_label()     { mk_stack "$1"; printf 'ext|imagick|pecl\n' >> "$1/tools"
+  local p
+  for p in linux darwin; do
+    printf 'smoke_gate "r" -- uv --version\nfor ext in imagick; do\n  :\ndone\nmembership_gate "$(php -m)" '"'"'$(php -m)'"'"' imagick\n' > "$1/scripts/$p/mise-install.sh"
+  done
+}
+fixture_red "a decoy label vouching for a single-quoted listing" "argument position two" mut_decoy_label
 
 mut_double_heredoc()  { mk_stack "$1"
   printf 'cat <<A <<B\nx\nA\ny\nB\nsmoke_gate "runtimes" -- uv --version\n' > "$1/scripts/linux/mise-install.sh"

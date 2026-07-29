@@ -528,6 +528,12 @@ printf 'tool|uv|uv|mise:uv|true|vacuous proof\n' > "$FAKE_REPO/stacks/mixed/tool
 MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
 assert_rc       "a proof not exercising its binary → FAIL" 1
 assert_contains "the mismatched proof names both sides" "$(cat "$ERR")" "does not exercise its row's binary 'uv'"
+# Shell syntax after a matching prefix — `uv --version; true` — would let the
+# trailing command mask the probed tool's own exit status.
+printf 'tool|uv|uv|mise:uv|uv --version; true|masked proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "shell syntax inside a proof → FAIL" 1
+assert_contains "the shell syntax is named" "$(cat "$ERR")" "contains shell syntax"
 SMOKE="$SMOKE_REAL"
 
 # The hardening posture, read from sshd's effective config rather than the file.

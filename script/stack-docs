@@ -94,7 +94,7 @@ gen_tools() {
 gen_exts() {
   local dir="$1" token source
   grep -q '^ext|' "$dir/tools" || return 0
-  printf '<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->\n'
+  printf '<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->\n'
   printf '| Extension | Source | Build gate | Runtime probe |\n'
   printf '|---|---|---|---|\n'
   while IFS='|' read -r _ token source; do

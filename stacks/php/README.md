@@ -23,7 +23,7 @@ The inventory below is generated from [`tools`](./tools), the stack's canonical 
 ### PHP extensions
 
 <!-- extensions:begin -->
-<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->
+<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->
 | Extension | Source | Build gate | Runtime probe |
 |---|---|---|---|
 | pdo_sqlite | bundled | membership_gate | — |

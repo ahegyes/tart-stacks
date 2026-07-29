@@ -251,9 +251,10 @@ if [ -z "$probes" ]; then
   echo "$prog: FAIL — stacks/$STACK/tools declares no tool rows, so 'toolchain' below would pass without probing anything." >&2
   exit 1
 fi
-# Counted from the file, compared after the loop: command substitution strips
-# trailing newlines, so a malformed final row with an empty proof would
-# otherwise vanish from $probes and its tool would pass unprobed.
+# Counted from the file, compared after the loop — defense in depth: the
+# binary|proof lines are nonblank even with an empty proof, but the count
+# guard survives any future format change that reintroduces strippable
+# lines into the command substitution.
 n_rows=$(awk -F'|' '$1 == "tool"' "$TOOLS_FILE" | wc -l | tr -d ' ')
 n_probed=0
 while IFS='|' read -r binary probe; do
@@ -267,11 +268,18 @@ while IFS='|' read -r binary probe; do
       echo "$prog: FAIL — a tool row in stacks/$STACK/tools has an empty or whitespace-only proof column; a blank ssh command exits 0 without probing anything." >&2
       exit 1 ;;
   esac
-  # The proof must exercise the row's own binary — either executing it
-  # (argv[0]) or the blessed existence form `command -v <binary>`. Without
-  # this, a row whose proof is `true` certifies its tool with a command that
-  # touches nothing; the static suite rejects the shape too, but this
-  # script's verdict must not depend on another check having run.
+  # The proof must be plain argv words — no shell syntax. Without this, a
+  # prefix like `uv --version; true` matches the binary check below and the
+  # `true` masks a missing tool; the static suite rejects the shape too, but
+  # this script's verdict must not depend on another check having run.
+  case "$probe" in
+    *[!A-Za-z0-9._+=/:@\ -]*)
+      echo "$prog: FAIL — the proof '$probe' in stacks/$STACK/tools contains shell syntax; proofs are argv words only, so nothing can mask the probed command's own exit status." >&2
+      exit 1 ;;
+  esac
+  # And it must exercise the row's own binary — either executing it
+  # (argv[0]) or the blessed existence form `command -v <binary>` — or it
+  # certifies nothing about the tool.
   case "$probe" in
     "$binary"|"$binary "*|"command -v $binary") ;;
     *)
