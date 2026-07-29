@@ -623,12 +623,16 @@ if cmp -s "$DRIFT/README.md" "$REPO/stacks/php/README.md"; then
 else
   bad "--write reproduces the shipped README byte-for-byte (prose outside markers untouched)" "$(diff "$REPO/stacks/php/README.md" "$DRIFT/README.md" | head -5)"
 fi
-before=$(cat "$DRIFT/README.md")
-"$REPO/script/stack-docs" --write "$DRIFT" >/dev/null 2>&1
-if [ "$before" = "$(cat "$DRIFT/README.md")" ]; then
-  ok "--write is idempotent"
+# Byte comparison via cmp on a snapshot file — command substitution strips
+# trailing newlines and would hide exactly the kind of drift this asserts —
+# and the second write's own exit status is part of the claim.
+cp "$DRIFT/README.md" "$WORK/write-snapshot"
+if "$REPO/script/stack-docs" --write "$DRIFT" >/dev/null 2>&1 \
+   && cmp -s "$WORK/write-snapshot" "$DRIFT/README.md" \
+   && "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+  ok "--write is idempotent (rc 0, byte-identical, --check-clean)"
 else
-  bad "--write is idempotent" "a second write changed the file"
+  bad "--write is idempotent (rc 0, byte-identical, --check-clean)" "$(cmp "$WORK/write-snapshot" "$DRIFT/README.md" 2>&1 | head -2)"
 fi
 
 # Markers missing entirely must be fatal, not silently skipped.
@@ -660,6 +664,50 @@ if out=$("$REPO/script/stack-docs" --check "$DRIFT" 2>&1); then
 else
   ok "ext rows removed but markers kept → --check fails (must-fail control)"
   assert_contains "the stale-extensions failure names the transition" "$out" "no ext rows"
+fi
+
+# The generator's input preflights, pinned: a missing mise.toml and a mise:
+# key with no [tools] value must refuse — and --write must leave the README
+# untouched, never render empty cells as generated facts.
+mk_drift "$DRIFT"
+rm "$DRIFT/files/mise.toml"
+cp "$DRIFT/README.md" "$WORK/preflight-snapshot"
+if out=$("$REPO/script/stack-docs" --write "$DRIFT" 2>&1); then
+  bad "missing mise.toml → stack-docs refuses (must-fail control)" "write passed with no mise.toml"
+else
+  ok "missing mise.toml → stack-docs refuses (must-fail control)"
+  assert_contains "missing mise.toml is diagnosed" "$out" "no files/mise.toml"
+fi
+if cmp -s "$WORK/preflight-snapshot" "$DRIFT/README.md"; then
+  ok "missing mise.toml → the README is untouched"
+else
+  bad "missing mise.toml → the README is untouched" "the refused write still modified the README"
+fi
+mk_drift "$DRIFT"
+sed '/^php = /d' "$DRIFT/files/mise.toml" > "$DRIFT/files/mise.toml.t" && mv "$DRIFT/files/mise.toml.t" "$DRIFT/files/mise.toml"
+cp "$DRIFT/README.md" "$WORK/preflight-snapshot"
+if out=$("$REPO/script/stack-docs" --write "$DRIFT" 2>&1); then
+  bad "a mise: key with no [tools] value → stack-docs refuses (must-fail control)" "write passed with the php value missing"
+else
+  ok "a mise: key with no [tools] value → stack-docs refuses (must-fail control)"
+  assert_contains "the missing key is diagnosed" "$out" "no [tools] value for 'php'"
+fi
+if cmp -s "$WORK/preflight-snapshot" "$DRIFT/README.md"; then
+  ok "a missing key → the README is untouched"
+else
+  bad "a missing key → the README is untouched" "the refused write still modified the README"
+fi
+
+# A stray end-only extensions marker with zero ext rows is the same stale
+# hazard as a kept pair, and must be caught as a whole line.
+mk_drift "$DRIFT"
+grep -v '^ext|' "$DRIFT/tools" > "$DRIFT/tools.t" && mv "$DRIFT/tools.t" "$DRIFT/tools"
+sed '/<!-- extensions:begin -->/,/<!-- extensions:end -->/d' "$DRIFT/README.md" > "$DRIFT/README.md.t" && mv "$DRIFT/README.md.t" "$DRIFT/README.md"
+printf '<!-- extensions:end -->\n' >> "$DRIFT/README.md"
+if "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+  bad "an end-only extensions marker with zero ext rows → --check fails" "the stray marker passed"
+else
+  ok "an end-only extensions marker with zero ext rows → --check fails"
 fi
 
 # ── script/smoke wiring ─────────────────────────────────────────────────────

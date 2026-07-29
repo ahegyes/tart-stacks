@@ -167,10 +167,12 @@ for dir in "${dirs[@]}"; do
     tmp2=$(mktemp)
     splice "$tmp_new" extensions "$tmp_exts" > "$tmp2"
     mv "$tmp2" "$tmp_new"
-  elif grep -q '<!-- extensions:begin -->' "$readme"; then
-    # Zero ext rows with extensions markers still in the README: the stale
-    # block would otherwise survive every --check as untouched prose. The
-    # transition is explicit — declare ext rows or remove the markers.
+  elif grep -qxE '<!-- extensions:(begin|end) -->' "$readme"; then
+    # Zero ext rows with EITHER extensions marker still in the README, matched
+    # as a whole line: the stale block (or a stray end marker) would otherwise
+    # survive every --check as untouched prose, while prose merely mentioning
+    # the marker text must not trip this. The transition is explicit — declare
+    # ext rows or remove the markers.
     echo "$prog: $name: README has extensions markers but the tools declaration has no ext rows — remove the markers (or restore the rows)" >&2
     rm -f "$tmp_tools" "$tmp_exts" "$tmp_new"; trap - EXIT; rc=1; continue
   fi

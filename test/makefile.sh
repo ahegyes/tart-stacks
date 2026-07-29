@@ -271,17 +271,20 @@ done
 # block would otherwise leave every README block unverified while the rest of
 # the declaration suite stays green.
 echo "Makefile — the docs surface is wired:"
-# Each target must carry its own MODE, not merely name the script — swapped
-# modes would rewrite on check and check on write.
-if sed -n '/^docs:/,/^$/p' "$REPO/Makefile" | grep -q -- '--write'; then
+# The complete executable recipe, pinned per target: the SCRIPT and the MODE
+# together — a mode word alone is satisfied by `echo --write`, and a bare
+# script mention by a recipe with the modes swapped.
+# shellcheck disable=SC2016  # the patterns match LITERAL Makefile text incl. $()
+if sed -n '/^docs:/,/^$/p' "$REPO/Makefile" | grep -qxF '	@"$(CURDIR)/script/stack-docs" --write'; then
   ok "make docs runs stack-docs --write"
 else
-  bad "make docs runs stack-docs --write" "no --write call under the docs target"
+  bad "make docs runs stack-docs --write" "the docs recipe is not the pinned stack-docs --write line"
 fi
-if sed -n '/^docs-check:/,/^$/p' "$REPO/Makefile" | grep -q -- '--check'; then
+# shellcheck disable=SC2016  # the pattern matches LITERAL Makefile text incl. $()
+if sed -n '/^docs-check:/,/^$/p' "$REPO/Makefile" | grep -qxF '	@"$(CURDIR)/script/stack-docs" --check'; then
   ok "make docs-check runs stack-docs --check"
 else
-  bad "make docs-check runs stack-docs --check" "no --check call under the docs-check target"
+  bad "make docs-check runs stack-docs --check" "the docs-check recipe is not the pinned stack-docs --check line"
 fi
 # Two load-bearing invocations, pinned as WHOLE lines (the drift-control
 # fixture calls also name --check, and an unanchored fixed string is

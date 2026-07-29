@@ -30,7 +30,7 @@ See the [README](./README.md) for the Secure Enclave SSH key + SSH config setup 
    tart-rm test-vm                    # guarded teardown when done
    ```
 
-> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, and `test`, run via `make`. `shared/scripts/`, `shared/linux/scripts/`, and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
+> **`script/` vs `scripts/`:** `script/` (singular) holds host tooling — `setup`, `smoke`, `stack-docs`, and `test`, run via `make`. `shared/scripts/`, `shared/linux/scripts/`, and `stacks/*/scripts/` (plural) are the in-VM provisioners. The one-character difference is intentional but easy to trip on.
 
 ## PR conventions
 
