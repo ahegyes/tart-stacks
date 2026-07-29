@@ -44,6 +44,22 @@ mise_runtime_setup() {
   fi
 }
 
+# retry_once <what> <fn> [args…] — run the command; if it fails, wait briefly
+# and run it once more, returning the second attempt's status. For install
+# steps whose upstream serves metadata best-effort: pecl.php.net's REST
+# endpoints fail momentarily often enough to kill a ~15-minute build at the
+# extension step, and one bounded retry absorbs exactly that case while a
+# genuinely broken package still fails both attempts — the stack's hard gate
+# still rules either way. The delay is env-tunable only so the mocked tests
+# need not wait out a real pause; builds use the default.
+retry_once() {
+  local what="$1"; shift
+  if "$@"; then return 0; fi
+  echo "WARNING: $what failed — retrying once in ${RETRY_ONCE_DELAY:-10}s (upstream metadata failures are often transient)..." >&2
+  sleep "${RETRY_ONCE_DELAY:-10}"
+  "$@"
+}
+
 # membership_gate <label> <listing> <name…> — HARD GATE for a stack whose smoke
 # is membership-based rather than command-based: check each <name> against a
 # listing the caller already captured, print one line per name, and exit 1 if any

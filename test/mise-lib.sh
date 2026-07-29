@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Characterization tests for shared/scripts/mise-lib.sh's smoke_gate: the
 # `--`-delimited argv-group grammar, word-split safety of arguments, the
-# FAILED path's count + hard exit, and empty-group tolerance. The lib is
-# function-definitions-only, so sourcing it is side-effect free; each gate run
+# FAILED path's count + hard exit, and empty-group tolerance — plus retry_once
+# (attempt counting via a mock that fails a set number of times; no captured
+# fixture needed because retry_once reads only exit status, never output
+# format). The lib is function-definitions-only, so sourcing it is side-effect
+# free; each gate run
 # happens in a subshell because a failing gate exits the shell that ran it.
 # mise_runtime_setup is NOT driven here — it calls the real mise and is proven
 # by an image rebuild. Plain bash, no framework. Run via script/test or directly.
@@ -71,6 +74,54 @@ assert_absent   "no empty-group FAILED noise" "$OUT" "FAILED"
 run_gate_strict "bulky" -- sh -c 'i=0; while [ $i -lt 20000 ]; do printf "line%06d\n" $i; i=$((i+1)); done'
 assert_eq       "a command with output past the pipe buffer → exit 0" 0 "$rc"
 assert_contains "its first line is still reported" "$OUT" "line000000"
+
+# ── retry_once ──────────────────────────────────────────────────────────────
+# The mock counts attempts through a file (the retry runs "$@" in this same
+# shell, but a file survives any future subshell refactor) and fails until the
+# call count reaches its threshold — exit-status-only, since retry_once never
+# reads output. RETRY_ONCE_DELAY=0 skips the real pause.
+echo
+echo "mise-lib — retry_once:"
+export RETRY_ONCE_DELAY=0
+
+flaky() { # <succeed_on_attempt> [rc_on_failure] — fails with rc until then
+  local need="$1" rc="${2:-1}" n
+  n=$(( $(cat "$WORK/attempts" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$WORK/attempts"
+  [ "$n" -ge "$need" ] || return "$rc"
+}
+attempts() { cat "$WORK/attempts" 2>/dev/null || echo 0; }
+run_retry() { # args… — exit code in $rc, combined output in $OUT, counter reset
+  rm -f "$WORK/attempts"
+  rc=0
+  OUT=$( (retry_once "$@") 2>&1 ) || rc=$?
+}
+
+run_retry "first-try success" flaky 1
+assert_eq     "first attempt succeeds → exit 0"       0 "$rc"
+assert_eq     "no second attempt is made"             1 "$(attempts)"
+assert_absent "no retry warning on success"           "$OUT" "retrying"
+
+# The case the retry exists for: a momentary upstream failure absorbed.
+run_retry "transient failure" flaky 2
+assert_eq       "fails once then succeeds → exit 0"   0 "$rc"
+assert_eq       "exactly two attempts were made"      2 "$(attempts)"
+assert_contains "the retry announces itself"          "$OUT" "transient failure failed — retrying once"
+
+# Must-pass control: a genuinely broken command still fails, after exactly one
+# retry — bounded, not a loop — and the underlying status is surfaced.
+run_retry "hard failure" flaky 99 3
+assert_eq "always-failing command → still fails"      3 "$rc"
+assert_eq "bounded: exactly two attempts, never more" 2 "$(attempts)"
+
+# Arguments pass through as argv, never a string — same word-split property
+# the gates hold.
+# shellcheck disable=SC2016  # $1/$2 are for the inner sh, not this shell
+run_retry "spacing" sh -c 'printf "%s|%s\n" "$1" "$2"' _ "a b" "c d"
+assert_eq       "spaced args → exit 0"                0 "$rc"
+assert_contains "spaced args arrive unsplit"          "$OUT" "a b|c d"
+
+unset RETRY_ONCE_DELAY
 
 # ── membership_gate ─────────────────────────────────────────────────────────
 # Three `php -m` fixtures, shaped exactly as PHP CLI prints them. The third is
@@ -208,6 +259,15 @@ for inst in "$REPO"/stacks/php/scripts/*/mise-install.sh; do
     ok "${inst#"$REPO"/stacks/} calls membership_gate"
   else
     bad "${inst#"$REPO"/stacks/} calls membership_gate" "no call found — PHP extensions would go unchecked"
+  fi
+  # Anchored past leading whitespace to the executable `if`, because comments
+  # in both installers also name retry_once — same reasoning as the source
+  # check above.
+  # shellcheck disable=SC2016  # $ext is a literal in the grep pattern, not an expansion
+  if grep -qE '^[[:space:]]*if retry_once "pecl install \$ext" pecl_install_one ' "$inst"; then
+    ok "${inst#"$REPO"/stacks/} wraps pecl install in retry_once"
+  else
+    bad "${inst#"$REPO"/stacks/} wraps pecl install in retry_once" "no retry_once call around pecl_install_one — a transient metadata failure would kill the build"
   fi
 done
 

@@ -46,11 +46,20 @@ echo "==> Installing PECL extensions (pcov, xdebug, imagick, redis, memcached)..
 # place, which is the behaviour without this line, and the gate below still rules.
 pecl channel-update pecl.php.net \
   || echo "WARNING: pecl channel-update failed; continuing with bundled channel metadata." >&2
+# Subshell disables pipefail just for this pipeline: `yes` exits 141 on
+# SIGPIPE when pecl closes stdin, which pipefail would misread as failure.
+# A function (same shape as the darwin peer's) so retry_once can re-run the
+# whole pipeline as one unit.
+pecl_install_one() {
+  (set +o pipefail; yes '' | pecl install "$1")
+}
 declare -A pecl_ok=()
 for ext in pcov xdebug imagick redis memcached; do
-  # Subshell disables pipefail just for this pipeline: `yes` exits 141 on
-  # SIGPIPE when pecl closes stdin, which pipefail would misread as failure.
-  if (set +o pipefail; yes '' | pecl install "$ext"); then
+  # retry_once: beyond the channel-update race above, pecl.php.net's REST
+  # metadata itself fails momentarily mid-loop, and a single such failure
+  # otherwise costs the whole build at the gate below. A genuinely broken
+  # extension fails both attempts and the gate still rules.
+  if retry_once "pecl install $ext" pecl_install_one "$ext"; then
     pecl_ok[$ext]=1
   else
     echo "WARNING: pecl install $ext failed — ini file will be skipped." >&2
