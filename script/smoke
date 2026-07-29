@@ -257,14 +257,16 @@ fi
 n_rows=$(awk -F'|' '$1 == "tool"' "$TOOLS_FILE" | wc -l | tr -d ' ')
 n_probed=0
 while IFS= read -r probe; do
-  # A tool row whose proof column is empty would hand ssh an empty command,
-  # which a login shell exits 0 on — a green with nothing probed. Refuse it
-  # here even though test/declaration.sh also rejects the row shape: this
-  # script must not depend on another check having run.
-  if [ -z "$probe" ]; then
-    echo "$prog: FAIL — a tool row in stacks/$STACK/tools has an empty proof column; an empty ssh command exits 0 without probing anything." >&2
-    exit 1
-  fi
+  # A tool row whose proof column is empty or whitespace-only would hand ssh
+  # a blank command, which a login shell exits 0 on — a green with nothing
+  # probed. Refuse it here even though test/declaration.sh also rejects the
+  # row shape: this script must not depend on another check having run.
+  case "$probe" in
+    *[![:space:]]*) ;;
+    *)
+      echo "$prog: FAIL — a tool row in stacks/$STACK/tools has an empty or whitespace-only proof column; a blank ssh command exits 0 without probing anything." >&2
+      exit 1 ;;
+  esac
   # -n: ssh reads stdin by default, which here is the probe list feeding this
   # very loop — without it the first probe consumes the rest and only one tool
   # is ever checked.

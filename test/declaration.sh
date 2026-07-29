@@ -115,8 +115,15 @@ parse_mise() { # <mise.toml>
         next
       }
       if (sect == "ROOT") { print "ERR\troot-level assignment (every assignment belongs to a section): " $0; next }
+      # TOML basic strings decode backslash escapes ("experimental" is
+      # the key experimental) — outside the closed subset, so any backslash
+      # in a quoted key is rejected rather than compared undecoded.
+      if (quoted == "quoted" && key ~ /\\/) { print "ERR\tbackslash escape in quoted key (outside the closed subset): " $0; next }
       sub(/[ \t]*$/, "", val)
-      if (val ~ /^"[^"]*"$/) { sub(/^"/, "", val); sub(/"$/, "", val) }
+      # Quoted values KEEP their quotes in the output: a TOML string "true"
+      # is not the boolean true, and stripping the quotes here would let the
+      # setting check downstream conflate them.
+      if (val ~ /^"[^"]*"$/) ;
       else if (val ~ /^[A-Za-z0-9._-]+$/) ;
       else {
         print "ERR\tunsupported value in " sect ": " $0
@@ -150,16 +157,21 @@ gate_calls() { # <installer> <gate-name> — one joined call text per line; ERR 
       if (!cont) { print text; text = ""; incall = 0 }
       next
     }
-    # Heredoc start on any line: <<EOF, <<-EOF, <<\x27EOF\x27, <<"EOF". The
-    # terminator is matched as the whole line, which is how every heredoc in
-    # this repo is written.
-    match($0, /<<-?[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/) {
+    # Heredoc start on any line: <<EOF, << EOF, <<-EOF, <<\x27EOF\x27,
+    # <<"EOF" — optional whitespace between << and the delimiter is valid
+    # bash and must not leave the body live. Herestrings (<<<) do not match:
+    # the third < fails the delimiter class. The terminator is matched as the
+    # whole line, which is how every heredoc in this repo is written. This is
+    # still syntactic parity, not a shell parser — a gate spelled inside a
+    # multiline quoted string would need one; none exists in this repo and
+    # the r5-1 contract already scopes execution proof to the build log.
+    /<</ && match($0, /<<-?[ \t]*[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/) && substr($0, RSTART + 2, 1) != "<" {
       hd_term = substr($0, RSTART, RLENGTH)
-      sub(/^<<-?/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
+      sub(/^<<-?[ \t]*/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
       inheredoc = 1
       next
     }
-    index($0, gate " ") == 1 {
+    index($0, gate) == 1 && (length($0) == length(gate) || substr($0, length(gate) + 1, 1) == " " || substr($0, length(gate) + 1, 1) == "\t") {
       line = $0
       cont = (line ~ /\\$/)
       sub(/[ \t]*\\$/, "", line)
@@ -204,9 +216,14 @@ smoke_gate_groups() { # <installer> — one \x1f-joined group per line; ERR line
     printf '%s\n' "$call" | lex_tokens | awk '
       NR == 1 { next }        # the literal smoke_gate word
       NR == 2 { next }        # the label
-      $0 == "--" { if (grp != "") print grp; grp = ""; next }
-      { grp = (grp == "" ? $0 : grp "\037" $0) }
-      END { if (grp != "") print grp }
+      $0 == "--" { if (n) print grp; grp = ""; n = 0; next }
+      # An empty token is never a legal argv word (the proof grammar has no
+      # empty words), and folding it away would let -- "" uv --version
+      # compare equal to the two-word proof while the real gate execs an
+      # empty argv[0].
+      $0 == "" { print "ERR\tempty token in a smoke_gate group"; next }
+      { grp = (n ? grp "\037" $0 : $0); n++ }
+      END { if (n) print grp }
     '
   done < <(gate_calls "$1" smoke_gate)
 }
@@ -725,6 +742,25 @@ fixture_red "empty quoted membership token" "empty membership token" mut_memb_em
 mut_ext_only()        { mk_stack "$1"; printf 'ext|imagick|pecl\n' > "$1/tools"
   local p; for p in linux darwin; do printf 'for ext in imagick; do\n  :\ndone\nmembership_gate "exts" "$(php -m)" imagick\n' > "$1/scripts/$p/mise-install.sh"; done; }
 fixture_red "ext-only declaration (zero tool rows)" "no tool rows" mut_ext_only
+
+# ── the holes the CP1 round-2 review closed, each pinned red ────────────────
+
+mut_spaced_heredoc()  { mk_stack "$1"
+  printf 'cat > /tmp/x << EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
+}
+fixture_red "gate text inside a space-delimited heredoc" "declared proofs missing" mut_spaced_heredoc
+
+mut_empty_group_tok() { mk_stack "$1"; printf 'smoke_gate "runtimes" -- "" uv --version\n' > "$1/scripts/linux/mise-install.sh"; }
+fixture_red "leading empty token in a gate group" "empty token in a smoke_gate group" mut_empty_group_tok
+
+mut_string_setting()  { mk_node_stack "$1"; printf '[tools]\nnode = "lts"\n\n[settings]\nnode.corepack = "true"\n' > "$1/files/mise.toml"; }
+fixture_red "node.corepack = \"true\" as a TOML string" "must set node.corepack = true" mut_string_setting
+
+mut_escaped_key()     { mk_stack "$1"; printf '[tools]\nuv = "latest"\n\n[settings]\n"experi\\u006Dental" = true\n' > "$1/files/mise.toml"; }
+fixture_red "backslash escape in a quoted key" "backslash escape" mut_escaped_key
+
+mut_bare_membership() { mk_stack "$1"; printf 'membership_gate\n' >> "$1/scripts/linux/mise-install.sh"; }
+fixture_red "bare membership_gate call" "no listing argument" mut_bare_membership
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

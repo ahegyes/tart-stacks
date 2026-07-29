@@ -512,6 +512,12 @@ printf 'tool|uv|uv|mise:uv|uv --version|python project manager\ntool|jq|jq|insta
 MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
 assert_rc       "a trailing empty-proof row → FAIL (row-count guard)" 1
 assert_contains "row-count guard names the drop" "$(cat "$ERR")" "silently dropped"
+# A whitespace-only proof is not empty to [ -z ] and a remote shell runs a
+# blank command successfully — the probe loop's own guard must catch it.
+printf 'tool|jq|jq|installer| |whitespace proof\ntool|uv|uv|mise:uv|uv --version|python project manager\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "a whitespace-only proof → FAIL" 1
+assert_contains "whitespace-only proof names the vacuous green it prevents" "$(cat "$ERR")" "whitespace-only proof column"
 SMOKE="$SMOKE_REAL"
 
 # The hardening posture, read from sshd's effective config rather than the file.
