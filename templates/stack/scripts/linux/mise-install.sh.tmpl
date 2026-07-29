@@ -16,9 +16,17 @@ source /tmp/mise-lib.sh
 
 mise_runtime_setup
 
-# Smoke test (hard gate): one `--`-delimited command per tool declared in
-# files/mise.toml — argv tokens, not a quoted string.
+# Smoke test (hard gate): one `--`-delimited group per tool row in the
+# stack's `tools` declaration — argv tokens, not a quoted string.
+# test/declaration.sh holds this call to set equality with those rows, so
+# add the row and the group together. The corepack/pnpm/yarn groups are
+# deliberate tripwires: mise_runtime_setup's corepack block skips silently
+# when Corepack is absent, and Node 25+ no longer bundles it — this gate
+# fails the build loudly when mise's `lts` alias floats past 24.
 smoke_gate "__STACK__ runtimes" \
-  -- node --version
+  -- node --version \
+  -- corepack --version \
+  -- command -v pnpm \
+  -- command -v yarn
 
 echo "==> mise-install.sh (__STACK__) complete."

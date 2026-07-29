@@ -288,11 +288,13 @@ scaffold: check-stack-token
 	done
 	@chmod +x "$(STACK_DIR)"/scripts/*.sh "$(STACK_DIR)"/scripts/*/*.sh
 	@echo "scaffolded $(STACK_DIR)/ — next:"
-	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions) and $(STACK_DIR)/smoke-probe"
+	@echo "  1. edit $(STACK_DIR)/files/mise.toml (tool versions) and $(STACK_DIR)/tools"
+	@echo "     (one row per tool — script/smoke runs each row's proof at runtime)"
 	@echo "  2. in scripts/linux/mise-install.sh AND scripts/darwin/mise-install.sh, add"
-	@echo "     ONE smoke_gate check per tool — a missing check ships an unverified"
-	@echo "     runtime (the gate only tests what you list); the two files start"
-	@echo "     identical, so keep them in sync unless a runtime needs a platform-specific flag"
+	@echo "     ONE smoke_gate group per tool row — make test holds the gate calls to"
+	@echo "     set equality with the tools file, so a missing group (or an undeclared"
+	@echo "     one) fails the suite; the two files start identical, so keep them in"
+	@echo "     sync unless a runtime needs a platform-specific flag"
 	@echo "  3. make build STACK=$(STACK) OS=<os>"
 	@echo "  4. add a row to the stack table in README.md"
 

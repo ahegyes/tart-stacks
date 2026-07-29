@@ -29,8 +29,12 @@ mise_runtime_setup() {
   # Staged for /etc/tart-stacks-release — 99-finalize composes the manifest.
   mise list > /tmp/tart-stacks-tools 2>/dev/null || true
   # Corepack: flip pnpm/yarn shims to each project's package.json "packageManager".
-  # Gated: corepack ships with Node, and a stack whose mise.toml omits Node must
-  # not fail in a shared-lib line its author never wrote.
+  # Gated: corepack ships with Node 24 and earlier only — Node 25 dropped it —
+  # and a stack whose mise.toml omits Node must not fail in a shared-lib line
+  # its author never wrote. The guard therefore skips BOTH the no-Node stack
+  # and a future corepack-less Node; whether that absence is fatal is the
+  # per-stack smoke_gate's call (the corepack/pnpm/yarn groups it carries),
+  # not this shared helper's.
   echo ""
   if command -v corepack >/dev/null 2>&1; then
     echo "==> Enabling Corepack for per-project pnpm/yarn shimming..."
@@ -40,7 +44,7 @@ mise_runtime_setup() {
     # carries only the shims dir, which is every non-interactive `ssh <vm> <cmd>`.
     mise reshim
   else
-    echo "==> corepack not present (no Node in this stack) — skipping Corepack."
+    echo "==> corepack not present (no Node, or a Node without bundled Corepack) — skipping Corepack."
   fi
 }
 

@@ -1,0 +1,26 @@
+# The stack's canonical tool declaration — the single source the verification
+# surfaces derive from. `script/smoke` executes each tool row's proof over
+# non-interactive ssh at runtime; test/declaration.sh holds the installers'
+# smoke_gate calls to set equality with the tool rows; script/stack-docs
+# generates the README inventory from all of it. One row here IS the claim
+# "this ships, gated at build, proven at runtime" — a row without its gate
+# group, or a gate group without its row, fails `make test`.
+#
+# tool|<name>|<binary>|<managed-by>|<proof>|<purpose>
+#   name       canonical display name (== the mise key for plain mise: rows)
+#   binary     what the proof executes (name, unless the validator's alias
+#              table says otherwise, e.g. maven->mvn, kotlin->kotlinc)
+#   managed-by mise:<key> | node-corepack | installer
+#   proof      argv words, no shell syntax; `command -v <binary>` is the one
+#              blessed existence form, pnpm/yarn rows only
+tool|java|java|mise:java|java --version|Temurin JDK, the current Java LTS
+tool|maven|mvn|mise:maven|mvn -v|standard JVM build tool
+tool|gradle|gradle|mise:gradle|gradle --version|default build tool for modern Kotlin and Android projects
+tool|sbt|sbt|mise:sbt|sbt --script-version|Scala build tool launcher; projects pin the real sbt per repo
+tool|scala-cli|scala-cli|mise:asdf:mise-plugins/mise-scala-cli|scala-cli version|modern Scala command-line tool
+tool|kotlin|kotlinc|mise:kotlin|kotlinc -version|standalone Kotlin compiler for ad-hoc work
+tool|uv|uv|mise:uv|uv --version|Python project manager
+tool|node|node|mise:node|node --version|JS runtime for mixed projects and npm-shipped build tooling
+tool|corepack|corepack|node-corepack|corepack --version|package-manager shim dispatcher, ships with Node 24 and earlier
+tool|pnpm|pnpm|node-corepack|command -v pnpm|Corepack shim; resolves per-project via package.json packageManager
+tool|yarn|yarn|node-corepack|command -v yarn|Corepack shim; resolves per-project via package.json packageManager

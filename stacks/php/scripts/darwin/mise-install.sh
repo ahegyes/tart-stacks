@@ -258,7 +258,15 @@ echo "    ini files written to $PHP_SCAN_DIR/"
 # is missing (built-in or PECL). This catches both compile failures and
 # pecl install failures, so we never produce a green build with broken
 # extension wiring that only surfaces at first PHP invocation in a clone.
-smoke_gate "runtimes" -- node --version -- php --version
+# The corepack/pnpm/yarn groups are deliberate tripwires, not redundancy:
+# mise_runtime_setup's corepack block is guarded by `command -v corepack` and
+# skips silently, and Node 25+ no longer bundles Corepack — so when mise's
+# `lts` alias floats past 24, this gate fails the build loudly instead of
+# shipping an image whose declared shims silently vanished. That failure is a
+# decision point (provision Corepack explicitly, or retire the three rows in
+# stacks/php/tools); do not resolve it by deleting the groups.
+smoke_gate "runtimes" -- node --version -- php --version \
+  -- corepack --version -- command -v pnpm -- command -v yarn
 membership_gate "PHP extensions" "$(php -m)" \
     pdo_sqlite sqlite3 \
     mysqli pdo_mysql \
@@ -287,7 +295,12 @@ if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then
 fi
 php /tmp/composer-setup.php --quiet --install-dir="$COMPOSER_INSTALL_DIR" --filename=composer
 rm -f /tmp/composer-setup.php
-composer --version
+# A gate call rather than a bare `composer --version`: test/declaration.sh
+# holds every smoke_gate group to set equality with stacks/php/tools, so this
+# shape is what lets a deleted Composer row (or a deleted install block) fail
+# the suite instead of drifting silently. Its own call because Composer only
+# exists after the install above — the runtimes gate runs before it.
+smoke_gate "composer" -- composer --version
 
 echo ""
 echo "==> mise-install.sh complete."

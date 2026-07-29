@@ -55,7 +55,10 @@ node = "lts"
 
 [settings]
 # Corepack shims land after every node install, not just the global one, so a
-# project-pinned node gets the pnpm/yarn this stack's README advertises.
+# project-pinned node gets the pnpm/yarn this stack's README advertises — for
+# Nodes that still bundle Corepack (24 and earlier); mise's enable is
+# conditional on the corepack executable existing in that install, and
+# Node 25+ ships without it.
 node.corepack = true
 
 # Set to true while debugging tool installs.

@@ -1,0 +1,47 @@
+# The stack's canonical tool declaration — the single source the verification
+# surfaces derive from. `script/smoke` executes each tool row's proof over
+# non-interactive ssh at runtime; test/declaration.sh holds the installers'
+# smoke_gate calls to set equality with the tool rows and the membership_gate
+# token list to equality with the ext rows; script/stack-docs generates the
+# README inventory from all of it. One row here IS the claim "this ships,
+# gated at build, proven at runtime" — a row without its gate group, or a
+# gate group without its row, fails `make test`.
+#
+# tool|<name>|<binary>|<managed-by>|<proof>|<purpose>
+#   name       canonical display name (== the mise key for plain mise: rows)
+#   binary     what the proof executes (name, unless the validator's alias
+#              table says otherwise, e.g. maven->mvn)
+#   managed-by mise:<key> | node-corepack | installer
+#   proof      argv words, no shell syntax; `command -v <binary>` is the one
+#              blessed existence form, pnpm/yarn rows only
+# ext|<gate-token>|<source>
+#   gate-token the membership_gate token, verbatim (case and spaces included)
+#   source     pecl | bundled
+tool|node|node|mise:node|node --version|JS runtime for tooling and mixed projects
+tool|php|php|mise:php|php --version|the PHP runtime, compiled from source via vfox-php
+tool|composer|composer|installer|composer --version|PHP dependency manager
+tool|corepack|corepack|node-corepack|corepack --version|package-manager shim dispatcher, ships with Node 24 and earlier
+tool|pnpm|pnpm|node-corepack|command -v pnpm|Corepack shim; resolves per-project via package.json packageManager
+tool|yarn|yarn|node-corepack|command -v yarn|Corepack shim; resolves per-project via package.json packageManager
+
+ext|pdo_sqlite|bundled
+ext|sqlite3|bundled
+ext|mysqli|bundled
+ext|pdo_mysql|bundled
+ext|pdo_pgsql|bundled
+ext|gd|bundled
+ext|imagick|pecl
+ext|redis|pecl
+ext|memcached|pecl
+ext|intl|bundled
+ext|mbstring|bundled
+ext|curl|bundled
+ext|json|bundled
+ext|zend opcache|bundled
+ext|sodium|bundled
+ext|readline|bundled
+ext|bz2|bundled
+ext|zip|bundled
+ext|openssl|bundled
+ext|pcov|pecl
+ext|xdebug|pecl

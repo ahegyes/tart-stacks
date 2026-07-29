@@ -20,6 +20,13 @@ source /tmp/mise-lib.sh
 
 mise_runtime_setup
 
+# The corepack/pnpm/yarn groups are deliberate tripwires, not redundancy:
+# mise_runtime_setup's corepack block is guarded by `command -v corepack` and
+# skips silently, and Node 25+ no longer bundles Corepack — so when mise's
+# `lts` alias floats past 24, this gate fails the build loudly instead of
+# shipping an image whose declared shims silently vanished. That failure is a
+# decision point (provision Corepack explicitly, or retire the three rows in
+# stacks/jvm/tools); do not resolve it by deleting the groups.
 smoke_gate "tool version checks" \
   -- java --version \
   -- mvn -v \
@@ -28,7 +35,10 @@ smoke_gate "tool version checks" \
   -- scala-cli version \
   -- kotlinc -version \
   -- uv --version \
-  -- node --version
+  -- node --version \
+  -- corepack --version \
+  -- command -v pnpm \
+  -- command -v yarn
 
 # Maven hello-world build — proves the toolchain actually wires up, not just that
 # the binaries are present. Catches the case where Java + Maven are individually
