@@ -162,20 +162,31 @@ gate_calls() { # <installer> <gate-name> — one joined call text per line; ERR 
     }
     # Heredoc start on any line: <<EOF, << EOF, <<-EOF, <<\x27EOF\x27,
     # <<"EOF" — optional whitespace between << and the delimiter is valid
-    # bash and must not leave the body live. Herestrings (<<<) do not match:
-    # the third < fails the delimiter class. The terminator is matched as the
-    # whole line, which is how every heredoc in this repo is written. This is
-    # still syntactic parity, not a shell parser — a gate spelled inside a
-    # multiline quoted string would need one; none exists in this repo and
-    # the r5-1 contract already scopes execution proof to the build log.
-    # The preceding-character guard is what excludes herestrings: in <<<true
-    # the regex engine restarts at the SECOND < and would otherwise read a
-    # heredoc with terminator true, hiding everything after it.
-    /<</ && match($0, /<<-?[ \t]*[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/) && substr($0, RSTART + 2, 1) != "<" && (RSTART == 1 || substr($0, RSTART - 1, 1) != "<") {
-      hd_term = substr($0, RSTART, RLENGTH)
-      sub(/^<<-?[ \t]*/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
-      inheredoc = 1
-      next
+    # bash and must not leave the body live. The scan is ITERATIVE: a
+    # rejected herestring candidate (<<<true — surrounding-character guards
+    # exclude it) must not stop the search, or `cat <<<true <<EOF` would
+    # leave the real heredoc body live and a gate inside it would count.
+    # Two real heredocs on one line queue two bodies — outside the lexer
+    # subset, reported rather than half-skipped. Still syntactic parity, not
+    # a shell parser — a gate spelled inside a multiline quoted string would
+    # need one; none exists in this repo and the r5-1 contract already
+    # scopes execution proof to the build log.
+    /<</ {
+      rest = $0; base = 0; nfound = 0
+      while (match(rest, /<<-?[ \t]*[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/)) {
+        abs = base + RSTART
+        prevc = (abs > 1 ? substr($0, abs - 1, 1) : "")
+        if (prevc != "<" && substr($0, abs + 2, 1) != "<") {
+          nfound++
+          hd_term = substr(rest, RSTART, RLENGTH)
+          sub(/^<<-?[ \t]*/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
+        }
+        base = abs
+        rest = substr($0, base + 1)
+      }
+      if (nfound >= 2) { print "ERR\tmultiple heredocs on one line (outside the lexer subset): " $0; next }
+      if (nfound == 1) { inheredoc = 1; next }
+      # no real heredoc on this line — fall through to the gate match below
     }
     index($0, gate) == 1 && (length($0) == length(gate) || substr($0, length(gate) + 1, 1) == " " || substr($0, length(gate) + 1, 1) == "\t") {
       line = $0
@@ -796,6 +807,18 @@ mut_tab_gate_valid()  { mk_stack "$1"; printf 'smoke_gate\t"runtimes" -- uv --ve
 d="$WORK/tab-valid"; rm -rf "$d"; mut_tab_gate_valid "$d"
 run_fixture tab-valid "$d"
 if [ "$frc" -eq 0 ]; then ok "valid tab-delimited gate call → passes (must-pass control)"; else bad "valid tab-delimited gate call → passes (must-pass control)" "$fout"; fi
+
+# ── the hole the CP1 round-4 review closed ──────────────────────────────────
+
+mut_mixed_redirect()  { mk_stack "$1"
+  printf 'cat <<<true <<EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
+}
+fixture_red "gate inside a heredoc behind a herestring on the same line" "declared proofs missing" mut_mixed_redirect
+
+mut_double_heredoc()  { mk_stack "$1"
+  printf 'cat <<A <<B\nx\nA\ny\nB\nsmoke_gate "runtimes" -- uv --version\n' > "$1/scripts/linux/mise-install.sh"
+}
+fixture_red "two heredocs on one line" "multiple heredocs on one line" mut_double_heredoc
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
