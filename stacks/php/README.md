@@ -9,7 +9,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 The inventory below is generated from [`tools`](./tools), the stack's canonical tool declaration: every **tool** row is hard-gated at build (the installers' `smoke_gate` calls are held to it by the test suite) and probed at runtime (`make smoke` runs each Runtime probe over a non-interactive ssh). **Extension** rows are proven at build time only, by the `membership_gate` check against `php -m` — the table's own columns say so.
 
 <!-- tools:begin -->
-<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->
+<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->
 | Tool | Managed by | Build gate | Runtime probe | Purpose |
 |---|---|---|---|---|
 | node | mise (`node = lts`) | smoke_gate | `node --version` | JS runtime for tooling and mixed projects |
@@ -23,7 +23,7 @@ The inventory below is generated from [`tools`](./tools), the stack's canonical 
 ### PHP extensions
 
 <!-- extensions:begin -->
-<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->
+<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->
 | Extension | Source | Build gate | Runtime probe |
 |---|---|---|---|
 | pdo_sqlite | bundled | membership_gate | — |

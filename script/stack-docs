@@ -9,10 +9,11 @@
 #   script/stack-docs --check [<stack-dir>…]   diff generated vs on-disk, rc 1 on drift
 #   script/stack-docs --write [<stack-dir>…]   rewrite the blocks in place
 #
-# Default targets are stacks/*/ with a tools file. test/declaration.sh also
-# points --check at a materialized scaffold, which is why explicit directories
-# are accepted. Validation of the declarations themselves is
-# test/declaration.sh's job — this script trusts its inputs and only renders.
+# Default targets are all of stacks/*/ — a stack without a tools declaration
+# is an error, not a scope reduction. test/declaration.sh also points --check
+# at a materialized scaffold, which is why explicit directories are accepted.
+# Validation of the declarations themselves is test/declaration.sh's job —
+# this script trusts its inputs and only renders.
 #
 # Bash 3.2 floor (macOS /bin/bash): no declare -A, no mapfile.
 #
@@ -79,7 +80,7 @@ managed_display() {
 # becomes a written block.
 gen_tools() {
   local dir="$1" name managed proof purpose cell
-  printf '<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->\n'
+  printf '<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->\n'
   printf '| Tool | Managed by | Build gate | Runtime probe | Purpose |\n'
   printf '|---|---|---|---|---|\n'
   while IFS='|' read -r _ name _ managed proof purpose; do
@@ -93,7 +94,7 @@ gen_tools() {
 gen_exts() {
   local dir="$1" token source
   grep -q '^ext|' "$dir/tools" || return 0
-  printf '<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->\n'
+  printf '<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->\n'
   printf '| Extension | Source | Build gate | Runtime probe |\n'
   printf '|---|---|---|---|\n'
   while IFS='|' read -r _ token source; do
@@ -132,9 +133,11 @@ splice() {
 if [ $# -gt 0 ]; then
   dirs=("$@")
 else
+  # EVERY stack directory, not just those already carrying a tools file — a
+  # deleted declaration must fail the check, not shrink its scope.
   dirs=()
   for d in "$REPO"/stacks/*/; do
-    [ -f "$d/tools" ] && dirs+=("${d%/}")
+    dirs+=("${d%/}")
   done
 fi
 

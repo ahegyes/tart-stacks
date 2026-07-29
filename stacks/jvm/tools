@@ -2,7 +2,7 @@
 # surfaces derive from. `script/smoke` executes each tool row's proof over
 # non-interactive ssh at runtime; test/declaration.sh holds the installers'
 # smoke_gate calls to set equality with the tool rows; script/stack-docs
-# generates the README inventory from all of it. One row here IS the claim
+# generates the README inventory from all of it. A tool row IS the claim
 # "this ships, gated at build, proven at runtime" — a row without its gate
 # group, or a gate group without its row, fails `make test`.
 #

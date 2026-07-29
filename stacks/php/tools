@@ -3,9 +3,10 @@
 # non-interactive ssh at runtime; test/declaration.sh holds the installers'
 # smoke_gate calls to set equality with the tool rows and the membership_gate
 # token list to equality with the ext rows; script/stack-docs generates the
-# README inventory from all of it. One row here IS the claim "this ships,
-# gated at build, proven at runtime" — a row without its gate group, or a
-# gate group without its row, fails `make test`.
+# README inventory from all of it. A tool row IS the claim "this ships,
+# gated at build, proven at runtime"; an ext row is proven at build time
+# only, by membership_gate. A row without its gate, or a gate without its
+# row, fails `make test`.
 #
 # tool|<name>|<binary>|<managed-by>|<proof>|<purpose>
 #   name       canonical display name (== the mise key for plain mise: rows)

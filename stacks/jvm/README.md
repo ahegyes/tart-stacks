@@ -9,7 +9,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 The inventory below is generated from [`tools`](./tools), the stack's canonical tool declaration: every row is hard-gated at build (the installers' `smoke_gate` calls are held to it by the test suite) and probed at runtime (`make smoke` runs each Runtime probe over a non-interactive ssh).
 
 <!-- tools:begin -->
-<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->
+<!-- Generated from ./tools and files/mise.toml by script/stack-docs — edit those files, then run `make docs`. -->
 | Tool | Managed by | Build gate | Runtime probe | Purpose |
 |---|---|---|---|---|
 | java | mise (`java = temurin-25`) | smoke_gate | `java --version` | Temurin JDK, the current Java LTS |

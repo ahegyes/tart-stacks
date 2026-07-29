@@ -125,8 +125,11 @@ parse_mise() { # <mise.toml>
       sub(/[ \t]*$/, "", val)
       # Quoted values KEEP their quotes in the output: a TOML string "true"
       # is not the boolean true, and stripping the quotes here would let the
-      # setting check downstream conflate them.
-      if (val ~ /^"[^"]*"$/) ;
+      # setting check downstream conflate them. Quoted CONTENT has its own
+      # closed class — no `|` (it would inject a column into the generated
+      # markdown tables), no backslash escapes, nothing outside what real
+      # tool specs use (backend keys carry : and /).
+      if (val ~ /^"[A-Za-z0-9._:@\/ -]*"$/) ;
       else if (val ~ /^[A-Za-z0-9._-]+$/) ;
       else {
         print "ERR\tunsupported value in " sect ": " $0
@@ -173,13 +176,13 @@ gate_calls() { # <installer> <gate-name> — one joined call text per line; ERR 
     # execution proof to the build log.
     /<</ {
       rest = $0; base = 0; nfound = 0
-      while (match(rest, /<<-?[ \t]*[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/)) {
+      while (match(rest, /<<-?[ \t]*(\\|[\x27"])?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/)) {
         abs = base + RSTART
         prevc = (abs > 1 ? substr($0, abs - 1, 1) : "")
         if (prevc != "<" && substr($0, abs + 2, 1) != "<") {
           nfound++
           hd_term = substr(rest, RSTART, RLENGTH)
-          sub(/^<<-?[ \t]*/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
+          sub(/^<<-?[ \t]*\\?/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
         }
         base = abs
         rest = substr($0, base + 1)
@@ -258,6 +261,14 @@ membership_tokens() { # <installer> — one token per line; ERR lines on misuse
   local call
   while IFS= read -r call; do
     case "$call" in "ERR	"*) printf '%s\n' "$call"; continue ;; esac
+    # The listing must be DOUBLE-quoted in the source: lex_tokens erases the
+    # quote kind, and a single-quoted listing hands the gate the literal
+    # string instead of the command substitution — a shape the build could
+    # never pass, so the static check must not certify it.
+    case "$call" in
+      *'"$(php -m)"'*) ;;
+      *) printf 'ERR\tmembership listing must be the double-quoted "$(php -m)" — a single-quoted listing is a literal string, never the module list\n' ;;
+    esac
     printf '%s\n' "$call" | lex_tokens | awk '
       NR == 1 { next }        # the literal membership_gate word
       NR == 2 { next }        # the label
@@ -950,6 +961,22 @@ mut_mixed_redirect()  { mk_stack "$1"
   printf 'cat <<<true <<EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
 }
 fixture_red "gate inside a heredoc behind a herestring on the same line" "declared proofs missing" mut_mixed_redirect
+
+mut_backslash_heredoc() { mk_stack "$1"
+  printf 'cat <<\\EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
+}
+fixture_red "gate inside a backslash-quoted heredoc" "declared proofs missing" mut_backslash_heredoc
+
+mut_single_quoted_listing() { mk_stack "$1"; printf 'ext|imagick|pecl\n' >> "$1/tools"
+  local p
+  for p in linux darwin; do
+    printf 'smoke_gate "r" -- uv --version\nfor ext in imagick; do\n  :\ndone\nmembership_gate "exts" '"'"'$(php -m)'"'"' imagick\n' > "$1/scripts/$p/mise-install.sh"
+  done
+}
+fixture_red "single-quoted membership listing (a literal, never the module list)" "double-quoted" mut_single_quoted_listing
+
+mut_piped_value()     { mk_stack "$1"; printf '[tools]\nuv = "latest|greatest"\n' > "$1/files/mise.toml"; }
+fixture_red "a pipe inside a quoted TOML value" "unsupported value" mut_piped_value
 
 mut_double_heredoc()  { mk_stack "$1"
   printf 'cat <<A <<B\nx\nA\ny\nB\nsmoke_gate "runtimes" -- uv --version\n' > "$1/scripts/linux/mise-install.sh"

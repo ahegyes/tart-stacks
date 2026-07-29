@@ -304,8 +304,10 @@ scaffold: check-stack-token
 	@echo "     set equality with the tools file, so a missing group (or an undeclared"
 	@echo "     one) fails the suite; the two files start identical, so keep them in"
 	@echo "     sync unless a runtime needs a platform-specific flag"
-	@echo "  3. make build STACK=$(STACK) OS=<os>"
-	@echo "  4. add a row to the stack table in README.md"
+	@echo "  3. make docs (regenerates the README inventory) and make test (holds every"
+	@echo "     surface to the tools declaration)"
+	@echo "  4. make build STACK=$(STACK) OS=<os>"
+	@echo "  5. add a row to the stack table in README.md"
 
 # Clean Packer artifacts at the repo root and inside every stack directory
 # (packer creates these next to the cwd / .pkr.hcl it was invoked from).

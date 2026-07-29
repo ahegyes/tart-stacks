@@ -505,19 +505,29 @@ MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
 assert_rc       "a mixed tool+ext file → exit 0 (must-pass control)" 0
 assert_probe_line "mixed file probes its tool row (exact remote command)" "uv --version"
 assert_absent   "mixed file never probes an ext row" "$(cat "$CALLS")" "imagick"
-# A malformed final row with an empty proof: command substitution strips the
-# trailing blank line, so without the row-count guard the row would silently
-# go unprobed and the run stay green — the exact false-green the guard closes.
+# A malformed final row with an empty proof. The probe list carries
+# binary|proof per line, so even a trailing empty proof leaves a non-blank
+# line that command substitution cannot strip — the row reaches the loop and
+# the empty-proof gate refuses it (the row-count guard behind it stays as
+# defense in depth against a future format change reintroducing strippable
+# lines).
 printf 'tool|uv|uv|mise:uv|uv --version|python project manager\ntool|jq|jq|installer||broken row\n' > "$FAKE_REPO/stacks/mixed/tools"
 MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
-assert_rc       "a trailing empty-proof row → FAIL (row-count guard)" 1
-assert_contains "row-count guard names the drop" "$(cat "$ERR")" "silently dropped"
+assert_rc       "a trailing empty-proof row → FAIL" 1
+assert_contains "the empty proof is named" "$(cat "$ERR")" "empty or whitespace-only proof column"
 # A whitespace-only proof is not empty to [ -z ] and a remote shell runs a
 # blank command successfully — the probe loop's own guard must catch it.
 printf 'tool|jq|jq|installer| |whitespace proof\ntool|uv|uv|mise:uv|uv --version|python project manager\n' > "$FAKE_REPO/stacks/mixed/tools"
 MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
 assert_rc       "a whitespace-only proof → FAIL" 1
 assert_contains "whitespace-only proof names the vacuous green it prevents" "$(cat "$ERR")" "whitespace-only proof column"
+# A proof that runs something other than its row's binary — `true` being the
+# canonical vacuous case — certifies nothing; smoke must refuse without
+# depending on the static suite having run.
+printf 'tool|uv|uv|mise:uv|true|vacuous proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "a proof not exercising its binary → FAIL" 1
+assert_contains "the mismatched proof names both sides" "$(cat "$ERR")" "does not exercise its row's binary 'uv'"
 SMOKE="$SMOKE_REAL"
 
 # The hardening posture, read from sshd's effective config rather than the file.
