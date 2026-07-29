@@ -171,21 +171,26 @@ pecl_installed() { case "$pecl_ok" in *"|$1|"*) return 0 ;; *) return 1 ;; esac;
 # prompts (1st: --with-libmemcached-dir, fine left at its "no" default since
 # libmemcached isn't keg-only), followed by five more that also default
 # safely to "no"/"yes" on an empty answer.
+# The subshell disables pipefail just for the pipeline: `yes`/`printf` exits
+# 141 on SIGPIPE when pecl closes stdin, which pipefail would misread as
+# failure. It lives inside the function so retry_once re-runs the whole
+# pipeline, subshell included, as one unit.
 pecl_install_one() {
   case "$1" in
     memcached)
-      printf '\n%s\n\n\n\n\n\n\n\n\n\n' "$(brew --prefix zlib)" | pecl install "$1"
+      (set +o pipefail; printf '\n%s\n\n\n\n\n\n\n\n\n\n' "$(brew --prefix zlib)" | pecl install "$1")
       ;;
     *)
-      yes '' | pecl install "$1"
+      (set +o pipefail; yes '' | pecl install "$1")
       ;;
   esac
 }
 for ext in pcov xdebug imagick redis memcached; do
-  # Subshell disables pipefail just for this pipeline: `yes`/`printf` exits
-  # 141 on SIGPIPE when pecl closes stdin, which pipefail would misread as
-  # failure.
-  if (set +o pipefail; pecl_install_one "$ext"); then
+  # retry_once: beyond the channel-update race above, pecl.php.net's REST
+  # metadata itself fails momentarily mid-loop, and a single such failure
+  # otherwise costs the whole build at the gate below. A genuinely broken
+  # extension fails both attempts and the gate still rules.
+  if retry_once "pecl install $ext" pecl_install_one "$ext"; then
     pecl_ok="${pecl_ok}${ext}|"
   else
     echo "WARNING: pecl install $ext failed — ini file will be skipped." >&2
