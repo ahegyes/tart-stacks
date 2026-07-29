@@ -23,6 +23,15 @@ ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n         %s\n' "$1" "${2:-}"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "want » $3 « in: $2" ;; esac; }
 assert_absent()   { case "$2" in *"$3"*) bad "$1" "should NOT contain » $3 «" ;; *) ok "$1" ;; esac; }
+assert_probe_line() { # label probe — the EXACT ssh-argv line a probe must produce,
+  # whole-line matched: a substring match would tolerate extra ssh arguments
+  # around the expected remote command.
+  if grep -qxF "ssh-argv [-n] [-o] [BatchMode=yes] [tart-smoke-vm] [$2]" "$CALLS"; then
+    ok "$1"
+  else
+    bad "$1" "no exact ssh-argv line for » $2 « in: $(grep '^ssh-argv' "$CALLS" | tr '\n' '|')"
+  fi
+}
 check_rc() { local l="$1" want="$2"; shift 2; local got=0; "$@" >/dev/null 2>&1 || got=$?
   if [ "$got" -eq "$want" ]; then ok "$l"; else bad "$l" "want rc=$want got rc=$got"; fi; }
 assert_rc() { # label want — checks $rc from the last run_smoke
@@ -441,9 +450,9 @@ assert_contains "toolchain failure explains the consequence" "$(cat "$ERR")" "PA
 # leaking through would carry the delimiter, asserted absent below.
 run_smoke php fedora
 assert_rc       "php declaration-driven run → exit 0 (probe loop actually ran)" 0
-assert_contains "php stack probes php (exact remote command)"      "$(cat "$CALLS")" "[php --version]"
-assert_contains "php stack probes composer (exact remote command)" "$(cat "$CALLS")" "[composer --version]"
-assert_contains "php stack probes the pnpm shim (exact remote command)" "$(cat "$CALLS")" "[command -v pnpm]"
+assert_probe_line "php stack probes php (exact remote command)"      "php --version"
+assert_probe_line "php stack probes composer (exact remote command)" "composer --version"
+assert_probe_line "php stack probes the pnpm shim (exact remote command)" "command -v pnpm"
 assert_absent   "php stack does not probe java" "$(cat "$CALLS")" "java"
 assert_absent   "no raw declaration row reached ssh as a command" "$(cat "$CALLS")" "[tool|"
 MOCK_MANIFEST_STACK=jvm run_smoke jvm fedora
@@ -453,7 +462,7 @@ MOCK_MANIFEST_STACK=jvm run_smoke jvm fedora
 assert_rc       "jvm declaration-driven run → exit 0 (probe loop actually ran)" 0
 jvm_calls="$(cat "$CALLS")"
 while IFS= read -r want; do
-  assert_contains "jvm stack probes '$want' (exact remote command)" "$jvm_calls" "[$want]"
+  assert_probe_line "jvm stack probes '$want' (exact remote command)" "$want"
 done < <(awk -F'|' '$1 == "tool" { print $5 }' "$REPO/stacks/jvm/tools")
 assert_absent "jvm stack does not probe php" "$jvm_calls" "php --version"
 assert_absent "no raw declaration row reached ssh as a command (jvm)" "$jvm_calls" "[tool|"
@@ -494,8 +503,15 @@ assert_rc       "an ext-only tools file → FAIL (ext rows carry no runtime prob
 assert_contains "ext-only failure takes the zero-rows gate" "$(cat "$ERR")" "declares no tool rows"
 MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
 assert_rc       "a mixed tool+ext file → exit 0 (must-pass control)" 0
-assert_contains "mixed file probes its tool row (exact remote command)" "$(cat "$CALLS")" "[uv --version]"
+assert_probe_line "mixed file probes its tool row (exact remote command)" "uv --version"
 assert_absent   "mixed file never probes an ext row" "$(cat "$CALLS")" "imagick"
+# A malformed final row with an empty proof: command substitution strips the
+# trailing blank line, so without the row-count guard the row would silently
+# go unprobed and the run stay green — the exact false-green the guard closes.
+printf 'tool|uv|uv|mise:uv|uv --version|python project manager\ntool|jq|jq|installer||broken row\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "a trailing empty-proof row → FAIL (row-count guard)" 1
+assert_contains "row-count guard names the drop" "$(cat "$ERR")" "silently dropped"
 SMOKE="$SMOKE_REAL"
 
 # The hardening posture, read from sshd's effective config rather than the file.

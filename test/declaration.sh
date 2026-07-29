@@ -21,6 +21,10 @@
 # silently emptying the checks.
 #
 # Bash 3.2 floor (macOS /bin/bash): no declare -A, no mapfile.
+#
+# shellcheck disable=SC2016  # the file's whole business is matching and
+# writing LITERAL shell text — '$(php -m)' in fixtures and lexer expectations
+# must never expand.
 set -uo pipefail
 
 TEST_DIR=$(cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd)
@@ -59,14 +63,19 @@ parse_tools() { # <tools-file>
   awk -F'|' '
     /^[ \t]*#/ { next }
     /^[ \t]*$/ { next }
+    # A tab anywhere in a row corrupts this parser own tab-separated output
+    # and the field alignment of every downstream reader — reject before
+    # emitting anything.
+    /\t/ { print "ERR\ttab character in row: " $0; next }
     $1 == "tool" {
       if (NF != 6) { print "ERR\ttool row needs 6 fields, has " NF ": " $0; next }
-      if ($6 == "") { print "ERR\tempty purpose: " $0; next }
+      for (i = 2; i <= 6; i++) if ($i == "") { print "ERR\tempty field " i " in tool row: " $0; next }
       print "tool\t" $2 "\t" $3 "\t" $4 "\t" $5
       next
     }
     $1 == "ext" {
       if (NF != 3) { print "ERR\text row needs 3 fields, has " NF ": " $0; next }
+      if ($2 == "" || $3 == "") { print "ERR\tempty field in ext row: " $0; next }
       print "ext\t" $2 "\t" $3
       next
     }
@@ -107,21 +116,31 @@ parse_mise() { # <mise.toml>
       }
       if (sect == "ROOT") { print "ERR\troot-level assignment (every assignment belongs to a section): " $0; next }
       sub(/[ \t]*$/, "", val)
-      if (val ~ /^"[^"]*"$/) ; else if (val ~ /^[A-Za-z0-9._-]+$/) ; else {
+      if (val ~ /^"[^"]*"$/) { sub(/^"/, "", val); sub(/"$/, "", val) }
+      else if (val ~ /^[A-Za-z0-9._-]+$/) ;
+      else {
         print "ERR\tunsupported value in " sect ": " $0
         next
       }
-      print sect "\t" key "\t" quoted
+      print sect "\t" key "\t" quoted "\t" val
     }
   ' "$1"
 }
 
 # ── gate lexer ──────────────────────────────────────────────────────────────
 # Captures each column-0 smoke_gate/membership_gate call plus its backslash
-# continuations, joined to one line. Tokenizes quote-aware (single and double,
-# no escapes — none occur in the shapes this repo writes), never evaluating.
-gate_calls() { # <installer> <gate-name> — one joined call text per line
+# continuations, joined to one line. Heredoc bodies are skipped — a gate call
+# quoted inside `cat <<EOF … EOF` is text, not a statement, and counting it
+# would let the real gate be deleted while equality stays green. A call whose
+# continuation runs into end-of-file is reported, not silently dropped.
+# Tokenizes quote-aware (single and double, no escapes — none occur in the
+# shapes this repo writes), never evaluating.
+gate_calls() { # <installer> <gate-name> — one joined call text per line; ERR lines on lexer trouble
   awk -v gate="$2" '
+    inheredoc {
+      if ($0 == hd_term) inheredoc = 0
+      next
+    }
     incall {
       line = $0
       cont = (line ~ /\\$/)
@@ -131,11 +150,24 @@ gate_calls() { # <installer> <gate-name> — one joined call text per line
       if (!cont) { print text; text = ""; incall = 0 }
       next
     }
+    # Heredoc start on any line: <<EOF, <<-EOF, <<\x27EOF\x27, <<"EOF". The
+    # terminator is matched as the whole line, which is how every heredoc in
+    # this repo is written.
+    match($0, /<<-?[\x27"]?[A-Za-z_][A-Za-z0-9_]*[\x27"]?/) {
+      hd_term = substr($0, RSTART, RLENGTH)
+      sub(/^<<-?/, "", hd_term); gsub(/[\x27"]/, "", hd_term)
+      inheredoc = 1
+      next
+    }
     index($0, gate " ") == 1 {
       line = $0
       cont = (line ~ /\\$/)
       sub(/[ \t]*\\$/, "", line)
       if (cont) { text = line; incall = 1 } else print line
+    }
+    END {
+      if (incall) print "ERR\t" gate " call has an unterminated backslash continuation at end of file"
+      if (inheredoc) print "ERR\tunterminated heredoc (terminator " hd_term " never found)"
     }
   ' "$1"
 }
@@ -161,30 +193,43 @@ lex_tokens() { # stdin: one call text — one token per line, quotes stripped
   '
 }
 
-smoke_gate_groups() { # <installer> — one proof group per line, all calls
+# Group words are joined with \x1f (unit separator), never a space: a quoted
+# single token "uv --version" must NOT compare equal to the two-word proof it
+# spells — the build would exec a program literally named 'uv --version'.
+# Declared proofs are encoded the same way before comparison.
+smoke_gate_groups() { # <installer> — one \x1f-joined group per line; ERR lines pass through
   local call
   while IFS= read -r call; do
+    case "$call" in "ERR	"*) printf '%s\n' "$call"; continue ;; esac
     printf '%s\n' "$call" | lex_tokens | awk '
       NR == 1 { next }        # the literal smoke_gate word
       NR == 2 { next }        # the label
       $0 == "--" { if (grp != "") print grp; grp = ""; next }
-      { grp = (grp == "" ? $0 : grp " " $0) }
+      { grp = (grp == "" ? $0 : grp "\037" $0) }
       END { if (grp != "") print grp }
     '
   done < <(gate_calls "$1" smoke_gate)
 }
 
+encode_proof() { # stdin: space-separated proofs — US(\037)-joined, for comparison
+  tr ' ' '\037'
+}
+
 membership_tokens() { # <installer> — one token per line; ERR lines on misuse
   local call
   while IFS= read -r call; do
+    case "$call" in "ERR	"*) printf '%s\n' "$call"; continue ;; esac
     printf '%s\n' "$call" | lex_tokens | awk '
       NR == 1 { next }        # the literal membership_gate word
       NR == 2 { next }        # the label
       NR == 3 {
+        listing = 1
         if ($0 != "$(php -m)") print "ERR\tmembership listing must be exactly \"$(php -m)\", got: " $0
         next
       }
+      $0 == "" { print "ERR\tempty membership token (a quoted \"\" matches the blank separator in php -m output)"; next }
       { print }
+      END { if (NR >= 1 && !listing) print "ERR\tmembership_gate call has no listing argument (the real build would fail under set -u)" }
     '
   done < <(gate_calls "$1" membership_gate)
 }
@@ -226,12 +271,16 @@ declaration_check() { # <stack-dir> <label>
         printf '%s' "$name"   | grep -qE "$CMD_WORD" || flag "name violates the command-word grammar: '$name'"
         printf '%s' "$binary" | grep -qE "$CMD_WORD" || flag "binary violates the command-word grammar: '$binary'"
         [ "$binary" = "$(alias_binary "$name")" ] || flag "binary '$binary' does not match name '$name' (alias table says '$(alias_binary "$name")')"
-        # proof: raw-field whitespace discipline, then per-word grammar.
+        # proof: raw-field whitespace discipline, then per-word grammar. The
+        # tokenization is tr-based, never an unquoted expansion — `for w in
+        # $proof` would glob a `*` against the repo's own files and could
+        # satisfy the word grammar with expanded filenames.
         case "$proof" in
           ''|*'  '*|*'	'*|' '*|*' ') flag "proof has empty/tab/repeated/edge whitespace: '$proof'" ;;
         esac
         local w first=1 words_ok=1 argv0=""
-        for w in $proof; do
+        while IFS= read -r w; do
+          [ -z "$w" ] && continue
           if [ "$first" = 1 ]; then
             argv0="$w"; first=0
             printf '%s' "$w" | grep -qE "$CMD_WORD" || { flag "proof argv[0] violates the command-word grammar: '$w'"; words_ok=0; }
@@ -239,7 +288,7 @@ declaration_check() { # <stack-dir> <label>
             [ "$w" = "--" ] && { flag "standalone -- is reserved (smoke_gate group delimiter): '$proof'"; words_ok=0; }
             printf '%s' "$w" | grep -qE "$ARG_WORD" || { flag "proof word violates the argument grammar: '$w'"; words_ok=0; }
           fi
-        done
+        done < <(printf '%s\n' "$proof" | tr ' ' '\n')
         if [ "$words_ok" = 1 ]; then
           if [ "$argv0" = "command" ]; then
             case "$name" in
@@ -250,6 +299,13 @@ declaration_check() { # <stack-dir> <label>
             [ "$argv0" = "$binary" ] || flag "proof argv[0] '$argv0' is not the row's binary '$binary'"
           fi
         fi
+        # The corepack obligations key off the canonical NAME, before any
+        # dispatch on managed-by — a node row wearing managed-by=installer
+        # must not slip past the trio/setting rule.
+        if [ "$name" = "node" ]; then
+          has_node=1
+          [ "$managed" = "mise:node" ] || flag "the node row must be managed-by mise:node exactly (alternate Node backends and non-mise Node are forbidden)"
+        fi
         case "$managed" in
           mise:*)
             local key="${managed#mise:}"
@@ -259,7 +315,6 @@ declaration_check() { # <stack-dir> <label>
             esac
             mise_keys="$mise_keys$key
 "
-            [ "$name" = "node" ] && { has_node=1; [ "$managed" = "mise:node" ] || flag "the node row must be managed-by mise:node exactly (alternate Node backends are forbidden)"; }
             ;;
           node-corepack)
             case "$name" in
@@ -307,7 +362,7 @@ declaration_check() { # <stack-dir> <label>
 
   # ── mise.toml ─────────────────────────────────────────────────────────────
   local mise_file="$dir/files/mise.toml"
-  local toml_tools="" setting_ok=0
+  local toml_tools="" setting_ok=0 setting_present=0
   if [ ! -f "$mise_file" ]; then
     flag "no files/mise.toml"
   else
@@ -316,15 +371,24 @@ declaration_check() { # <stack-dir> <label>
     errs=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "ERR" { print $2 }')
     [ -n "$errs" ] && while IFS= read -r e; do flag "mise.toml: $e"; done <<< "$errs"
     toml_tools=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "[tools]" { print $2 }')
-    dups=$(printf '%s\n' "$toml_tools" | sed '/^$/d' | sort | uniq -d)
-    [ -n "$dups" ] && flag "duplicate [tools] keys: $(echo "$dups" | tr '\n' ' ')"
+    # Duplicate decoded keys are a violation in EVERY section — the closed
+    # file contract, not just the [tools] slice of it.
+    local sect
+    for sect in '[tools]' '[settings]' '[tool_alias]'; do
+      dups=$(printf '%s\n' "$parsed" | awk -F'\t' -v s="$sect" '$1 == s { print $2 }' | sort | uniq -d)
+      [ -n "$dups" ] && flag "duplicate $sect keys: $(echo "$dups" | tr '\n' ' ')"
+    done
     # the setting counts only as the unquoted dotted spelling — a quoted
-    # "node.corepack" is a different TOML key (a literal, not a path).
+    # "node.corepack" is a different TOML key (a literal, not a path) — and
+    # only WITH the value true, read from the parser's own decoded value for
+    # the [settings] row, never a file-global grep (a node.corepack line in
+    # another section must not stand in for it).
     if printf '%s\n' "$parsed" | awk -F'\t' '$1 == "[settings]" && $2 == "node.corepack" && $3 == "quoted" { found = 1 } END { exit !found }'; then
       flag "mise.toml: [settings] uses the quoted \"node.corepack\" spelling — TOML reads that as a literal key, not the node.corepack path"
     fi
     if printf '%s\n' "$parsed" | awk -F'\t' '$1 == "[settings]" && $2 == "node.corepack" && $3 == "bare" { found = 1 } END { exit !found }'; then
-      grep -qE '^node\.corepack[ \t]*=[ \t]*true[ \t]*$' "$mise_file" && setting_ok=1
+      setting_present=1
+      printf '%s\n' "$parsed" | awk -F'\t' '$1 == "[settings]" && $2 == "node.corepack" && $3 == "bare" && $4 == "true" { found = 1 } END { exit !found }' && setting_ok=1
     fi
     if printf '%s\n' "$parsed" | awk -F'\t' '$1 == "[tool_alias]" && $2 == "node" { found = 1 } END { exit !found }'; then
       flag "mise.toml: [tool_alias] redirects node to another backend — forbidden, it would silently change what mise:node installs"
@@ -338,6 +402,12 @@ declaration_check() { # <stack-dir> <label>
   [ -n "$extra" ] && flag "[tools] keys with no declaration row (installed-but-undeclared): $(echo "$extra" | tr '\n' ' ')"
 
   # ── corepack structural rule ──────────────────────────────────────────────
+  # A stack must have zero tool rows never: an ext-only declaration would
+  # leave script/smoke refusing at runtime while every static equality here
+  # holds vacuously — the static check refuses first.
+  local n_tools
+  n_tools=$(printf '%s' "$names" | sed '/^$/d' | wc -l | tr -d ' ')
+  [ "$n_tools" = 0 ] && flag "no tool rows — an ext-only declaration probes nothing at runtime and gates nothing at build"
   local n_corepack
   n_corepack=$(printf '%s' "$corepack_rows" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')
   if [ "$has_node" = 1 ]; then
@@ -345,7 +415,7 @@ declaration_check() { # <stack-dir> <label>
     [ "$setting_ok" = 1 ] || flag "a stack declaring mise:node must set node.corepack = true in [settings] (project-pinned Nodes <= 24 get shims from it)"
   else
     [ "$n_corepack" = 0 ] || flag "node-corepack rows in a stack that does not declare mise:node"
-    [ "$setting_ok" = 0 ] || flag "node.corepack = true in a stack that does not declare mise:node"
+    [ "$setting_present" = 0 ] || flag "a node.corepack setting (any value) in a stack that does not declare mise:node"
   fi
 
   # ── build gates, per platform ─────────────────────────────────────────────
@@ -357,10 +427,18 @@ declaration_check() { # <stack-dir> <label>
       continue
     fi
     groups=$(smoke_gate_groups "$inst")
-    extra=$(set_diff "$proofs" "$groups")
-    [ -n "$extra" ] && flag "$platform: declared proofs missing from smoke_gate: $(echo "$extra" | tr '\n' ';')"
-    extra=$(set_diff "$groups" "$proofs")
-    [ -n "$extra" ] && flag "$platform: smoke_gate groups with no declaration row: $(echo "$extra" | tr '\n' ';')"
+    local gate_errs
+    gate_errs=$(printf '%s\n' "$groups" | awk -F'\t' '$1 == "ERR" { print $2 }')
+    [ -n "$gate_errs" ] && while IFS= read -r e; do flag "$platform: $e"; done <<< "$gate_errs"
+    groups=$(printf '%s\n' "$groups" | awk -F'\t' '$1 != "ERR"')
+    # Proofs are encoded to \x1f word joins before comparison so a quoted
+    # single token spelling a two-word proof cannot compare equal.
+    local enc_proofs
+    enc_proofs=$(printf '%s' "$proofs" | encode_proof)
+    extra=$(set_diff "$enc_proofs" "$groups")
+    [ -n "$extra" ] && flag "$platform: declared proofs missing from smoke_gate: $(echo "$extra" | tr '\034\035\036\037' ' ' | tr '\n' ';')"
+    extra=$(set_diff "$groups" "$enc_proofs")
+    [ -n "$extra" ] && flag "$platform: smoke_gate groups with no declaration row: $(echo "$extra" | tr '\034\035\036\037' ' ' | tr '\n' ';')"
 
     local memb memb_errs
     memb=$(membership_tokens "$inst")
@@ -430,11 +508,11 @@ echo
 echo "declaration — gate lexer against the shipped installers:"
 PHP_INST="$REPO/stacks/php/scripts/linux/mise-install.sh"
 got=$(smoke_gate_groups "$PHP_INST" | sort)
-want=$(printf '%s\n' "command -v pnpm" "command -v yarn" "composer --version" "corepack --version" "node --version" "php --version" | sort)
+want=$(printf '%s\n' "command -v pnpm" "command -v yarn" "composer --version" "corepack --version" "node --version" "php --version" | encode_proof | sort)
 if [ "$got" = "$want" ]; then
-  ok "php linux smoke_gate groups lex exactly"
+  ok "php linux smoke_gate groups lex exactly (argv-boundary encoded)"
 else
-  bad "php linux smoke_gate groups lex exactly" "want » $(echo "$want" | tr '\n' ';') « got » $(echo "$got" | tr '\n' ';') «"
+  bad "php linux smoke_gate groups lex exactly (argv-boundary encoded)" "want » $(echo "$want" | tr '\037' '·' | tr '\n' ';') « got » $(echo "$got" | tr '\037' '·' | tr '\n' ';') «"
 fi
 got=$(membership_tokens "$PHP_INST" | grep -c 'zend opcache' || true)
 if [ "$got" = "1" ]; then
@@ -600,6 +678,53 @@ mut_fake_listing() { # membership listing replaced with a fabricated one
   done
 }
 fixture_red "fabricated membership listing" "must be exactly" mut_fake_listing
+
+# ── the holes the CP1 review closed, each pinned red ────────────────────────
+
+mut_heredoc_gate() { # the only gate text lives inside a heredoc body
+  mk_stack "$1"
+  printf 'cat > /tmp/x <<EOF\nsmoke_gate "runtimes" -- uv --version\nEOF\n' > "$1/scripts/linux/mise-install.sh"
+}
+fixture_red "gate text only inside a heredoc" "declared proofs missing" mut_heredoc_gate
+
+mut_unterminated()    { mk_stack "$1"; printf 'smoke_gate "runtimes" -- uv --version \\\n' > "$1/scripts/linux/mise-install.sh"; }
+fixture_red "unterminated continuation at EOF" "unterminated backslash continuation" mut_unterminated
+
+mut_quoted_group()    { mk_stack "$1"; printf 'smoke_gate "runtimes" -- "uv --version"\n' > "$1/scripts/linux/mise-install.sh"; }
+fixture_red "quoted single-token group spelling a two-word proof" "no declaration row" mut_quoted_group
+
+mut_tab_row()         { mk_stack "$1"; printf 'tool|jq|jq|installer\tjq --version||json tool\n' >> "$1/tools"; }
+fixture_red "tab character inside a row" "tab character in row" mut_tab_row
+
+mut_empty_proof()     { mk_stack "$1"; printf 'tool|jq|jq|installer||json tool\n' >> "$1/tools"; }
+fixture_red "empty proof field" "empty field" mut_empty_proof
+
+mut_node_installer()  { mk_node_stack "$1"; awk -F'|' 'BEGIN{OFS="|"} $2=="node"{$4="installer"} {print}' "$1/tools" > "$1/tools.t" && mv "$1/tools.t" "$1/tools"; printf '[tools]\n\n[settings]\nnode.corepack = true\n' > "$1/files/mise.toml"; }
+fixture_red "node row wearing managed-by installer" "must be managed-by mise:node" mut_node_installer
+
+mut_setting_false()   { mk_node_stack "$1"; printf '[tools]\nnode = "lts"\n\n[settings]\nnode.corepack = false\n\n[tool_alias]\nnode.corepack = "true"\n' > "$1/files/mise.toml"; }
+fixture_red "settings false with a tool_alias true decoy" "must set node.corepack = true" mut_setting_false
+
+mut_nodeless_false()  { mk_stack "$1"; printf '[tools]\nuv = "latest"\n\n[settings]\nnode.corepack = false\n' > "$1/files/mise.toml"; }
+fixture_red "node-less stack carrying node.corepack = false" "any value" mut_nodeless_false
+
+mut_dup_settings()    { mk_node_stack "$1"; printf '[tools]\nnode = "lts"\n\n[settings]\nnode.corepack = true\nnode.corepack = true\n' > "$1/files/mise.toml"; }
+fixture_red "duplicate [settings] keys" "duplicate [settings] keys" mut_dup_settings
+
+mut_glob_proof()      { mk_stack "$1"; printf 'tool|jq|jq|installer|jq *|glob probe\n' >> "$1/tools"; }
+fixture_red "glob metacharacter in a proof" "argument grammar" mut_glob_proof
+
+mut_memb_no_listing() { mk_stack "$1"; printf 'membership_gate "oops"\n' >> "$1/scripts/linux/mise-install.sh"; }
+fixture_red "membership_gate with no listing argument" "no listing argument" mut_memb_no_listing
+
+mut_memb_empty_tok()  { mk_stack "$1"; printf 'ext|imagick|pecl\n' >> "$1/tools"
+  printf 'smoke_gate "r" -- uv --version\nfor ext in imagick; do\n  :\ndone\nmembership_gate "exts" "$(php -m)" imagick ""\n' > "$1/scripts/linux/mise-install.sh"
+  printf 'smoke_gate "r" -- uv --version\nfor ext in imagick; do\n  :\ndone\nmembership_gate "exts" "$(php -m)" imagick\n' > "$1/scripts/darwin/mise-install.sh"; }
+fixture_red "empty quoted membership token" "empty membership token" mut_memb_empty_tok
+
+mut_ext_only()        { mk_stack "$1"; printf 'ext|imagick|pecl\n' > "$1/tools"
+  local p; for p in linux darwin; do printf 'for ext in imagick; do\n  :\ndone\nmembership_gate "exts" "$(php -m)" imagick\n' > "$1/scripts/$p/mise-install.sh"; done; }
+fixture_red "ext-only declaration (zero tool rows)" "no tool rows" mut_ext_only
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

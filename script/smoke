@@ -251,6 +251,11 @@ if [ -z "$probes" ]; then
   echo "$prog: FAIL — stacks/$STACK/tools declares no tool rows, so 'toolchain' below would pass without probing anything." >&2
   exit 1
 fi
+# Counted from the file, compared after the loop: command substitution strips
+# trailing newlines, so a malformed final row with an empty proof would
+# otherwise vanish from $probes and its tool would pass unprobed.
+n_rows=$(awk -F'|' '$1 == "tool"' "$TOOLS_FILE" | wc -l | tr -d ' ')
+n_probed=0
 while IFS= read -r probe; do
   # A tool row whose proof column is empty would hand ssh an empty command,
   # which a login shell exits 0 on — a green with nothing probed. Refuse it
@@ -265,11 +270,16 @@ while IFS= read -r probe; do
   # is ever checked.
   if ssh -n -o BatchMode=yes "tart-$VM" "$probe" >/dev/null 2>&1; then
     printf '%s: ok   %-22s %s\n' "$prog" "non-interactive" "$probe" >&2
+    n_probed=$((n_probed + 1))
   else
     echo "$prog: FAIL — '$probe' does not work over a non-interactive ssh, so the image's PATH wiring is broken for scripts and agents." >&2
     exit 1
   fi
 done <<< "$probes"
+if [ "$n_probed" -ne "$n_rows" ]; then
+  echo "$prog: FAIL — stacks/$STACK/tools has $n_rows tool row(s) but only $n_probed probe(s) ran — a row with an empty or malformed proof column was silently dropped." >&2
+  exit 1
+fi
 
 # The hardening posture 99-finalize establishes, read from sshd's own effective
 # config rather than from the drop-in file it was written into.
