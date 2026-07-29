@@ -566,6 +566,41 @@ else
   bad "jvm linux smoke_gate lexes 11 groups from the continued call" "got $got"
 fi
 
+# ── README inventory blocks match the declarations ──────────────────────────
+# script/stack-docs --check regenerates every block in memory and diffs; a
+# hand-edit inside the markers, or a tools change without `make docs`, fails
+# here. The scaffold is checked as its materialized stack, so README.md.tmpl's
+# baked block must agree with what the stamped tools file generates.
+echo
+echo "declaration — README inventory blocks are generated, not drifted:"
+if out=$("$REPO/script/stack-docs" --check 2>&1); then
+  ok "stack READMEs match their tools declarations"
+else
+  bad "stack READMEs match their tools declarations" "$out"
+fi
+if out=$("$REPO/script/stack-docs" --check "$SCAF" 2>&1); then
+  ok "the scaffold README template's baked block matches its tools template"
+else
+  bad "the scaffold README template's baked block matches its tools template" "$out"
+fi
+# The drift control: a hand-edit inside the markers must fail --check.
+DRIFT="$WORK/drift-stack"
+rm -rf "$DRIFT"; mkdir -p "$DRIFT"
+cp -R "$REPO/stacks/php/" "$DRIFT/" 2>/dev/null || cp -R "$REPO/stacks/php/." "$DRIFT/"
+sed 's/| node |/| nodule |/' "$DRIFT/README.md" > "$DRIFT/README.md.t" && mv "$DRIFT/README.md.t" "$DRIFT/README.md"
+if "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+  bad "a hand-edited generated block → --check fails (must-fail control)" "check passed on drifted content"
+else
+  ok "a hand-edited generated block → --check fails (must-fail control)"
+fi
+# Markers missing entirely must be fatal, not silently skipped.
+sed '/tools:begin/d;/tools:end/d' "$DRIFT/README.md" > "$DRIFT/README.md.t" && mv "$DRIFT/README.md.t" "$DRIFT/README.md"
+if "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+  bad "missing markers → --check fails (must-fail control)" "check passed with no markers"
+else
+  ok "missing markers → --check fails (must-fail control)"
+fi
+
 # ── script/smoke wiring ─────────────────────────────────────────────────────
 # Anchored to the executable lines: comments in script/smoke also name the
 # tools file, so an unanchored match would stay green with the read deleted.

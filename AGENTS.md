@@ -23,7 +23,8 @@ Multi-OS, multi-stack collection of Packer templates that build Tart base VM ima
 │   ├── tart-up                         # Starts a stopped VM (mounts + net-policy), waits for SSH, sets the guest hostname, and activates the GUI plane. The hook the auto-start Match line fires on `ssh tart-<name>`. Branches on tart_vm_platform — never on the image name — for hostname (hostnamectl vs all three scutil names) and GUI. Both VNC paths verify the BIND ADDRESS, not the advertised one: linux classifies the guest's, darwin classifies the host's, because Tart advertises 127.0.0.1 while binding the wildcard
 ├── script/
 │   ├── setup                           # Host install run by `make setup` (symlinks the bin/ commands, zsh completion, idempotent SSH Include + placement check, forwards + mounts scaffold, closing tart-ssh-sync run); --uninstall is the inverse (keeps per-VM config)
-│   ├── smoke                           # End-to-end proof of a built image (`make smoke`): clone → boot → guest-agent probes over vsock → ssh → hostname → manifest attestation → the stack's toolchain from stacks/<stack>/smoke-probe → sshd's effective posture → platform-specific closing surface → teardown. Boots a real VM, so local only, never CI. SMOKE_KEEP=1 keeps it
+│   ├── smoke                           # End-to-end proof of a built image (`make smoke`): clone → boot → guest-agent probes over vsock → ssh → hostname → manifest attestation → the stack's toolchain (each tool row's proof from stacks/<stack>/tools, run over non-interactive ssh) → sshd's effective posture → platform-specific closing surface → teardown. Boots a real VM, so local only, never CI. SMOKE_KEEP=1 keeps it
+│   ├── stack-docs                      # Regenerates (--write, via `make docs`) or verifies (--check, run inside `make test`) the marker-delimited inventory blocks each stack README derives from its tools declaration; hand-edits inside the markers fail the check
 │   └── test                            # Runs the test suite (test/*.sh); invoked by `make test` and the CI tests job
 ├── completions/
 │   └── _tart-new                       # Zsh completion for tart-new (stack + OS tokens, resource flags); OS tokens are completed from every shared/*/os (darwin included), not just shared/linux/os; installed by `make setup`
@@ -75,11 +76,11 @@ Multi-OS, multi-stack collection of Packer templates that build Tart base VM ima
 │   │   ├── packages.dnf                # Native build deps for dnf-family (Fedora); one or more per line, comments stripped
 │   │   ├── packages.apt                # Native build deps for apt-family (Debian/Ubuntu); equivalent capabilities to packages.dnf
 │   │   ├── packages.brew               # Native build deps for the brew family (darwin); equivalent capabilities to packages.dnf/apt minus systemd's FPM notify and gd's XPM/AVIF (no macOS analogue)
-│   │   ├── smoke-probe                 # Commands `script/smoke` runs over a non-interactive ssh to prove this stack's toolchain survived imaging — the runtime peer of mise-install.sh's build-time smoke_gate. One per line; a stack without one fails the smoke rather than probing nothing
+│   │   ├── tools                       # The stack's canonical tool declaration (`tool|name|binary|managed-by|proof|purpose` + `ext|token|source` rows). Operational, not documentation: `script/smoke` runs each tool row's proof over non-interactive ssh, and test/declaration.sh holds the installers' smoke_gate/membership_gate/PECL surfaces and files/mise.toml to it (set equality, both directions, per platform) — so advertised-but-unverified and installed-but-undeclared both fail `make test`. The README inventory tables are generated from it (`make docs`)
 │   │   └── README.md                   # Stack-specific docs (what's installed, customization, troubleshooting)
 │   └── jvm/                            # JVM stack — same shape; Temurin 25 + Maven/Gradle/sbt/Kotlin/scala-cli + uv + Node
 ├── templates/
-│   └── stack/                          # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/ (README, mise.toml, packages.{dnf,apt,brew}, smoke-probe, 00-stack.sh, scripts/{linux,darwin}/mise-install.sh — all *.tmpl, __STACK__ substituted)
+│   └── stack/                          # Skeleton `make scaffold STACK=<name>` stamps into stacks/<name>/ (README, tools, mise.toml, packages.{dnf,apt,brew}, 00-stack.sh, scripts/{linux,darwin}/mise-install.sh — all *.tmpl, __STACK__ substituted)
 └── .github/
     ├── dependabot.yml                  # Weekly grouped github-actions bumps only (no Packer-plugin ecosystem — that pin is bounded in linux.pkr.hcl, bumped by hand)
     └── workflows/
@@ -155,6 +156,9 @@ bash -n shared/scripts/*.sh shared/linux/scripts/*.sh shared/darwin/scripts/*.sh
 # them. It also covers the scaffold templates, with __STACK__ substituted.
 make lint
 make test                               # plain-bash test suite (test/*.sh) — mocked, no VM, what CI runs
+make docs                               # regenerate the README inventory blocks from each stack's tools declaration
+                                        # (docs-check, run inside make test, fails on drift — so a tools edit without
+                                        # make docs goes red before it ships)
 
 # Full rebuild (~15-20 min for PHP)
 make rebuild STACK=php OS=fedora
@@ -167,7 +171,7 @@ make smoke STACK=php OS=fedora
 
 The guest-agent probes are the only assertions that leave ssh. `tart exec` is a host→guest vsock RPC answered by `tart-guest-agent` **inside** the VM — installing tart on the host cannot supply it. Where it comes from differs by platform: the linux build installs a pinned, checksum-verified package (`install_guest_agent`), while darwin only asserts the LaunchDaemon/LaunchAgent pair Cirrus already ships. `bin/tart-up` routes the guest hostname (every cell) and every GUI activation through that channel, so an agent-less image passes every ssh-based check and then silently mis-names itself for a headless consumer while hard-failing a GUI one. The probes run in dependency order — channel, escalation over it, then the guest's own name — so a failure is narrowed to the causes below it instead of surfacing as a bare hostname mismatch. The channel probe runs `true` deliberately: `tart exec` propagates the guest command's own exit status, so probing with a command that can itself fail would report that as a dead channel. None of it proves the channel from inside the build — `00-base.sh` can only read the unit's configuration, since the RPC is host→guest.
 
-The smoke test inside `stacks/php/scripts/{linux,darwin}/mise-install.sh` is a hard gate — the Packer build fails if any expected PHP extension is missing. Don't bypass it.
+The smoke test inside `stacks/php/scripts/{linux,darwin}/mise-install.sh` is a hard gate — the Packer build fails if any expected PHP extension is missing. Don't bypass it. The gate lists are not free-standing: `test/declaration.sh` holds every installer's `smoke_gate` groups, `membership_gate` tokens, and PECL loop to set equality with the stack's `tools` declaration (per platform, both directions), and `script/smoke` runs the same declaration's proofs at runtime — one list, three enforcement points. Adding or removing a tool therefore always touches `tools`, both installers, and (via `make docs`) the README table together, or `make test` refuses.
 
 ## What NOT to do
 

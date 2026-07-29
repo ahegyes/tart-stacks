@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help setup uninstall test lint smoke init bootstrap build rebuild scaffold clean check-stack check-stack-token list-stacks check-os check-gui check-de
+.PHONY: help setup uninstall test lint smoke init bootstrap build rebuild scaffold clean check-stack check-stack-token list-stacks check-os check-gui check-de docs docs-check
 
 # Stack selector. Required for build/rebuild/scaffold. e.g. `make build STACK=php OS=fedora`.
 STACK ?=
@@ -62,6 +62,15 @@ uninstall:
 # Run the plain-bash test suite (test/*.sh). No framework; needs only bash + jq.
 test:
 	@"$(CURDIR)/script/test"
+
+# Regenerate the marker-delimited inventory blocks in every stack README from
+# the stack's `tools` declaration (docs), or verify they match (docs-check —
+# what test/declaration.sh runs, so `make test` already fails on drift).
+docs:
+	@"$(CURDIR)/script/stack-docs" --write
+
+docs-check:
+	@"$(CURDIR)/script/stack-docs" --check
 
 # lint — the ONE definition of what shellcheck covers, so the docs and CI
 # cannot describe different sets. A `*.sh` glob is not that set: every host

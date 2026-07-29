@@ -265,12 +265,49 @@ for target in check-stack scaffold; do
   esac
 done
 
+# The docs targets and the generator's test wiring, pinned from outside the
+# files that carry them: `make docs`/`docs-check` must reach script/stack-docs,
+# and test/declaration.sh must actually invoke the --check — deleting that
+# block would otherwise leave every README block unverified while the rest of
+# the declaration suite stays green.
+echo "Makefile — the docs surface is wired:"
+for t in docs docs-check; do
+  if sed -n "/^$t:/,/^$/p" "$REPO/Makefile" | grep -q 'script/stack-docs'; then
+    ok "make $t reaches script/stack-docs"
+  else
+    bad "make $t reaches script/stack-docs" "no script/stack-docs call under the $t target"
+  fi
+done
+# Two load-bearing invocations, pinned by exact shape (the drift-control
+# fixture calls also name --check, so a bare count cannot tell a gutted real
+# check from a surviving fixture): the bare call covers every stacks/*/
+# README, the $SCAF call covers the scaffold template.
+# shellcheck disable=SC2016  # the patterns match LITERAL source text incl. $()
+if grep -qF 'out=$("$REPO/script/stack-docs" --check 2>&1)' "$REPO/test/declaration.sh"; then
+  ok "test/declaration.sh --checks every stack README"
+else
+  bad "test/declaration.sh --checks every stack README" "the all-stacks stack-docs --check call is missing or reshaped"
+fi
+# shellcheck disable=SC2016  # the pattern matches LITERAL source text incl. $()
+if grep -qF 'out=$("$REPO/script/stack-docs" --check "$SCAF" 2>&1)' "$REPO/test/declaration.sh"; then
+  ok "test/declaration.sh --checks the materialized scaffold"
+else
+  bad "test/declaration.sh --checks the materialized scaffold" "the scaffold stack-docs --check call is missing or reshaped"
+fi
+
 # The guard that makes every case above safe: a token the gates accept really does
 # get scaffolded, and it lands in the copy.
 echo "Makefile — scaffold writes only inside the sandbox:"
 assert_accepts "scaffold of a fresh valid token succeeds" scaffold STACK=probe
 if [ -f "$SANDBOX/stacks/probe/README.md" ]; then ok "scaffold wrote into the sandbox copy"
 else bad "scaffold wrote into the sandbox copy" "no $SANDBOX/stacks/probe/README.md"; fi
+# The tools declaration is what script/smoke probes and the gate checks hold
+# to — a scaffold without one stamps a stack that can never pass either.
+if [ -f "$SANDBOX/stacks/probe/tools" ]; then ok "scaffold stamped the tools declaration"
+else bad "scaffold stamped the tools declaration" "no $SANDBOX/stacks/probe/tools"; fi
+if grep -q '__STACK__' "$SANDBOX/stacks/probe/tools" 2>/dev/null; then
+  bad "the stamped tools file has no unsubstituted __STACK__" "placeholder survived"
+else ok "the stamped tools file has no unsubstituted __STACK__"; fi
 if [ -e "$REPO/stacks/probe" ]; then bad "scaffold left the checkout untouched" "$REPO/stacks/probe exists"
 else ok "scaffold left the checkout untouched"; fi
 
