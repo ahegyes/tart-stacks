@@ -534,6 +534,12 @@ printf 'tool|uv|uv|mise:uv|uv --version; true|masked proof\n' > "$FAKE_REPO/stac
 MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
 assert_rc       "shell syntax inside a proof → FAIL" 1
 assert_contains "the shell syntax is named" "$(cat "$ERR")" "contains shell syntax"
+# An assignment as binary+proof — FLAG=x — is inside the character class but
+# a shell runs it as an assignment, exits 0, and executes nothing.
+printf 'tool|flag|FLAG=x|installer|FLAG=x|assignment proof\n' > "$FAKE_REPO/stacks/mixed/tools"
+MOCK_MANIFEST_STACK=mixed run_smoke mixed fedora
+assert_rc       "an assignment-shaped proof → FAIL" 1
+assert_contains "the non-command argv0 is named" "$(cat "$ERR")" "does not begin with a command word"
 SMOKE="$SMOKE_REAL"
 
 # The hardening posture, read from sshd's effective config rather than the file.

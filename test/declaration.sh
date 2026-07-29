@@ -267,7 +267,10 @@ membership_tokens() { # <installer> — one token per line; ERR lines on misuse
     # never pass, so the static check must not certify it. Checked BY
     # POSITION (label token, then the listing) — an anywhere-match would let
     # a decoy label spelled "$(php -m)" vouch for a single-quoted listing.
-    if ! printf '%s\n' "$call" | grep -qE '^membership_gate[[:space:]]+"[^"]*"[[:space:]]+"\$\(php -m\)"([[:space:]]|$)'; then
+    # The label itself may take any form the lexer accepts: double-quoted,
+    # single-quoted, or a bare word.
+    label_pat="\"[^\"]*\"|'[^']*'|[A-Za-z0-9_.-]+"
+    if ! printf '%s\n' "$call" | grep -qE "^membership_gate[[:space:]]+($label_pat)[[:space:]]+\"\\\$\\(php -m\\)\"([[:space:]]|\$)"; then
       printf 'ERR\tmembership listing must be the double-quoted "$(php -m)" in argument position two — a single-quoted listing is a literal string, never the module list\n'
     fi
     printf '%s\n' "$call" | lex_tokens | awk '
@@ -986,6 +989,18 @@ mut_decoy_label()     { mk_stack "$1"; printf 'ext|imagick|pecl\n' >> "$1/tools"
   done
 }
 fixture_red "a decoy label vouching for a single-quoted listing" "argument position two" mut_decoy_label
+
+# A single-quoted LABEL is a valid lexer shape — only the listing's quoting
+# carries semantics, so this must pass.
+mk_squote_label() { mk_stack "$1"; printf 'ext|imagick|pecl\n' >> "$1/tools"
+  local p
+  for p in linux darwin; do
+    printf 'smoke_gate "r" -- uv --version\nfor ext in imagick; do\n  :\ndone\nmembership_gate '"'"'exts'"'"' "$(php -m)" imagick\n' > "$1/scripts/$p/mise-install.sh"
+  done
+}
+d="$WORK/squote-label"; rm -rf "$d"; mk_squote_label "$d"
+run_fixture squote-label "$d"
+if [ "$frc" -eq 0 ]; then ok "a single-quoted label with a double-quoted listing → passes (must-pass control)"; else bad "a single-quoted label with a double-quoted listing → passes (must-pass control)" "$fout"; fi
 
 mut_double_heredoc()  { mk_stack "$1"
   printf 'cat <<A <<B\nx\nA\ny\nB\nsmoke_gate "runtimes" -- uv --version\n' > "$1/scripts/linux/mise-install.sh"

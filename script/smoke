@@ -251,10 +251,9 @@ if [ -z "$probes" ]; then
   echo "$prog: FAIL — stacks/$STACK/tools declares no tool rows, so 'toolchain' below would pass without probing anything." >&2
   exit 1
 fi
-# Counted from the file, compared after the loop — defense in depth: the
-# binary|proof lines are nonblank even with an empty proof, but the count
-# guard survives any future format change that reintroduces strippable
-# lines into the command substitution.
+# The row count is taken from the file independently of the probe
+# extraction, so a row the extraction or the loop loses for any reason fails
+# the comparison below instead of passing silently unprobed.
 n_rows=$(awk -F'|' '$1 == "tool"' "$TOOLS_FILE" | wc -l | tr -d ' ')
 n_probed=0
 while IFS='|' read -r binary probe; do
@@ -275,6 +274,16 @@ while IFS='|' read -r binary probe; do
   case "$probe" in
     *[!A-Za-z0-9._+=/:@\ -]*)
       echo "$prog: FAIL — the proof '$probe' in stacks/$STACK/tools contains shell syntax; proofs are argv words only, so nothing can mask the probed command's own exit status." >&2
+      exit 1 ;;
+  esac
+  # argv[0] gets the stricter command-word grammar: no =, :, or /, first
+  # character alphanumeric. A shell reads FLAG=x as an assignment and exits 0
+  # having executed nothing, so an assignment-shaped word must never be the
+  # command position.
+  argv0="${probe%% *}"
+  case "$argv0" in
+    [!A-Za-z0-9_]*|*[!A-Za-z0-9._+-]*)
+      echo "$prog: FAIL — the proof '$probe' in stacks/$STACK/tools does not begin with a command word (an assignment or option there runs nothing and exits 0)." >&2
       exit 1 ;;
   esac
   # And it must exercise the row's own binary — either executing it
