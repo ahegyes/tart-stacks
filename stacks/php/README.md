@@ -6,7 +6,7 @@ For host setup, build flow, daily use, and persistent terminal sessions (zellij)
 
 ## What's in this stack
 
-The inventory below is generated from [`tools`](./tools), the stack's canonical tool declaration: every row is hard-gated at build (the installers' `smoke_gate`/`membership_gate` calls are held to it by the test suite) and probed at runtime (`make smoke` runs each Runtime probe over a non-interactive ssh).
+The inventory below is generated from [`tools`](./tools), the stack's canonical tool declaration: every **tool** row is hard-gated at build (the installers' `smoke_gate` calls are held to it by the test suite) and probed at runtime (`make smoke` runs each Runtime probe over a non-interactive ssh). **Extension** rows are proven at build time only, by the `membership_gate` check against `php -m` — the table's own columns say so.
 
 <!-- tools:begin -->
 <!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->

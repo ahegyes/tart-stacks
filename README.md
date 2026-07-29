@@ -27,7 +27,7 @@ All stacks share a common base: mise + zellij + standard dev utilities, wired th
 ```
 .
 ├── bin/          host commands, symlinked onto PATH by `make setup`
-├── script/       host dev-tasks run via `make` (setup, smoke, test)
+├── script/       host dev-tasks run via `make` (setup, smoke, stack-docs, test)
 ├── shared/       stack-agnostic in-VM provisioning + the GUI layer
 ├── stacks/       one directory per stack (php, jvm): packages + install scripts
 ├── templates/    skeleton `make scaffold` stamps into a new stack

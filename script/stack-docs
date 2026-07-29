@@ -15,6 +15,10 @@
 # test/declaration.sh's job — this script trusts its inputs and only renders.
 #
 # Bash 3.2 floor (macOS /bin/bash): no declare -A, no mapfile.
+#
+# shellcheck disable=SC2016  # the generated markdown legitimately carries
+# backticked code spans (`make docs`, `node = lts`) inside single quotes —
+# nothing here wants expansion.
 set -euo pipefail
 
 prog="${0##*/}"
@@ -27,7 +31,9 @@ case "$MODE" in
 esac
 
 # mise_value <mise.toml> <key> — the raw value text, quotes stripped, for the
-# "Managed by" column. The key may be quoted in the file (backend keys are).
+# "Managed by" column; empty output means the key is absent, which callers
+# must treat as an error rather than render (an empty version cell reads as a
+# generated fact). The key may be quoted in the file (backend keys are).
 mise_value() {
   awk -v want="$2" '
     /^\[tools\]$/ { in_tools = 1; next }
@@ -49,11 +55,18 @@ mise_value() {
 }
 
 # managed_display <managed-by> <mise.toml> — the "Managed by" column text.
+# Nonzero (with a message) when a mise: key has no value in mise.toml —
+# rendering an empty cell would present a missing input as a generated fact.
 managed_display() {
   case "$1" in
     mise:*)
-      local key="${1#mise:}"
-      printf 'mise (`%s = %s`)' "$key" "$(mise_value "$2" "$key")"
+      local key="${1#mise:}" val
+      val=$(mise_value "$2" "$key")
+      if [ -z "$val" ]; then
+        echo "$prog: no [tools] value for '$key' in $2" >&2
+        return 1
+      fi
+      printf 'mise (`%s = %s`)' "$key" "$val"
       ;;
     node-corepack) printf 'Corepack (enabled at build by mise_runtime_setup)' ;;
     installer)     printf "the stack's own installer script" ;;
@@ -61,15 +74,17 @@ managed_display() {
   esac
 }
 
-# gen_tools <dir> — the full tools block, markers excluded.
+# gen_tools <dir> — the full tools block, markers excluded. Nonzero when any
+# row cannot render (the managed_display seam), so a masked input never
+# becomes a written block.
 gen_tools() {
-  local dir="$1" line name binary managed proof purpose
+  local dir="$1" name managed proof purpose cell
   printf '<!-- Generated from ./tools by script/stack-docs — edit that file, then run `make docs`. -->\n'
   printf '| Tool | Managed by | Build gate | Runtime probe | Purpose |\n'
   printf '|---|---|---|---|---|\n'
-  while IFS='|' read -r _ name binary managed proof purpose; do
-    printf '| %s | %s | smoke_gate | `%s` | %s |\n' \
-      "$name" "$(managed_display "$managed" "$dir/files/mise.toml")" "$proof" "$purpose"
+  while IFS='|' read -r _ name _ managed proof purpose; do
+    cell=$(managed_display "$managed" "$dir/files/mise.toml") || return 1
+    printf '| %s | %s | smoke_gate | `%s` | %s |\n' "$name" "$cell" "$proof" "$purpose"
   done < <(grep '^tool|' "$dir/tools")
 }
 
@@ -87,23 +102,29 @@ gen_exts() {
 }
 
 # splice <readme> <marker> <content-file> — the README with the block between
-# <!-- <marker>:begin --> / <!-- <marker>:end --> replaced. Missing or
-# unpaired markers are fatal: silently appending would duplicate blocks.
+# <!-- <marker>:begin --> / <!-- <marker>:end --> replaced. Exactly one
+# ordered begin/end pair is legal: missing, duplicate, out-of-order, or
+# unterminated markers are all fatal — silently tolerating any of them leaves
+# a block unowned or duplicated.
 splice() {
   awk -v marker="$2" -v content="$3" '
     $0 == "<!-- " marker ":begin -->" {
-      if (seen) { print "'"$prog"': duplicate " marker " markers" > "/dev/stderr"; exit 3 }
+      if (seen) { print "'"$prog"': duplicate " marker ":begin marker" > "/dev/stderr"; exit 3 }
       seen = 1; inblock = 1; print
       while ((getline cl < content) > 0) print cl
       close(content)
       next
     }
-    $0 == "<!-- " marker ":end -->" { inblock = 0; print; next }
+    $0 == "<!-- " marker ":end -->" {
+      if (!inblock) { print "'"$prog"': " marker ":end without an open block (missing, duplicate, or out-of-order marker)" > "/dev/stderr"; exit 3 }
+      inblock = 0; closed = 1; print; next
+    }
     inblock { next }
     { print }
     END {
       if (!seen) { print "'"$prog"': no " marker " markers found" > "/dev/stderr"; exit 3 }
       if (inblock) { print "'"$prog"': unterminated " marker " block" > "/dev/stderr"; exit 3 }
+      if (!closed) { print "'"$prog"': " marker ":begin never closed by an end marker" > "/dev/stderr"; exit 3 }
     }
   ' "$1"
 }
@@ -128,11 +149,17 @@ for dir in "${dirs[@]}"; do
   if [ ! -f "$readme" ]; then
     echo "$prog: $name: no README.md" >&2; rc=1; continue
   fi
+  if [ ! -f "$dir/files/mise.toml" ]; then
+    echo "$prog: $name: no files/mise.toml — the Managed-by column derives from it" >&2; rc=1; continue
+  fi
 
   tmp_tools=$(mktemp); tmp_exts=$(mktemp); tmp_new=$(mktemp)
   # shellcheck disable=SC2064  # expand the paths now — they are loop-local
   trap "rm -f '$tmp_tools' '$tmp_exts' '$tmp_new'" EXIT
-  gen_tools "$dir" > "$tmp_tools"
+  if ! gen_tools "$dir" > "$tmp_tools"; then
+    echo "$prog: $name: could not render the tools block" >&2
+    rm -f "$tmp_tools" "$tmp_exts" "$tmp_new"; trap - EXIT; rc=1; continue
+  fi
   gen_exts "$dir" > "$tmp_exts"
 
   splice "$readme" tools "$tmp_tools" > "$tmp_new"
@@ -140,6 +167,12 @@ for dir in "${dirs[@]}"; do
     tmp2=$(mktemp)
     splice "$tmp_new" extensions "$tmp_exts" > "$tmp2"
     mv "$tmp2" "$tmp_new"
+  elif grep -q '<!-- extensions:begin -->' "$readme"; then
+    # Zero ext rows with extensions markers still in the README: the stale
+    # block would otherwise survive every --check as untouched prose. The
+    # transition is explicit — declare ext rows or remove the markers.
+    echo "$prog: $name: README has extensions markers but the tools declaration has no ext rows — remove the markers (or restore the rows)" >&2
+    rm -f "$tmp_tools" "$tmp_exts" "$tmp_new"; trap - EXIT; rc=1; continue
   fi
 
   if [ "$MODE" = "--write" ]; then

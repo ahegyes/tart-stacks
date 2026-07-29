@@ -95,7 +95,7 @@ Multi-OS, multi-stack collection of Packer templates that build Tart base VM ima
 - **Function naming: `tart_` prefix marks functions sourced from `bin/lib/`; script-local helpers stay bare.** A prefixed call (`tart_need_cmd`, `tart_config_path`) signals "defined in the lib, not this file"; a bare one (`dir_args`, `netpolicy_args`) is local. The prefix only carries that signal while it stays selective — don't add it to local helpers.
 - **Naming is `tart-stacks` everywhere** for the repo. Stack directories are bare tokens (`php`, `jvm`). The Tart image name is `<os>-<stack>` (e.g. `fedora-php`, `ubuntu-jvm`) — the OS prefix comes from the `-var os=` build arg, not the stack dir name. A GUI flavor appends the DE token: `<os>-<stack>-<de>` (e.g. `fedora-php-kde`) — linux only. A darwin image is always `<os>-<stack>`, never `<os>-<stack>-<de>`: the macOS desktop is intrinsic, so the platform has no DE axis to append (`make` refuses `GUI=1` and `tart-new` refuses a `<de>` argument on that platform). Don't introduce alternative spellings within a stack's files.
 - **Host (macOS) and guest (VM) live in the same repo.** Everything under `bin/` and `script/` runs on the host, as do `make`/`packer`; everything under `shared/scripts/`, `shared/linux/scripts/`, `shared/darwin/scripts/`, `shared/files/`, and `stacks/*/scripts/`, `stacks/*/files/` runs inside the build VM.
-- **`script/` (singular) vs `scripts/` (plural) is deliberate, not a typo.** Three directories, three roles: `bin/` = user commands symlinked onto `$PATH` by `make setup` (`tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm`, `tart-down`; `make uninstall` is the inverse); `script/` = the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`, never on `$PATH` (`setup`, `smoke`, `test`); `scripts/` under `shared/` and `stacks/*/` = in-VM provisioner collections, each paired with a sibling `files/`.
+- **`script/` (singular) vs `scripts/` (plural) is deliberate, not a typo.** Three directories, three roles: `bin/` = user commands symlinked onto `$PATH` by `make setup` (`tart-up`, `tart-ssh-sync`, `tart-new`, `tart-rm`, `tart-down`; `make uninstall` is the inverse); `script/` = the [Scripts to Rule Them All](https://github.com/github/scripts-to-rule-them-all) namespace for host dev-tasks run via `make`, never on `$PATH` (`setup`, `smoke`, `stack-docs`, `test`); `scripts/` under `shared/` and `stacks/*/` = in-VM provisioner collections, each paired with a sibling `files/`.
 - **`shared/` vs `stacks/<name>/` rule.** A file goes in `shared/` if it would be byte-identical across every plausible stack. Anything that differs by stack lives under `stacks/<name>/`. If a script is mostly shared but needs one stack-specific tweak, split it (see `00-base.sh` + `00-stack.sh`) rather than parameterize.
 - **SSH config alias prefix is `tart-<name>`.** Tart VM names stay bare (e.g. `app-a`, `test-vm`). The `tart-` prefix lives only in the generated SSH config (`tart-ssh-sync`), so `ssh -G` and `~/.ssh/config` clearly mark Tart VMs vs remote machines — you connect with `ssh tart-<name>`. `tart-up` accepts either form on input.
 
@@ -151,14 +151,14 @@ packer validate -var stack=php -var os=macos darwin.pkr.hcl    # same check, dar
 bash -n shared/scripts/*.sh shared/linux/scripts/*.sh shared/darwin/scripts/*.sh stacks/php/scripts/*.sh stacks/php/scripts/*/*.sh
 # `make lint` is what CI runs, so local and CI coverage cannot differ. It owns
 # discovery deliberately: every host command (bin/tart-*, script/*) is
-# EXTENSIONLESS, so a `git ls-files '*.sh'` form silently skips all eight —
-# including bin/tart-up, the largest of the eight — while a whole-repo scan lints
+# EXTENSIONLESS, so a `git ls-files '*.sh'` form silently skips every one of
+# them — including bin/tart-up, the largest — while a whole-repo scan lints
 # them. It also covers the scaffold templates, with __STACK__ substituted.
 make lint
+make docs                               # regenerate the README inventory blocks from each stack's tools declaration —
+                                        # BEFORE make test: docs-check runs inside the suite and fails on drift, so a
+                                        # tools edit without regeneration goes red
 make test                               # plain-bash test suite (test/*.sh) — mocked, no VM, what CI runs
-make docs                               # regenerate the README inventory blocks from each stack's tools declaration
-                                        # (docs-check, run inside make test, fails on drift — so a tools edit without
-                                        # make docs goes red before it ships)
 
 # Full rebuild (~15-20 min for PHP)
 make rebuild STACK=php OS=fedora

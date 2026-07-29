@@ -271,28 +271,33 @@ done
 # block would otherwise leave every README block unverified while the rest of
 # the declaration suite stays green.
 echo "Makefile — the docs surface is wired:"
-for t in docs docs-check; do
-  if sed -n "/^$t:/,/^$/p" "$REPO/Makefile" | grep -q 'script/stack-docs'; then
-    ok "make $t reaches script/stack-docs"
-  else
-    bad "make $t reaches script/stack-docs" "no script/stack-docs call under the $t target"
-  fi
-done
-# Two load-bearing invocations, pinned by exact shape (the drift-control
-# fixture calls also name --check, so a bare count cannot tell a gutted real
-# check from a surviving fixture): the bare call covers every stacks/*/
-# README, the $SCAF call covers the scaffold template.
+# Each target must carry its own MODE, not merely name the script — swapped
+# modes would rewrite on check and check on write.
+if sed -n '/^docs:/,/^$/p' "$REPO/Makefile" | grep -q -- '--write'; then
+  ok "make docs runs stack-docs --write"
+else
+  bad "make docs runs stack-docs --write" "no --write call under the docs target"
+fi
+if sed -n '/^docs-check:/,/^$/p' "$REPO/Makefile" | grep -q -- '--check'; then
+  ok "make docs-check runs stack-docs --check"
+else
+  bad "make docs-check runs stack-docs --check" "no --check call under the docs-check target"
+fi
+# Two load-bearing invocations, pinned as WHOLE lines (the drift-control
+# fixture calls also name --check, and an unanchored fixed string is
+# satisfied by a comment carrying the same text beside a gutted call): the
+# bare call covers every stacks/*/ README, the $SCAF call the scaffold.
 # shellcheck disable=SC2016  # the patterns match LITERAL source text incl. $()
-if grep -qF 'out=$("$REPO/script/stack-docs" --check 2>&1)' "$REPO/test/declaration.sh"; then
+if grep -qxF 'if out=$("$REPO/script/stack-docs" --check 2>&1); then' "$REPO/test/declaration.sh"; then
   ok "test/declaration.sh --checks every stack README"
 else
-  bad "test/declaration.sh --checks every stack README" "the all-stacks stack-docs --check call is missing or reshaped"
+  bad "test/declaration.sh --checks every stack README" "the all-stacks stack-docs --check line is missing or reshaped"
 fi
 # shellcheck disable=SC2016  # the pattern matches LITERAL source text incl. $()
-if grep -qF 'out=$("$REPO/script/stack-docs" --check "$SCAF" 2>&1)' "$REPO/test/declaration.sh"; then
+if grep -qxF 'if out=$("$REPO/script/stack-docs" --check "$SCAF" 2>&1); then' "$REPO/test/declaration.sh"; then
   ok "test/declaration.sh --checks the materialized scaffold"
 else
-  bad "test/declaration.sh --checks the materialized scaffold" "the scaffold stack-docs --check call is missing or reshaped"
+  bad "test/declaration.sh --checks the materialized scaffold" "the scaffold stack-docs --check line is missing or reshaped"
 fi
 
 # The guard that makes every case above safe: a token the gates accept really does

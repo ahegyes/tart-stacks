@@ -20,6 +20,10 @@ The inventory below is generated from [`tools`](./tools), the stack's canonical 
 | yarn | Corepack (enabled at build by mise_runtime_setup) | smoke_gate | `command -v yarn` | Corepack shim; resolves per-project via package.json packageManager |
 <!-- tools:end -->
 
+**Notes**
+
+- **Corepack shims** — `pnpm`/`yarn` resolve per project via `package.json`'s `packageManager`. The shims exist for Nodes that bundle Corepack (24 and earlier); a project-pinned Node 25+ gets no shims from either the mise setting or the build's enable step — provision Corepack yourself in that case.
+
 ## Customization
 
 - **Tool versions**: [`files/mise.toml`](./files/mise.toml). Every tool needs its row in [`tools`](./tools) and its `smoke_gate` group in both installers — `make test` holds the three to equality; `make docs` regenerates the table above.

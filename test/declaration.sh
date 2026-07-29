@@ -583,22 +583,83 @@ if out=$("$REPO/script/stack-docs" --check "$SCAF" 2>&1); then
 else
   bad "the scaffold README template's baked block matches its tools template" "$out"
 fi
-# The drift control: a hand-edit inside the markers must fail --check.
+# Drift, marker, and write behavior against a copy of the real php stack.
+# The trailing /. copy form is the one both BSD and GNU cp read identically —
+# `php/ dest/` creates dest/php on GNU, and every control below would then
+# fail for the wrong reason (no tools at the root it was pointed at).
+mk_drift() { # <dir> — fresh copy of stacks/php
+  rm -rf "$1"; mkdir -p "$1"
+  cp -R "$REPO/stacks/php/." "$1/"
+}
 DRIFT="$WORK/drift-stack"
-rm -rf "$DRIFT"; mkdir -p "$DRIFT"
-cp -R "$REPO/stacks/php/" "$DRIFT/" 2>/dev/null || cp -R "$REPO/stacks/php/." "$DRIFT/"
-sed 's/| node |/| nodule |/' "$DRIFT/README.md" > "$DRIFT/README.md.t" && mv "$DRIFT/README.md.t" "$DRIFT/README.md"
+
+# Pristine must-pass control first: if the copy itself cannot pass --check,
+# nothing the must-fail cases below report is trustworthy.
+mk_drift "$DRIFT"
 if "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+  ok "a pristine stack copy passes --check (must-pass control)"
+else
+  bad "a pristine stack copy passes --check (must-pass control)" "$("$REPO/script/stack-docs" --check "$DRIFT" 2>&1 | head -3)"
+fi
+
+sed 's/| node |/| nodule |/' "$DRIFT/README.md" > "$DRIFT/README.md.t" && mv "$DRIFT/README.md.t" "$DRIFT/README.md"
+if out=$("$REPO/script/stack-docs" --check "$DRIFT" 2>&1); then
   bad "a hand-edited generated block → --check fails (must-fail control)" "check passed on drifted content"
 else
   ok "a hand-edited generated block → --check fails (must-fail control)"
+  assert_contains "drift failure names the remedy" "$out" "run: make docs"
 fi
+
+# --write must restore exactly the generated content, touch nothing outside
+# the markers, be idempotent, and leave a state --check accepts.
+if "$REPO/script/stack-docs" --write "$DRIFT" >/dev/null 2>&1 \
+   && "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+  ok "--write restores a drifted block to --check-clean"
+else
+  bad "--write restores a drifted block to --check-clean" "$("$REPO/script/stack-docs" --check "$DRIFT" 2>&1 | head -3)"
+fi
+if cmp -s "$DRIFT/README.md" "$REPO/stacks/php/README.md"; then
+  ok "--write reproduces the shipped README byte-for-byte (prose outside markers untouched)"
+else
+  bad "--write reproduces the shipped README byte-for-byte (prose outside markers untouched)" "$(diff "$REPO/stacks/php/README.md" "$DRIFT/README.md" | head -5)"
+fi
+before=$(cat "$DRIFT/README.md")
+"$REPO/script/stack-docs" --write "$DRIFT" >/dev/null 2>&1
+if [ "$before" = "$(cat "$DRIFT/README.md")" ]; then
+  ok "--write is idempotent"
+else
+  bad "--write is idempotent" "a second write changed the file"
+fi
+
 # Markers missing entirely must be fatal, not silently skipped.
+mk_drift "$DRIFT"
 sed '/tools:begin/d;/tools:end/d' "$DRIFT/README.md" > "$DRIFT/README.md.t" && mv "$DRIFT/README.md.t" "$DRIFT/README.md"
-if "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+if out=$("$REPO/script/stack-docs" --check "$DRIFT" 2>&1); then
   bad "missing markers → --check fails (must-fail control)" "check passed with no markers"
 else
   ok "missing markers → --check fails (must-fail control)"
+  assert_contains "missing markers are diagnosed as such" "$out" "no tools markers found"
+fi
+
+# A stray or duplicate end marker leaves a block unowned — exactly one
+# ordered pair is legal.
+mk_drift "$DRIFT"
+printf '\n<!-- tools:end -->\n' >> "$DRIFT/README.md"
+if "$REPO/script/stack-docs" --check "$DRIFT" >/dev/null 2>&1; then
+  bad "a duplicate end marker → --check fails (must-fail control)" "check passed with a stray end marker"
+else
+  ok "a duplicate end marker → --check fails (must-fail control)"
+fi
+
+# Zero ext rows with the extensions markers still present: the stale block
+# would otherwise pass every --check as untouched prose.
+mk_drift "$DRIFT"
+grep -v '^ext|' "$DRIFT/tools" > "$DRIFT/tools.t" && mv "$DRIFT/tools.t" "$DRIFT/tools"
+if out=$("$REPO/script/stack-docs" --check "$DRIFT" 2>&1); then
+  bad "ext rows removed but markers kept → --check fails (must-fail control)" "check passed over a stale extensions block"
+else
+  ok "ext rows removed but markers kept → --check fails (must-fail control)"
+  assert_contains "the stale-extensions failure names the transition" "$out" "no ext rows"
 fi
 
 # ── script/smoke wiring ─────────────────────────────────────────────────────
