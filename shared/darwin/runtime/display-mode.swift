@@ -189,10 +189,13 @@ print("display-mode selftest — the choice:")
 check("1920x1080 takes the nearest Retina mode", chosen(measured, 1920, 1080), "1920x1037@3840x2074")
 check("an exact 1x match beats a distant Retina mode", chosen(measured, 1280, 960), "1280x960@1280x960")
 check("equal distance prefers Retina", chosen(measured, 1600, 864), "1600x864@3200x1728")
+// Two plausible 2x modes, equally far from the target and equally sharp, whose
+// area and width disagree — the pair that shows the tie-break reads AREA. A
+// mode scaled 1x across and 2x down would rank them too, and no display has one.
 check("equal distance and scale prefers the larger backing store",
-      chosen([Candidate(width: 100, height: 100, pixelWidth: 100, pixelHeight: 100),
-              Candidate(width: 100, height: 100, pixelWidth: 100, pixelHeight: 200)], 100, 100),
-      "100x100@100x200")
+      chosen([Candidate(width: 108, height: 98, pixelWidth: 216, pixelHeight: 196),
+              Candidate(width: 101, height: 109, pixelWidth: 202, pixelHeight: 218)], 100, 100),
+      "101x109@202x218")
 check("no candidates yields no choice", chosen([], 1920, 1080), "none")
 
 print("")
