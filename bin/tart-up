@@ -23,8 +23,10 @@
 # GUI mode: `--gui=` overrides an exact-name entry in
 # ~/.config/tart-stacks/gui (override $TART_GUI); absent means headless. On a
 # LINUX window boot, the guest desktop is scaled to the main host display's
-# backing scale before its session starts (override $TART_DISPLAY_SCALE) — a
-# macOS guest's own window needs no such step. VNC differs by platform too:
+# backing scale before its session starts (override $TART_DISPLAY_SCALE); a
+# DARWIN window boot instead establishes the guest's display MODE once, since
+# a clone that has never had one negotiates 1024x768 under --display-refit and
+# keeps it (override $TART_DISPLAY_MODE_SRC). VNC differs by platform too:
 # linux serves it from a guest-side systemd unit; darwin has no guest listener
 # at all, serving it host-side via Tart's own `--vnc-experimental`. Platform is
 # read from Tart itself (`tart get --format json`'s OS field), never guessed
@@ -48,6 +50,7 @@ REPO=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 STACKS_DIR="${TART_STACKS_DIR:-$REPO/stacks}"
 OS_FILES="${TART_OS_FILES:-$REPO/shared/*/os}"
 DESKTOPS_FILE="${TART_DESKTOPS:-$REPO/shared/linux/desktops}"
+DISPLAY_MODE_SRC="${TART_DISPLAY_MODE_SRC:-$REPO/shared/darwin/runtime/display-mode.swift}"
 
 # BSD nc's -G is the probe's connect bound; a PATH-shadowing GNU netcat parses
 # -G as a no-op, so pin the system binary (TART_NC_BIN is the test seam).
@@ -66,11 +69,16 @@ Window mode opens Tart's VM window. Closing that window kills the VM, and a
 windowed launch needs a GUI login session; a daemon context may not be able to
 open the window. On a LINUX guest, tart-up applies the main host display's
 integer backing scale (native pixels / logical points) before starting that
-boot's desktop session; a macOS guest's own window needs no such step, since
-it is up as soon as the VM is.
+boot's desktop session.
 Set TART_DISPLAY_SCALE to force a scale: non-integers warn and use 1, and values
 outside 1-3 are clamped into that range with a warning.
 Detection failures use 1, and guest application failures warn but continue.
+
+A macOS guest's window is up as soon as the VM is, so it needs no scale step —
+but a clone that has never had a display mode established sits at Tart's
+1024x768 default forever. tart-up establishes one from the geometry the VM was
+created with, on the first window boot; later boots find a mode already set and
+leave it to --display-refit. Failures warn and continue.
 
 VNC mode differs by platform: a LINUX guest serves it from a guest-side
 systemd unit on 127.0.0.1:5901 (tunnel with ssh -L). A darwin guest has no
@@ -459,6 +467,27 @@ darwin_set_hostname() {
   [ -z "$DARWIN_HOSTNAME_UNSET" ]
 }
 
+# darwin_apply_display_mode <vm> — establish the guest's display mode from the
+# geometry the VM was created with. WHY a macOS clone needs this once, and why
+# it is inert afterwards, is in shared/darwin/runtime/display-mode.swift.
+#
+# The applier rides in on argv as base64: `tart exec` forwards no stdin, and
+# the guest agent is the one channel that never prompts for Touch ID. Its own
+# stderr is the whole diagnosis of "my screen is 4:3" — no Command Line Tools,
+# no display, a geometry it could not parse — so it is passed through rather
+# than replaced with a generic miss.
+darwin_apply_display_mode() {
+  local vm="$1" applier="$DISPLAY_MODE_SRC" geometry
+  [ -r "$applier" ] || { echo "no display-mode applier at $applier" >&2; return 1; }
+  # tart_vm_display admits digits and one 'x' and nothing else, which is what
+  # makes it safe to interpolate into the guest command line below.
+  geometry=$(tart_vm_display "$vm") || {
+    echo "could not read the configured display geometry of '$vm'" >&2; return 1; }
+  tart exec "$vm" /bin/sh -c \
+    "echo $(base64 < "$applier" | tr -d '\n') | base64 -d > /tmp/tart-stacks-display-mode.swift \
+       && exec swift /tmp/tart-stacks-display-mode.swift $geometry"
+}
+
 DARWIN_VNC_URL="" DARWIN_VNC_HOST="" DARWIN_VNC_PORT=""
 
 # darwin_vnc_wait_for_url — poll this boot's run log for the "VNC server is
@@ -776,9 +805,17 @@ for _ in $(seq 1 30); do
     case "$GUI_MODE" in
       window)
         if [ "$PLATFORM" = "darwin" ]; then
-          : # A macOS guest's window IS its desktop session — up as soon as
-            # the VM is, with no display manager to isolate into and no host
-            # backing-scale mismatch to correct (Tart renders it natively).
+          # A macOS guest's window IS its desktop session — up as soon as the
+          # VM is, with no display manager to isolate into and no host
+          # backing-scale mismatch to correct (Tart renders it natively). What
+          # it does need is a display MODE: only a window boot negotiates one
+          # against refit, and a clone that has never had one established sits
+          # at 1024x768 permanently. A failure here costs the guest its
+          # geometry, not its window, so the window still comes up.
+          if ! mode_err=$(darwin_apply_display_mode "$VM" 2>&1 >/dev/null); then
+            echo "$prog: warning: could not establish the display mode in '$VM'; its window may stay at Tart's 1024x768 default." >&2
+            [ -n "$mode_err" ] && printf '  %s\n' "$mode_err" >&2
+          fi
         else
           # Tart refits a native window's framebuffer in host device pixels, so
           # apply that window's host backing scale before the display manager

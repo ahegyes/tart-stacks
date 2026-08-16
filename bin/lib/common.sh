@@ -47,6 +47,22 @@ tart_vm_platform() {
   esac
 }
 
+# tart_vm_display <vm> — print the virtual display geometry a VM was created
+# with (`WIDTHxHEIGHT`), the geometry tart-new folded in at clone time. Same
+# "refuse rather than guess" contract as tart_vm_platform: a VM with no display
+# configured prints nothing and returns nonzero, because a caller establishing
+# a guest's display mode has no safe default to fall back to — a guessed
+# geometry is a wrong screen, not a missing one.
+tart_vm_display() {
+  local geometry
+  geometry=$(tart get "$1" --format json | jq -r '.Display // empty') || return 1
+  case "$geometry" in
+    *[!0-9x]*|x*|*x|*x*x*|"") return 1 ;;
+    *x*) printf '%s' "$geometry" ;;
+    *) return 1 ;;
+  esac
+}
+
 # tart_os_platform <os-token> <os-glob> — print the platform (darwin/linux)
 # that owns an OS TOKEN, the token-side peer of tart_vm_platform: that one
 # reads an EXISTING VM's platform via `tart get`, but a caller deciding what

@@ -83,13 +83,24 @@ case "$1" in
       echo "MOCK_TART_GET_STDERR_MARKER" >&2
       exit "${MOCK_TART_GET_RC}"
     fi
-    printf '{"OS":"%s"}\n' "${MOCK_PLATFORM:-linux}" ;;   # drives tart_vm_platform
+    # OS drives tart_vm_platform; Display drives tart_vm_display (the geometry
+    # the darwin window boot establishes as the guest's display mode).
+    printf '{"OS":"%s","Display":"%s"}\n' "${MOCK_PLATFORM:-linux}" "${MOCK_DISPLAY-1920x1080}" ;;
   ip)   printf '%s\n' "${MOCK_IP-10.0.0.9}" ;;   # set MOCK_IP='' to drive the no-lease path
   exec)
     shift 2
     if [ -n "${MOCK_TART_EXEC_FAIL_MATCH:-}" ] && [ "$*" = "$MOCK_TART_EXEC_FAIL_MATCH" ]; then
       exit 1
     fi
+    # The display-mode applier rides in on argv as base64 (tart exec forwards no
+    # stdin), so its failure seam matches a substring rather than an exact argv.
+    case "$*" in
+      *tart-stacks-display-mode.swift*)
+        if [ "${MOCK_TART_EXEC_DISPLAY_MODE_FAIL:-0}" -ne 0 ]; then
+          echo "MOCK_DISPLAY_MODE_STDERR" >&2
+          exit 1
+        fi ;;
+    esac
     case "$*" in
       "hostname -s") printf '%s\n' "${MOCK_HOSTNAME:-app-a}" ;;
       # scutil is modelled as real per-name STATE, not just logged argv: the
@@ -736,7 +747,9 @@ assert_contains "darwin partial rename → names the name that did not apply" \
 assert_absent   "darwin partial rename → does not blame the names that DID apply" \
   "$(cat "$ERR")" "ComputerName"
 
-# ---- darwin --gui=window: the macOS desktop needs no isolate/DM/scale step -
+# ---- darwin --gui=window: no isolate/DM/scale step, but a display MODE ------
+# The macOS desktop needs none of the linux window steps. It does need a mode:
+# a fresh clone negotiates 1024x768 under --display-refit and never leaves it.
 MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
 assert_rc       "darwin window → exit 0" 0
 calls="$(cat "$CALLS")"
@@ -745,6 +758,31 @@ assert_absent   "darwin window → no graphical.target isolate"        "$calls" 
 assert_absent   "darwin window → no display-manager wait"            "$calls" "display-manager.service"
 assert_absent   "darwin window → no host backing-scale detection"    "$calls" "system_profiler"
 assert_absent   "darwin window → no guest display-scale application" "$calls" "tart-stacks-display-scale"
+assert_contains "darwin window → establishes the guest display mode" "$calls" \
+  "tart-stacks-display-mode.swift"
+assert_contains "darwin window → drives it with the VM's configured geometry" "$calls" \
+  "1920x1080"
+
+# The geometry comes from the VM, not a constant: a clone created with
+# `tart-new --display 2560x1440` must be established at ITS size.
+MOCK_PLATFORM=darwin MOCK_DISPLAY=2560x1440 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_contains "darwin window → follows a non-default configured geometry" "$(cat "$CALLS")" \
+  "2560x1440"
+
+# A guest that cannot be configured still gets its window: the applier's own
+# stderr is the whole diagnosis of "my screen is 4:3", so it is surfaced.
+MOCK_PLATFORM=darwin MOCK_TART_EXEC_DISPLAY_MODE_FAIL=1 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+assert_rc       "darwin display-mode failure → window still starts" 0
+assert_contains "darwin display-mode failure → warns" "$(cat "$ERR")" \
+  "could not establish the display mode in 'app-a'"
+
+# Only the window path: without a host window there is no refit to negotiate
+# against, and a headless/vnc guest already boots at its configured geometry.
+MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=headless app-a
+assert_absent   "darwin headless → no display-mode application" "$(cat "$CALLS")" \
+  "tart-stacks-display-mode"
 
 # ---- darwin --gui=vnc: host-side --vnc-experimental, no guest listener -----
 # must-pass control: Tart prints the URL, the host port answers — the same
