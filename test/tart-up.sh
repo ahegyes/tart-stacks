@@ -700,6 +700,28 @@ assert_eq "tart_vm_platform darwin → exit 0"                        0 "$prc"
 prc=0; pout=$(platform_of linux 0) || prc=$?
 assert_eq "tart_vm_platform linux → linux (must-pass control)" linux  "$pout"
 assert_eq "tart_vm_platform linux → exit 0 (must-pass control)"     0 "$prc"
+# tart_vm_display — the geometry half of the same `tart get` read, and the only
+# value interpolated into the guest command line, so its refusals are the gate
+# on what can reach there.
+display_of() { # <MOCK_DISPLAY> <MOCK_TART_GET_RC>
+  PATH="$MOCKBIN:$PATH" MOCK_PLATFORM=darwin MOCK_DISPLAY="$1" MOCK_TART_GET_RC="${2:-0}" \
+    bash -c '. "'"$BIN"'/lib/common.sh"; tart_vm_display app-a' 2>/dev/null
+}
+drc=0; dout=$(display_of 1920x1080 0) || drc=$?
+assert_eq "tart_vm_display → the configured geometry (must-pass control)" 1920x1080 "$dout"
+assert_eq "tart_vm_display → exit 0"                                              0 "$drc"
+drc=0; dout=$(display_of '' 0) || drc=$?
+assert_eq "tart_vm_display absent Display → prints nothing" "" "$dout"
+assert_eq "tart_vm_display absent Display → exit 1"          1 "$drc"
+for bogus in 1920X1080 1920x 'x1080' 1920x1080x1 '1920 x 1080' 1920x1080pt; do
+  drc=0; dout=$(display_of "$bogus" 0) || drc=$?
+  assert_eq "tart_vm_display refuses '$bogus' → prints nothing" "" "$dout"
+  assert_eq "tart_vm_display refuses '$bogus' → exit 1"          1 "$drc"
+done
+drc=0; dout=$(display_of 1920x1080 3) || drc=$?
+assert_eq "tart_vm_display failed tart get → prints nothing" "" "$dout"
+assert_eq "tart_vm_display failed tart get → refuses"         1 "$drc"
+
 prc=0; pout=$(platform_of bogus 0) || prc=$?
 assert_eq "tart_vm_platform unrecognized OS token → refuses, prints nothing" "" "$pout"
 assert_eq "tart_vm_platform unrecognized OS token → exit 1"                1 "$prc"
@@ -770,6 +792,23 @@ MOCK_PLATFORM=darwin MOCK_DISPLAY=2560x1440 \
 assert_contains "darwin window → follows a non-default configured geometry" "$(cat "$CALLS")" \
   "2560x1440"
 
+# What reaches the guest is the COMMITTED applier and nothing else: substring
+# assertions on the path alone survive a mutation that delivers an empty or
+# stale payload, so the recorded base64 is decoded and compared.
+MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=window app-a
+delivered=$(grep -F 'tart-stacks-display-mode.swift' "$CALLS" | head -1 |
+  awk '{ for (i = 1; i <= NF; i++) if ($i == "echo") { print $(i + 1); exit } }' | base64 -d 2>/dev/null)
+if [ "$delivered" = "$(cat "$REPO/shared/darwin/runtime/display-mode.swift")" ]; then
+  ok "darwin window → delivers the committed applier byte for byte"
+else
+  bad "darwin window → delivers the committed applier byte for byte" \
+    "decoded ${#delivered} bytes, file is $(wc -c < "$REPO/shared/darwin/runtime/display-mode.swift" | tr -d ' ')"
+fi
+# ...and it is RUN, with the geometry as its argument. Replacing `swift` with
+# `true` keeps every path substring intact.
+assert_contains "darwin window → runs the applier with the geometry" "$(cat "$CALLS")" \
+  "swift /tmp/tart-stacks-display-mode.swift 1920x1080"
+
 # A guest that cannot be configured still gets its window: the applier's own
 # stderr is the whole diagnosis of "my screen is 4:3", so it is surfaced.
 MOCK_PLATFORM=darwin MOCK_TART_EXEC_DISPLAY_MODE_FAIL=1 \
@@ -777,11 +816,20 @@ MOCK_PLATFORM=darwin MOCK_TART_EXEC_DISPLAY_MODE_FAIL=1 \
 assert_rc       "darwin display-mode failure → window still starts" 0
 assert_contains "darwin display-mode failure → warns" "$(cat "$ERR")" \
   "could not establish the display mode in 'app-a'"
+# The warning names the symptom; only the guest can say WHY, so its own stderr
+# is passed through rather than replaced by the generic line above.
+assert_contains "darwin display-mode failure → passes the guest's own reason through" \
+  "$(cat "$ERR")" "MOCK_DISPLAY_MODE_STDERR"
 
 # Only the window path: without a host window there is no refit to negotiate
-# against, and a headless/vnc guest already boots at its configured geometry.
+# against, and a headless/vnc guest already boots at its configured geometry
+# (measured: a headless boot of a fresh clone comes up at 1920x1080).
 MOCK_PLATFORM=darwin runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=headless app-a
 assert_absent   "darwin headless → no display-mode application" "$(cat "$CALLS")" \
+  "tart-stacks-display-mode"
+MOCK_PLATFORM=darwin MOCK_VNC_PORT=61234 MOCK_SLEEP_DELAY=0.01 \
+  runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_absent   "darwin vnc → no display-mode application" "$(cat "$CALLS")" \
   "tart-stacks-display-mode"
 
 # ---- darwin --gui=vnc: host-side --vnc-experimental, no guest listener -----

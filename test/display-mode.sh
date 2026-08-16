@@ -33,13 +33,13 @@ assert_contains "tart-up resolves the applier from the repo" \
 assert_contains "tart-up delivers it to a stable guest path" \
   "$(cat "$REPO/bin/tart-up")" '/tmp/tart-stacks-display-mode.swift'
 
-# Tart's unconfigured default is the ONE mode the applier acts on. Pinned here
-# because it is the whole gate: widen it and the applier starts overriding a
-# mode --display-refit or a human chose.
-echo "display-mode — acts only on Tart's unconfigured default:"
-assert_contains "1024x768 is the gate" "$(cat "$APPLIER")" 'width: 1024, height: 768'
-assert_contains "the preference is written permanently, not for this boot" \
-  "$(cat "$APPLIER")" '.permanently'
+# Asserted against the CODE with comments stripped: the header prose mentions
+# `.permanently` too, so a whole-file match passes even when the call that
+# writes the preference has been changed to a for-this-boot one.
+echo "display-mode — the preference is written permanently:"
+CODE=$(sed 's|//.*||' "$APPLIER")
+assert_contains "the completed configuration is permanent" "$CODE" \
+  'CGCompleteDisplayConfiguration(configuration, .permanently)'
 
 echo "display-mode — Swift typecheck:"
 if command -v swiftc >/dev/null 2>&1; then
@@ -55,6 +55,18 @@ if command -v swiftc >/dev/null 2>&1; then
   assert_rc "unparseable geometry → refused" 64 swift "$APPLIER" 1920by1080
   assert_rc "zero geometry → refused"        64 swift "$APPLIER" 0x0
   assert_rc "too many arguments → refused"   64 swift "$APPLIER" 1920x1080 extra
+
+  # The gate and the mode choice are pure functions, so the applier can decide
+  # against measured fixtures with no display present. Asserting the literals
+  # instead would prove nothing: `.permanently` and `1024x768` both appear in
+  # this file's own comments, so a mutation of the executable code survives.
+  echo "display-mode — decision selftest (fixtures, no display):"
+  if selftest=$(swift -DSELFTEST "$APPLIER" 2>&1); then
+    printf '%s\n' "$selftest" | grep -E '^  (ok|FAIL) ' | sed 's/^/  /'
+    pass=$((pass + $(printf '%s' "$selftest" | grep -cE '^  ok ')))
+  else
+    bad "applier selftest" "$selftest"
+  fi
 else
   echo "  skip (no swiftc on this host — the applier only ever runs on macOS)"
 fi
