@@ -63,11 +63,6 @@ if [ -n "${MOCK_TART_FAIL_MATCH:-}" ] && [ "$*" = "$MOCK_TART_FAIL_MATCH" ]; the
   exit 1
 fi
 case "$1" in
-  --version)
-    # CAPTURED from tart 2.36.0: the bare version and nothing else. The
-    # default is this host's real tart — a release whose softnet stdout
-    # regression the version gate below refuses.
-    printf '%s\n' "${MOCK_TART_VERSION:-2.36.0}"; exit 0 ;;
   list)
     if [ "${MOCK_TART_LIST_RC:-0}" -ne 0 ]; then
       echo "MOCK_TART_LIST_STDERR_MARKER" >&2
@@ -263,7 +258,7 @@ chmod +x "$MOCKBIN/system_profiler"
 # TOCTOU where the VM vanished between `tart list` and `tart get`),
 # MOCK_NC_RC, MOCK_NC_VNC_RC, MOCK_SS_OUTPUT, MOCK_SS_SEQUENCE_FILE,
 # MOCK_SS_READ_FAIL, MOCK_TART_EXEC_FAIL_MATCH, MOCK_TART_FAIL_MATCH,
-# MOCK_TART_VNC_PRINT, MOCK_VNC_URL, MOCK_VNC_PORT, MOCK_TART_VERSION,
+# MOCK_TART_VNC_PRINT, MOCK_VNC_URL, MOCK_VNC_PORT,
 # MOCK_SLEEP_DELAY,
 # MOCK_SYSTEM_PROFILER_RC, MOCK_SYSTEM_PROFILER_JSON, TART_DISPLAY_SCALE, and
 # RUNUP_LOG_DIR. Exit code
@@ -284,7 +279,6 @@ runup() { # <state> <hostname> <netpolicy-file> <mounts-file> <gui-file> <tart-u
     MOCK_TART_EXEC_FAIL_MATCH="${MOCK_TART_EXEC_FAIL_MATCH-}" \
     MOCK_TART_FAIL_MATCH="${MOCK_TART_FAIL_MATCH-}" \
     MOCK_TART_VNC_PRINT="${MOCK_TART_VNC_PRINT-1}" MOCK_VNC_URL="${MOCK_VNC_URL-}" MOCK_VNC_PORT="${MOCK_VNC_PORT-61234}" \
-    MOCK_TART_VERSION="${MOCK_TART_VERSION-}" \
     MOCK_SLEEP_DELAY="${MOCK_SLEEP_DELAY-0}" \
     MOCK_NETSTAT_VNC_BIND="${MOCK_NETSTAT_VNC_BIND-127.0.0.1}" MOCK_NETSTAT_RC="${MOCK_NETSTAT_RC-0}" \
     TART_VNC_ALLOW_NONLOOPBACK="${TART_VNC_ALLOW_NONLOOPBACK-}" \
@@ -924,42 +918,15 @@ assert_contains "darwin vnc — listener timeout stops the VM rather than leavin
 # coming up at all.
 assert_contains "darwin vnc — host port never accepts → :22 still probed and passed" "$(cat "$CALLS")" "nc -z -G 3 10.0.0.9 22"
 
-# ---- darwin --gui=vnc × softnet net-policy: tart's stdout regression -------
-# An affected tart closes its own stdout right after spawning softnet
-# (openai/tart#1323), so the URL every verify step below hangs off can never
-# reach the run log. The guard refuses BEFORE `tart run`: no boot to
-# fail-close, no 90 s wait to burn. Every affected release is asserted
-# individually: the gate is a glob over an enumeration, and one that stops
-# matching a release still carrying the defer fails open in silence.
-for tart_v in 2.34.0 2.35.0 2.36.0; do
-  MOCK_TART_VERSION=$tart_v MOCK_PLATFORM=darwin MOCK_SLEEP_DELAY=0.01 \
-    runup stopped app-a "$NETP" "$EMPTY" "$EMPTY" --gui=vnc app-a
-  assert_rc       "darwin vnc + softnet policy on tart $tart_v → refused" 1
-  assert_contains "darwin vnc + softnet refusal on $tart_v → names the regression" "$(cat "$ERR")" "openai/tart#1323"
-  assert_contains "darwin vnc + softnet refusal on $tart_v → names the version it read" "$(cat "$ERR")" "tart $tart_v discards"
-  assert_absent   "darwin vnc + softnet refusal on $tart_v → VM never started" "$(cat "$CALLS")" "tart run"
-  assert_absent   "darwin vnc + softnet refusal on $tart_v → nothing to fail-close" "$(cat "$CALLS")" "tart stop"
-  assert_absent   "darwin vnc + softnet refusal on $tart_v → no start ever announced" "$(cat "$ERR")" "starting in background"
-done
-
-# must-pass control: a tart without the regression carries the same policy all
-# the way to a verified loopback listener.
-MOCK_TART_VERSION=2.33.0 MOCK_PLATFORM=darwin MOCK_SLEEP_DELAY=0.01 \
-  runup stopped app-a "$NETP" "$EMPTY" "$EMPTY" --gui=vnc app-a
-assert_rc       "darwin vnc + softnet policy on tart 2.33 → proceeds" 0
-assert_contains "darwin vnc on tart 2.33 → run carries the net-policy" "$(cat "$CALLS")" "--net-softnet=@host-only"
-
-# must-pass control: an affected tart, no softnet flag in the policy — the
-# gate keys on the flag family that triggers the bug, not net-policy presence.
-printf -- '--net-bridged=en0\n' > "$WORK/netpolicy-bridged"
+# ---- darwin --gui=vnc × softnet net-policy ---------------------------------
+# The URL every verify step above hangs off is Tart's own stdout, and a softnet
+# policy is what this repo actually boots under, so the pair is worth pinning
+# together: the policy has to reach `tart run` and the boot still has to finish
+# at a verified loopback listener.
 MOCK_PLATFORM=darwin MOCK_SLEEP_DELAY=0.01 \
-  runup stopped app-a "$WORK/netpolicy-bridged" "$EMPTY" "$EMPTY" --gui=vnc app-a
-assert_rc       "darwin vnc + bridged-only policy on an affected tart → proceeds" 0
-
-# must-pass control: linux vnc never reads tart's stdout (its listener lives
-# in the guest), so the same softnet policy on the same tart is unaffected.
-runup stopped app-a "$NETP" "$EMPTY" "$WORK/gui-vnc" app-a
-assert_rc       "linux vnc + softnet policy on an affected tart → unaffected" 0
+  runup stopped app-a "$NETP" "$EMPTY" "$EMPTY" --gui=vnc app-a
+assert_rc       "darwin vnc + softnet policy → proceeds" 0
+assert_contains "darwin vnc + softnet policy → run carries the net-policy" "$(cat "$CALLS")" "--net-softnet=@host-only"
 
 # prefix lookup: stored bare `app-a`, asked as `tart-app-a`
 runup stopped app-a "$EMPTY" "$EMPTY" "$EMPTY" tart-app-a

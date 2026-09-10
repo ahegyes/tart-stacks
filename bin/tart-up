@@ -685,33 +685,6 @@ elif [ "$STATE" = "stopped" ]; then
     echo "$prog: could not determine whether '$VM' is a darwin or linux VM (a failed 'tart get', or an empty/unrecognized OS field — see any error above); refusing to start without knowing which platform-specific boot steps it needs." >&2
     exit 1
   }
-  # tart's softnet integration closes tart's own stdout right after spawning
-  # softnet (openai/tart#1323: Softnet.run()'s defer closes an unset
-  # Process.standardOutput, which Foundation resolves to the parent's fd 1 —
-  # measured: lsof shows fd 1 become a kqueue, and the run log stays empty
-  # while the VNC listener is up). Under a softnet net-policy the "VNC server
-  # is running at" line — the only place the per-boot VNC password ever
-  # exists — can therefore never reach the run log, and no host-side redirect
-  # can recover it. Refuse up front — before even announcing a start —
-  # instead of burning the 90 s URL wait and then fail-closing a VM that
-  # booted for nothing. Enumerating the affected releases rather than
-  # comparing against a floor is what lets the gate expire on its own: 2.33
-  # and earlier have no defer, and an unlisted newer release still fail-closes
-  # on the URL wait below, so a fixed tart needs no edit here to be usable.
-  # The gate keys on softnet flags, not net-policy presence — --net-bridged
-  # never touches the broken path. CAPTURED: `tart --version` prints the bare
-  # version ("2.36.0").
-  if [ "$PLATFORM" = "darwin" ] && [ "$GUI_MODE" = "vnc" ]; then
-    case " ${NETPOLICY_ARGS[*]-} " in
-      *" --net-softnet"*)
-        tart_version="$(tart --version 2>/dev/null)"
-        case "$tart_version" in
-          2.3[456].*)
-            echo "$prog: refusing '--gui=vnc' for '$VM': tart $tart_version discards its own VNC URL when run under a softnet net-policy (openai/tart#1323 closes tart's stdout), so the listener could never be located or verified. Boot headless, temporarily empty $NETPOLICY_CONFIG, or use a tart release without the regression." >&2
-            exit 1 ;;
-        esac ;;
-    esac
-  fi
   echo "$prog: VM '$VM' is $STATE — starting in background..." >&2
   # Build the command as one array so the empty-args case is safe under
   # `set -u` on bash 3.2 (the macOS system bash). Net flags before dir flags:
