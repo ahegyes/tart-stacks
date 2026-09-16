@@ -61,12 +61,22 @@ Use [Secretive](https://github.com/maxgoedjen/secretive):
 brew install --cask secretive
 ```
 
-Open Secretive, create a key (**+**), and name it `Tart VM`. **Choose its authentication mode deliberately — that's a threat-model call, covered just below.** Then point `~/.ssh/tart-vm.pub` at it. Secretive files keys under opaque hash names, identified only by their comment — the name you gave, with spaces rendered as hyphens, so `Tart VM` becomes the `Tart-VM` the grep below matches. **Symlink** rather than copy, so Secretive stays the single source of truth and `~/.ssh` holds no duplicate. Confirm exactly one key matches, then link it:
+Open Secretive, create a key (**+**), and name it `Tart VM`. **Choose its authentication mode deliberately — that's a threat-model call, covered just below.** Then put the key's public half at `~/.ssh/tart-vm.pub`. Secretive files keys under opaque hash names, identified only by their comment — the name you gave, with spaces rendered as hyphens, so `Tart VM` becomes the `Tart-VM` the grep below matches. **Copy** rather than symlink: Secretive's container is covered by macOS privacy protection, so a symlink into it resolves but cannot be *read* by a process without Full Disk Access — `ssh` included — and that grant does not survive a major macOS upgrade. A copy pays the access cost once, at setup; a symlink re-pays it on every connection, forever. The public half is not secret, so the copy leaks nothing. Confirm exactly one key matches, then copy it:
 
 ```bash
 grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub   # expect ONE file
-ln -sf "$(grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub)" ~/.ssh/tart-vm.pub
+cp "$(grep -l 'Tart-VM' ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/*.pub)" ~/.ssh/tart-vm.pub
 ```
+
+**No Full Disk Access?** Then the commands above cannot read the container at all, and you never need to grant it: take the key from Secretive's *agent socket*, which stays reachable by path even while the directories beside it are not. The agent does not expose Secretive's key names — every key reports your login comment — so select by fingerprint, which Secretive shows beside each key:
+
+```sh
+S=~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
+SSH_AUTH_SOCK=$S ssh-add -l                                    # fingerprints, in agent order
+SSH_AUTH_SOCK=$S ssh-add -L | sed -n '1p' > ~/.ssh/tart-vm.pub  # 1p = the line matching the key you want
+```
+
+Confirm you took the right one before building anything: `ssh-keygen -lf ~/.ssh/tart-vm.pub` must print the fingerprint Secretive shows for `Tart VM`.
 
 **Using a different agent?** Secretive is a recommendation, not a requirement. `tart-ssh-sync` writes whatever socket `TART_IDENTITY_AGENT` names into the generated config — set it before running `make setup` (which ends with a sync) or before any later `tart-ssh-sync`:
 
@@ -77,7 +87,7 @@ TART_IDENTITY_AGENT='$SSH_AUTH_SOCK' make setup          # whatever agent your s
 
 The literal string `$SSH_AUTH_SOCK` is meaningful to OpenSSH's `IdentityAgent` — quote it so your shell passes it through. Either way, point `~/.ssh/tart-vm.pub` at the public half of the key you want VMs to trust; the rest of this section is Secretive-specific detail.
 
-If the first command lists **more than one** file, you have duplicate-named keys — tell them apart with `ssh-keygen -lf <file>` and symlink the specific one by hand. (An extra key in Secretive is harmless: `IdentitiesOnly yes` in the generated config means SSH only ever offers the pinned `~/.ssh/tart-vm.pub`.)
+If the first command lists **more than one** file, you have duplicate-named keys — tell them apart with `ssh-keygen -lf <file>` and copy the specific one by hand. (An extra key in Secretive is harmless: `IdentitiesOnly yes` in the generated config means SSH only ever offers the pinned `~/.ssh/tart-vm.pub`.)
 
 **Touch ID, or not?** Secretive asks, at creation, whether the key requires authentication. Either way the private key stays non-extractable in the Secure Enclave — the modes differ only in whether *using* it prompts:
 
