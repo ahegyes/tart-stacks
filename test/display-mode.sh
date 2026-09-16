@@ -4,7 +4,8 @@
 #
 # The applier is Swift, not shell, so its regressions are compile errors that
 # surface only on a real macOS guest's first boot — long after the change that
-# caused them. A host typecheck is what catches them here instead.
+# caused them. A host typecheck is what catches them here instead, on a macOS host
+# only: the import resolves against the macOS SDK, so no other platform can judge it.
 #
 # ONLY the argument-validation paths are executed. They return before the first
 # CoreGraphics call, so nothing here can read — let alone reconfigure — the
@@ -42,7 +43,12 @@ assert_contains "the completed configuration is permanent" "$CODE" \
   'CGCompleteDisplayConfiguration(configuration, .permanently)'
 
 echo "display-mode — Swift typecheck:"
-if command -v swiftc >/dev/null 2>&1; then
+# The guard is the PLATFORM, not the presence of a compiler. CoreGraphics ships only
+# in the macOS SDK, so a Linux Swift toolchain resolves this file's import to "no such
+# module" — a failure that says nothing about the applier. GitHub's ubuntu runner does
+# carry swiftc, so probing for the tool alone ran this whole block there and failed CI
+# on a file that can only ever run on macOS.
+if [ "$(uname -s)" = "Darwin" ] && command -v swiftc >/dev/null 2>&1; then
   if err=$(swiftc -typecheck "$APPLIER" 2>&1); then
     ok "applier typechecks"
   else
@@ -68,7 +74,7 @@ if command -v swiftc >/dev/null 2>&1; then
     bad "applier selftest" "$selftest"
   fi
 else
-  echo "  skip (no swiftc on this host — the applier only ever runs on macOS)"
+  echo "  skip (needs a macOS host with swiftc — the applier imports CoreGraphics and only ever runs on macOS)"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
